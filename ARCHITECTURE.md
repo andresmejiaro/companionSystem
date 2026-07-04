@@ -80,11 +80,11 @@ increments the version and restarts the approval cycle. Records carry the
 `schema_version` they were validated against. **Schema migrations are
 intentionally out of scope** for this slice.
 
-⚠️ Approval is a workflow, not security: until per-profile API keys and an
-admin key exist (see security plan below), any caller can hit the approve/
+⚠️ Approval is a workflow, not security: until real auth exists (see
+[ACCESS_CONTROL.md](ACCESS_CONTROL.md)), any caller can hit the approve/
 reject/archive endpoints. Auth middleware will be inserted at the FastAPI
-layer, mapping keys → allowed profile_ids and marking lifecycle endpoints
-admin-only.
+layer, resolving credential → principal → grants and requiring the
+`stores:approve` operation on these lifecycle endpoints.
 
 ## HTTP-first, MCP later
 
@@ -110,10 +110,17 @@ No cloud assumptions exist in the code.
 
 ## Security plan (documented, not implemented)
 
-- **Later:** per-profile scoped API keys, checked by HTTP middleware; key →
-  allowed profile_ids + operations. Stored hashed in a `credentials` table.
-- No shared god token for normal use; an explicit admin key is required for
-  cross-profile writes and profile creation/deletion.
+Real auth is **intentionally not implemented yet**. The full design lives in
+[ACCESS_CONTROL.md](ACCESS_CONTROL.md). The essentials:
+
+- **Assistant Profiles are resources, not auth principals.** They do not own
+  credentials or log in.
+- The future model is **principal/client-based**: credentials belong to
+  principals (humans, apps, tool bridges, admins) and grants are many-to-many
+  over (principal, profile, operations), with optional expiration.
+  **Profile-scoped keys (one key per profile) are not the primary design.**
+- No shared god token for normal use; profile deletion, schema approval, and
+  permission management require explicit grants.
 - Secrets must never be stored in memory events (later: a regex/entropy
   screen on `remember`).
 - Prompt/identity files are not writable through any memory or closeout

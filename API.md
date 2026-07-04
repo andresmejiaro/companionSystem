@@ -87,5 +87,6 @@ schema needs its own approval. No data migrations; old records keep their
 
 - All operations are profile-scoped; no cross-profile reads/writes exist.
 - Memory operations can never modify prompt/identity files.
-- Auth: none in slice zero (local only). Per-profile scoped API keys will be
-  added as HTTP middleware later — see ARCHITECTURE.md security plan.
+- Auth: none yet (local only). The future model is principal/client-based
+  credentials with many-to-many grants over profiles and operations — not
+  one key per profile. See ACCESS_CONTROL.md.

@@ -86,7 +86,8 @@ new_state <textarea id="co-state" rows="2" placeholder="required: replaces the c
 <pre id="st-out" class="out">–</pre>
 
 <h2>6. One-click Tara demo flow</h2>
-<p>Runs: propose <code>hotel_reservations</code> for tara → approve → add one reservation → query → show audit trail.</p>
+<p>Runs: propose <code>hotel_demo_&lt;timestamp&gt;</code> for tara → approve → add one reservation → query → show audit trail.
+Each run uses a fresh store name, so it can be repeated; the fields in section 5 are updated to the new name for further inspection.</p>
 <button onclick="taraDemo()">Run Tara hotel demo</button>
 <pre id="demo-out" class="out">–</pre>
 
@@ -186,7 +187,12 @@ async function queryRecords() {
 }
 
 async function taraDemo() {
-  const log = [];
+  // Unique name per run so the demo is repeatable (re-proposing over a
+  // pending/approved store is a 409 by design).
+  const name = `hotel_demo_${Date.now()}`;
+  const log = [`(store name for this run: ${name} — copied into section 5 fields for inspection)`];
+  $('st-name').value = name;
+  $('st-target').value = name;
   const step = async (label, method, path, body) => {
     const r = await api(method, path, body);
     log.push(`### ${label} → HTTP ${r.status}\n${JSON.stringify(r.data, null, 2)}`);
@@ -196,14 +202,14 @@ async function taraDemo() {
   const schema = {fields: {hotel_name: {type: 'string'}, city: {type: 'string'},
                            check_in: {type: 'date'}, check_out: {type: 'date'},
                            confirmation_code: {type: 'string', required: false}}};
-  await step('1. propose hotel_reservations for tara', 'POST', '/profiles/tara/stores',
-    {name: 'hotel_reservations', purpose: 'track hotel bookings', proposed_by: 'tara', schema});
-  await step('2. approve (future admin action — not secure yet)', 'POST',
-    '/profiles/tara/stores/hotel_reservations/approve');
-  await step('3. add one reservation', 'POST', '/profiles/tara/stores/hotel_reservations/records',
+  await step(`1. propose ${name} for tara`, 'POST', '/profiles/tara/stores',
+    {name, purpose: 'track hotel bookings (demo run)', proposed_by: 'tara', schema});
+  await step('2. approve (future admin action — NOT SECURE YET)', 'POST',
+    `/profiles/tara/stores/${name}/approve`);
+  await step('3. add one reservation', 'POST', `/profiles/tara/stores/${name}/records`,
     {data: {hotel_name: 'Grand Vista', city: 'Sevilla', check_in: '2026-08-01', check_out: '2026-08-04'}});
-  await step('4. query records', 'GET', '/profiles/tara/stores/hotel_reservations/records');
-  await step('5. audit trail', 'GET', '/profiles/tara/stores/hotel_reservations/audit');
+  await step('4. query records', 'GET', `/profiles/tara/stores/${name}/records`);
+  await step('5. audit trail', 'GET', `/profiles/tara/stores/${name}/audit`);
 }
 
 loadProfiles();
