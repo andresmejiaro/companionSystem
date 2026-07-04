@@ -25,6 +25,10 @@ Everything is inspectable on disk:
 - `data/profiles/<id>/base_prompt.md`, `role_prompt.md` — plain markdown prompts
 - `data/profiles/<id>/closeouts.jsonl` — append-only closeout log
 
+Note on closeout: the backend does not summarize sessions. The caller supplies
+the new compact state (`new_state`); the backend validates and stores it
+verbatim. This keeps the backend free of LLM calls.
+
 ## Tests
 
 ```bash

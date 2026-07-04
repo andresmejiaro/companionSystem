@@ -11,7 +11,9 @@ Layout (under a data directory, default ./data):
 from __future__ import annotations
 
 import json
+import shutil
 import sqlite3
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -61,20 +63,36 @@ CREATE TABLE IF NOT EXISTS closeouts (
 
 MEMORY_KINDS = {"note", "fact", "decision", "failure_scar", "preference", "observation"}
 
+DEFAULT_BOOT_EVENTS = 10
+MAX_BOOT_EVENTS_CAP = 100
+
 
 class Store:
     def __init__(self, data_dir: str | Path = "data"):
         self.data_dir = Path(data_dir)
         self.profiles_dir = self.data_dir / "profiles"
         self.profiles_dir.mkdir(parents=True, exist_ok=True)
-        # check_same_thread=False: FastAPI's threadpool serves requests from
-        # worker threads; access is short-lived per request in slice zero.
-        self.db = sqlite3.connect(self.data_dir / "profile_os.db", check_same_thread=False)
-        self.db.row_factory = sqlite3.Row
+        self.db_path = self.data_dir / "profile_os.db"
+        # One connection per thread: FastAPI serves requests from a threadpool,
+        # and SQLite connections are not safe to share across threads.
+        self._local = threading.local()
         self.db.executescript(SCHEMA)
 
+    @property
+    def db(self) -> sqlite3.Connection:
+        conn = getattr(self._local, "conn", None)
+        if conn is None:
+            conn = sqlite3.connect(self.db_path)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA foreign_keys = ON")
+            self._local.conn = conn
+        return conn
+
     def close(self):
-        self.db.close()
+        conn = getattr(self._local, "conn", None)
+        if conn is not None:
+            conn.close()
+            self._local.conn = None
 
     # -- profiles ------------------------------------------------------------
 
@@ -106,9 +124,18 @@ class Store:
                 (profile_id, initial_state, now),
             )
         pdir = self.profiles_dir / profile_id
-        pdir.mkdir(parents=True, exist_ok=True)
-        (pdir / "base_prompt.md").write_text(base_prompt)
-        (pdir / "role_prompt.md").write_text(role_prompt)
+        try:
+            pdir.mkdir(parents=True, exist_ok=True)
+            (pdir / "base_prompt.md").write_text(base_prompt)
+            (pdir / "role_prompt.md").write_text(role_prompt)
+        except OSError:
+            # Roll back the registration so we never keep a profile whose
+            # prompt files are missing.
+            with self.db:
+                self.db.execute("DELETE FROM compact_state WHERE profile_id=?", (profile_id,))
+                self.db.execute("DELETE FROM profiles WHERE id=?", (profile_id,))
+            shutil.rmtree(pdir, ignore_errors=True)
+            raise
         return self.get_profile(profile_id)
 
     def _require_profile(self, profile_id: str) -> sqlite3.Row:
@@ -139,9 +166,23 @@ class Store:
 
     # -- core operations -----------------------------------------------------
 
-    def boot(self, profile_id: str, recent_events: int = 10) -> dict:
-        """Everything needed to start a session for this profile."""
+    def boot(self, profile_id: str, recent_events: int | None = None) -> dict:
+        """Everything needed to start a session for this profile.
+
+        The number of recent memories honors the profile's
+        memory_policy.max_boot_events when present and valid (an int in
+        [0, MAX_BOOT_EVENTS_CAP]); otherwise DEFAULT_BOOT_EVENTS. An explicit
+        recent_events argument overrides both.
+        """
         profile = self.get_profile(profile_id)
+        if recent_events is None:
+            policy = profile["memory_policy"]
+            mbe = policy.get("max_boot_events") if isinstance(policy, dict) else None
+            if (isinstance(mbe, int) and not isinstance(mbe, bool)
+                    and 0 <= mbe <= MAX_BOOT_EVENTS_CAP):
+                recent_events = mbe
+            else:
+                recent_events = DEFAULT_BOOT_EVENTS
         state_row = self.db.execute(
             "SELECT state, updated_at FROM compact_state WHERE profile_id=?", (profile_id,)
         ).fetchone()

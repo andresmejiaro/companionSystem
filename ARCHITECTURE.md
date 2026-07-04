@@ -41,6 +41,14 @@ profile_os/
 - **closeouts.jsonl** per profile: append-only human-auditable session log.
 - **Search** is case-insensitive substring over content+tags. Boring on purpose;
   swap in SQLite FTS5 or embeddings later behind the same `search()` signature.
+- **Closeout compaction boundary:** the backend never summarizes. Producing
+  the new compact state is the caller's job (the model running the session);
+  `closeout()` validates `new_state` is non-empty and stores it verbatim,
+  logging `notes` for audit only. This keeps the backend LLM-free.
+- **SQLite connections** are one-per-thread (`threading.local` in `Store`),
+  each with `PRAGMA foreign_keys = ON`. FastAPI's threadpool can therefore
+  call the same `Store` from any worker thread safely, with no shared
+  connection and no ORM.
 - **Domain stores** are generic `(profile_id, store, json)` records — enough for
   Tara's products/meals and Sidra's task_contracts/model_routing without
   per-domain schemas in slice zero.

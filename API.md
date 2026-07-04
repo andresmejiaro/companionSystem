@@ -33,6 +33,10 @@ Future MCP tools map 1:1 to the starred operations.
 - ★ `POST /profiles/{id}/closeout` — end session. Body:
   `{"notes": "free text", "new_state": "non-empty compact state"}` → 201.
   Replaces compact state and appends to `closeouts.jsonl`.
+  **Compaction boundary:** the backend does not summarize. The *caller*
+  (the assistant/model running the session) produces `new_state`; the backend
+  only validates it is non-empty and stores it verbatim. `notes` is an audit
+  trail, never an input to state.
 
 ## Domain stores
 
