@@ -146,3 +146,47 @@ def test_optional_and_typed_fields(dyn):
     rec = dyn.add_record("tara", "hotel_reservations",
                          {**HOTEL_RECORD, "confirmation_code": "ABC123"})
     assert rec["data"]["confirmation_code"] == "ABC123"
+
+
+def test_pending_or_rejected_v2_does_not_hide_v1_records(dyn):
+    _approved(dyn)
+    dyn.add_record("tara", "hotel_reservations", HOTEL_RECORD)
+    dyn.archive("tara", "hotel_reservations")
+    # v2 pending must not hide v1's records
+    dyn.propose("tara", "hotel_reservations", "v2 schema", "tara", HOTEL_SCHEMA)
+    hits = dyn.query_records("tara", "hotel_reservations")
+    assert len(hits) == 1 and hits[0]["schema_version"] == 1
+    # v2 rejected: still visible
+    dyn.reject("tara", "hotel_reservations", "not needed")
+    hits = dyn.query_records("tara", "hotel_reservations")
+    assert len(hits) == 1 and hits[0]["schema_version"] == 1
+    # but no approved version exists, so writes are still rejected
+    with pytest.raises(DynStoreConflict):
+        dyn.add_record("tara", "hotel_reservations", HOTEL_RECORD)
+
+
+def test_store_never_approved_still_not_queryable(dyn):
+    dyn.propose("tara", "wishlist", "p", "tara", HOTEL_SCHEMA)
+    with pytest.raises(DynStoreConflict):
+        dyn.query_records("tara", "wishlist")
+    dyn.reject("tara", "wishlist", "no")
+    with pytest.raises(DynStoreConflict):
+        dyn.query_records("tara", "wishlist")
+
+
+def test_writes_use_latest_approved_version(dyn):
+    _approved(dyn)
+    dyn.archive("tara", "hotel_reservations")
+    dyn.propose("tara", "hotel_reservations", "v2", "tara", HOTEL_SCHEMA)
+    dyn.approve("tara", "hotel_reservations")
+    rec = dyn.add_record("tara", "hotel_reservations", HOTEL_RECORD)
+    assert rec["schema_version"] == 2
+
+
+def test_date_validation_rejects_impossible_dates(dyn):
+    _approved(dyn)
+    for bad in ["2026-99-99", "2026-02-30", "aug 1", "2026-13-01", "2026-00-10"]:
+        with pytest.raises(SchemaError):
+            dyn.add_record("tara", "hotel_reservations", {**HOTEL_RECORD, "check_in": bad})
+    rec = dyn.add_record("tara", "hotel_reservations", {**HOTEL_RECORD, "check_in": "2026-08-01"})
+    assert rec["data"]["check_in"] == "2026-08-01"

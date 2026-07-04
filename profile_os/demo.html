@@ -1,0 +1,212 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Assistant Profile OS — demo console</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 900px; margin: 1rem auto; padding: 0 1rem; }
+  h1 { font-size: 1.3rem; } h2 { font-size: 1.05rem; margin-top: 1.5rem; border-top: 1px solid #ccc; padding-top: 1rem; }
+  .banner { background: #fff3cd; border: 1px solid #d9c66a; padding: .5rem .8rem; font-size: .9rem; }
+  .admin { background: #fde2e2; border: 1px solid #d99; padding: .2rem .5rem; font-size: .8rem; display: inline-block; margin: .3rem 0; }
+  button { margin: .15rem; } input, textarea, select { margin: .15rem; font-family: inherit; }
+  textarea { width: 100%; box-sizing: border-box; }
+  pre { background: #f4f4f4; padding: .6rem; overflow-x: auto; white-space: pre-wrap; font-size: .82rem; }
+  details { margin: .3rem 0; } summary { cursor: pointer; }
+  .out { border-left: 3px solid #7a7; margin-top: .3rem; }
+  .err { border-left: 3px solid #c55; }
+  fieldset { margin: .6rem 0; border: 1px solid #ddd; }
+</style>
+</head>
+<body>
+<h1>Assistant Profile OS — demo console</h1>
+<p class="banner">Inspection/demo tool for the backend. Not the final UI, not a chatbot, no LLM involved.
+There is <b>no auth yet</b>: anything marked <span class="admin">future admin action — NOT SECURE YET</span> will require an admin key later.</p>
+
+<h2>1. Profiles</h2>
+<button onclick="loadProfiles()">List profiles</button>
+<span>active profile: <select id="profile" onchange="clearOuts()"></select></span>
+<pre id="profiles-out" class="out">–</pre>
+
+<h2>2. Boot bundle</h2>
+<button onclick="boot()">boot(profile)</button>
+<button onclick="copyBoot()">Copy boot bundle</button>
+<div id="boot-view"></div>
+<pre id="boot-out" class="out">–</pre>
+
+<h2>3. Memory</h2>
+<fieldset><legend>remember</legend>
+  kind <select id="mem-kind"><option>note</option><option>fact</option><option>decision</option><option>failure_scar</option><option>preference</option><option>observation</option></select>
+  content <input id="mem-content" size="40" placeholder="what to remember">
+  tags (comma-sep) <input id="mem-tags" size="15">
+  <button onclick="remember()">remember()</button>
+</fieldset>
+<fieldset><legend>search</legend>
+  query <input id="mem-q" size="30"> <button onclick="searchMem()">search()</button>
+</fieldset>
+<pre id="mem-out" class="out">–</pre>
+
+<h2>4. Closeout</h2>
+<p>The backend does not summarize — the caller supplies the new compact state verbatim.</p>
+notes <input id="co-notes" size="40" placeholder="audit-only notes"><br>
+new_state <textarea id="co-state" rows="2" placeholder="required: replaces the compact state"></textarea>
+<button onclick="closeout()">closeout()</button> then <button onclick="boot()">boot() again to see the new state</button>
+<pre id="co-out" class="out">–</pre>
+
+<h2>5. Dynamic stores</h2>
+<p>Lifecycle: profile <b>proposes</b> a schema → user/admin <b>approves/rejects</b> → backend <b>enforces</b> it. Archived stores are read-only.</p>
+<fieldset><legend>propose</legend>
+  name <input id="st-name" size="20" value="hotel_reservations">
+  purpose <input id="st-purpose" size="30" value="track hotel bookings">
+  schema (JSON)
+  <textarea id="st-schema" rows="6">{"fields": {
+  "hotel_name": {"type": "string"},
+  "city": {"type": "string"},
+  "check_in": {"type": "date"},
+  "check_out": {"type": "date"},
+  "confirmation_code": {"type": "string", "required": false}
+}}</textarea>
+  <button onclick="proposeStore()">propose store</button>
+</fieldset>
+<fieldset><legend>lifecycle <span class="admin">future admin action — NOT SECURE YET</span></legend>
+  store name <input id="st-target" size="20" value="hotel_reservations">
+  <button onclick="storeAction('approve')">approve</button>
+  <button onclick="storeAction('reject')">reject (reason below)</button>
+  <input id="st-reason" size="20" placeholder="rejection reason">
+  <button onclick="storeAction('archive')">archive</button>
+  <button onclick="listStores()">list stores</button>
+  <button onclick="storeAudit()">audit trail</button>
+</fieldset>
+<fieldset><legend>records</legend>
+  record data (JSON) <textarea id="st-record" rows="3">{"hotel_name": "Grand Vista", "city": "Sevilla", "check_in": "2026-08-01", "check_out": "2026-08-04"}</textarea>
+  <button onclick="addRecord()">add record</button>
+  <button onclick="addBadRecord()">add INVALID record (shows validation failure)</button>
+  contains <input id="st-contains" size="15"> <button onclick="queryRecords()">query records</button>
+</fieldset>
+<pre id="st-out" class="out">–</pre>
+
+<h2>6. One-click Tara demo flow</h2>
+<p>Runs: propose <code>hotel_reservations</code> for tara → approve → add one reservation → query → show audit trail.</p>
+<button onclick="taraDemo()">Run Tara hotel demo</button>
+<pre id="demo-out" class="out">–</pre>
+
+<script>
+const $ = id => document.getElementById(id);
+const pid = () => $('profile').value || 'tara';
+
+async function api(method, path, body) {
+  const res = await fetch(path, {
+    method,
+    headers: body ? {'Content-Type': 'application/json'} : {},
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const data = await res.json().catch(() => ({}));
+  return {ok: res.ok, status: res.status, data};
+}
+function show(id, r) {
+  const el = $(id);
+  el.className = r.ok ? 'out' : 'out err';
+  el.textContent = (r.ok ? '' : `HTTP ${r.status}\n`) + JSON.stringify(r.data, null, 2);
+}
+function clearOuts() { document.querySelectorAll('pre.out').forEach(e => e.textContent = '–'); }
+
+async function loadProfiles() {
+  const r = await api('GET', '/profiles');
+  show('profiles-out', r);
+  if (r.ok) $('profile').innerHTML = r.data.map(p => `<option>${p.id}</option>`).join('');
+}
+
+let lastBoot = null;
+async function boot() {
+  const r = await api('POST', `/profiles/${pid()}/boot`);
+  show('boot-out', r);
+  if (!r.ok) return;
+  lastBoot = r.data;
+  $('boot-view').innerHTML = `
+    <p><b>compact state:</b> ${esc(r.data.compact_state)}</p>
+    <details><summary>base prompt</summary><pre>${esc(r.data.base_prompt)}</pre></details>
+    <details><summary>role prompt</summary><pre>${esc(r.data.role_prompt)}</pre></details>
+    <details open><summary>recent memories (${r.data.recent_memories.length})</summary>
+      <pre>${esc(r.data.recent_memories.map(m => `[${m.kind}] ${m.content}`).join('\n') || '(none)')}</pre></details>`;
+}
+function esc(s) { return (s ?? '').toString().replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+async function copyBoot() {
+  if (!lastBoot) await boot();
+  if (!lastBoot) return;
+  const b = lastBoot;
+  const text = `# Boot bundle: ${b.profile.id}\n\n## Base prompt\n${b.base_prompt}\n## Role prompt\n${b.role_prompt}\n## Compact state\n${b.compact_state}\n\n## Recent memories\n` +
+    b.recent_memories.map(m => `- [${m.kind}] ${m.content}`).join('\n');
+  await navigator.clipboard.writeText(text);
+  $('boot-out').textContent = 'boot bundle copied to clipboard';
+}
+
+async function remember() {
+  const tags = $('mem-tags').value.split(',').map(t => t.trim()).filter(Boolean);
+  show('mem-out', await api('POST', `/profiles/${pid()}/memories`,
+    {kind: $('mem-kind').value, content: $('mem-content').value, tags}));
+}
+async function searchMem() {
+  show('mem-out', await api('GET',
+    `/profiles/${pid()}/memories/search?q=${encodeURIComponent($('mem-q').value)}`));
+}
+
+async function closeout() {
+  show('co-out', await api('POST', `/profiles/${pid()}/closeout`,
+    {notes: $('co-notes').value, new_state: $('co-state').value}));
+}
+
+async function proposeStore() {
+  let schema;
+  try { schema = JSON.parse($('st-schema').value); }
+  catch (e) { return show('st-out', {ok: false, status: 0, data: {error: 'schema is not valid JSON: ' + e.message}}); }
+  show('st-out', await api('POST', `/profiles/${pid()}/stores`,
+    {name: $('st-name').value, purpose: $('st-purpose').value, proposed_by: pid(), schema}));
+}
+async function storeAction(action) {
+  const name = $('st-target').value;
+  const body = action === 'reject' ? {reason: $('st-reason').value || 'no reason given'} : undefined;
+  show('st-out', await api('POST', `/profiles/${pid()}/stores/${name}/${action}`, body));
+}
+async function listStores() { show('st-out', await api('GET', `/profiles/${pid()}/stores`)); }
+async function storeAudit() { show('st-out', await api('GET', `/profiles/${pid()}/stores/${$('st-target').value}/audit`)); }
+async function addRecord() {
+  let data;
+  try { data = JSON.parse($('st-record').value); }
+  catch (e) { return show('st-out', {ok: false, status: 0, data: {error: 'record is not valid JSON: ' + e.message}}); }
+  show('st-out', await api('POST', `/profiles/${pid()}/stores/${$('st-target').value}/records`, {data}));
+}
+async function addBadRecord() {
+  show('st-out', await api('POST', `/profiles/${pid()}/stores/${$('st-target').value}/records`,
+    {data: {hotel_name: "Grand Vista", city: "Sevilla", check_in: "2026-02-30", check_out: "2026-08-04", stars: 5}}));
+}
+async function queryRecords() {
+  const c = $('st-contains').value;
+  show('st-out', await api('GET',
+    `/profiles/${pid()}/stores/${$('st-target').value}/records${c ? '?contains=' + encodeURIComponent(c) : ''}`));
+}
+
+async function taraDemo() {
+  const log = [];
+  const step = async (label, method, path, body) => {
+    const r = await api(method, path, body);
+    log.push(`### ${label} → HTTP ${r.status}\n${JSON.stringify(r.data, null, 2)}`);
+    $('demo-out').textContent = log.join('\n\n');
+    return r;
+  };
+  const schema = {fields: {hotel_name: {type: 'string'}, city: {type: 'string'},
+                           check_in: {type: 'date'}, check_out: {type: 'date'},
+                           confirmation_code: {type: 'string', required: false}}};
+  await step('1. propose hotel_reservations for tara', 'POST', '/profiles/tara/stores',
+    {name: 'hotel_reservations', purpose: 'track hotel bookings', proposed_by: 'tara', schema});
+  await step('2. approve (future admin action — not secure yet)', 'POST',
+    '/profiles/tara/stores/hotel_reservations/approve');
+  await step('3. add one reservation', 'POST', '/profiles/tara/stores/hotel_reservations/records',
+    {data: {hotel_name: 'Grand Vista', city: 'Sevilla', check_in: '2026-08-01', check_out: '2026-08-04'}});
+  await step('4. query records', 'GET', '/profiles/tara/stores/hotel_reservations/records');
+  await step('5. audit trail', 'GET', '/profiles/tara/stores/hotel_reservations/audit');
+}
+
+loadProfiles();
+</script>
+</body>
+</html>

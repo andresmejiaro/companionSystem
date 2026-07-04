@@ -17,6 +17,33 @@ python3 -m venv .venv
 ```
 
 First start seeds two example profiles (`sidra`, `tara`) into `./data/`.
+
+## Demo console
+
+With the server running, open **http://127.0.0.1:8000/demo** — a single static
+HTML page (no framework, no build step) for inspecting and exercising the
+backend by hand.
+
+2-minute demo script:
+
+1. **Profiles** — click "List profiles"; pick `tara` in the dropdown.
+2. **Boot** — click `boot(profile)`: compact state, collapsed base/role
+   prompts, recent memories. "Copy boot bundle" puts a paste-anywhere
+   plaintext bundle on the clipboard.
+3. **Memory** — remember a note ("tried the demo"), then search for "demo".
+4. **Closeout** — enter a new_state ("Demo day logged."), submit, click
+   `boot()` again: the compact state changed. (The backend never summarizes —
+   you supplied that state.)
+5. **Tara flow** — click "Run Tara hotel demo": proposes
+   `hotel_reservations`, approves it, adds a reservation, queries it, and
+   shows the audit trail, printing each HTTP step.
+6. **Validation** — in section 5, click "add INVALID record": the backend
+   rejects unknown fields and the impossible date `2026-02-30` with a 422.
+
+What the demo is intentionally **not**: the final UI (see UI_SPEC.md), a
+chatbot, an LLM integration, or a secure admin panel — approve/reject/archive
+buttons are labeled "future admin action — NOT SECURE YET" because auth does
+not exist yet.
 Override the data directory with `PROFILE_OS_DATA_DIR=/path`.
 
 Everything is inspectable on disk:

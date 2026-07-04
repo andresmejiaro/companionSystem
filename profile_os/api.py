@@ -9,7 +9,10 @@ from __future__ import annotations
 
 import os
 
+from pathlib import Path
+
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from . import seed
@@ -70,6 +73,11 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True) -> FastAPI:
     @app.get("/health")
     def health():
         return {"ok": True}
+
+    @app.get("/demo", response_class=HTMLResponse)
+    def demo():
+        """Human-readable demo console (static page, no build step, no LLM)."""
+        return (Path(__file__).parent / "demo.html").read_text()
 
     @app.get("/profiles")
     def list_profiles():

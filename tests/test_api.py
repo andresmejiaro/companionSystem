@@ -105,3 +105,11 @@ def test_invalid_schema_via_api(client):
                     json={"name": "bad", "purpose": "p", "proposed_by": "tara",
                           "schema": {"fields": {"x": {"type": "blob"}}}})
     assert r.status_code == 422
+
+
+def test_demo_page_loads(client):
+    r = client.get("/demo")
+    assert r.status_code == 200
+    assert "text/html" in r.headers["content-type"]
+    assert "Assistant Profile OS" in r.text
+    assert "NOT SECURE YET" in r.text  # admin actions visibly labeled

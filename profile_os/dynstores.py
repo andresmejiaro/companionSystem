@@ -30,6 +30,7 @@ import json
 import re
 import time
 import uuid
+from datetime import date
 
 from .errors import DynStoreConflict, DynStoreNotFound, SchemaError
 from .storage import Store
@@ -92,6 +93,17 @@ def validate_schema(schema: dict) -> None:
             raise SchemaError(f"field {fname!r}: 'required' must be a boolean")
 
 
+def _valid_date(value: str) -> bool:
+    """A real calendar date in YYYY-MM-DD form (regex alone lets 2026-02-30 through)."""
+    if not DATE_RE.match(value):
+        return False
+    try:
+        date.fromisoformat(value)
+        return True
+    except ValueError:
+        return False
+
+
 def validate_record(schema: dict, data: dict) -> None:
     if not isinstance(data, dict) or not data:
         raise SchemaError("record data must be a non-empty object")
@@ -110,7 +122,7 @@ def validate_record(schema: dict, data: dict) -> None:
             or (ftype == "boolean" and isinstance(value, bool))
             or (ftype == "integer" and isinstance(value, int) and not isinstance(value, bool))
             or (ftype == "number" and isinstance(value, (int, float)) and not isinstance(value, bool))
-            or (ftype == "date" and isinstance(value, str) and DATE_RE.match(value))
+            or (ftype == "date" and isinstance(value, str) and _valid_date(value))
         )
         if not ok:
             raise SchemaError(f"field {fname!r}: expected {ftype}, got {value!r}")
@@ -192,10 +204,14 @@ class DynamicStores:
     # -- records ---------------------------------------------------------------
 
     def add_record(self, profile_id: str, name: str, data: dict) -> dict:
-        row = self._require(profile_id, name)
-        if row["status"] != "approved":
+        latest = self._require(profile_id, name)
+        # Writes go to the latest APPROVED version, even if a newer version
+        # is pending or rejected.
+        row = self._latest_with_status(profile_id, name, ("approved",))
+        if row is None:
             raise DynStoreConflict(
-                f"store {name!r} is {row['status']}; only approved stores accept records")
+                f"store {name!r} has no approved version (latest is"
+                f" v{latest['version']}, {latest['status']}); writes rejected")
         schema = json.loads(row["schema"])
         validate_record(schema, data)
         rid, now = str(uuid.uuid4()), time.time()
@@ -209,9 +225,11 @@ class DynamicStores:
 
     def query_records(self, profile_id: str, name: str,
                       contains: str | None = None, limit: int = 50) -> list[dict]:
-        row = self._require(profile_id, name)
-        if row["status"] not in ("approved", "archived"):
-            raise DynStoreConflict(f"store {name!r} is {row['status']}; not queryable")
+        latest = self._require(profile_id, name)
+        # Queryable if ANY version was ever approved or archived — a pending or
+        # rejected newer version must not hide existing records.
+        if self._latest_with_status(profile_id, name, ("approved", "archived")) is None:
+            raise DynStoreConflict(f"store {name!r} is {latest['status']}; not queryable")
         sql = "SELECT * FROM dynamic_records WHERE profile_id=? AND store_name=?"
         params: list = [profile_id, name]
         if contains:
@@ -259,6 +277,13 @@ class DynamicStores:
         return self.db.execute(
             "SELECT * FROM dynamic_stores WHERE profile_id=? AND name=?"
             " ORDER BY version DESC LIMIT 1", (profile_id, name)).fetchone()
+
+    def _latest_with_status(self, profile_id: str, name: str, statuses: tuple):
+        marks = ",".join("?" for _ in statuses)
+        return self.db.execute(
+            f"SELECT * FROM dynamic_stores WHERE profile_id=? AND name=?"
+            f" AND status IN ({marks}) ORDER BY version DESC LIMIT 1",
+            (profile_id, name, *statuses)).fetchone()
 
     def _require(self, profile_id: str, name: str):
         self._store._require_profile(profile_id)
