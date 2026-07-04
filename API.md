@@ -38,7 +38,45 @@ Future MCP tools map 1:1 to the starred operations.
   only validates it is non-empty and stores it verbatim. `notes` is an audit
   trail, never an input to state.
 
-## Domain stores
+## Dynamic stores (slice two)
+
+Profile-scoped durable structured data. Lifecycle: a profile **proposes** a
+store + schema, the user/admin **approves or rejects** it, the backend
+**enforces** the schema on every write. Dynamic stores are not memory events —
+they hold validated structured records, not free-text session memory.
+
+> ⚠️ `approve`/`reject`/`archive` are admin/user operations. **No auth exists
+> yet, so approval is not real security** — real per-profile keys + an admin
+> key will guard these endpoints later (see ARCHITECTURE.md).
+
+Schema format (tiny subset, no dependencies):
+`{"fields": {"<name>": {"type": "string|number|integer|boolean|date", "required": true|false}}}`
+— fields required by default; `date` is a `YYYY-MM-DD` string; records may not
+contain unknown fields.
+
+- `POST /profiles/{id}/stores` — propose. Body:
+  `{"name": "hotel_reservations", "purpose": "...", "proposed_by": "tara",
+    "schema": {"fields": {...}}}` → 201, `status: "pending"`.
+- `GET /profiles/{id}/stores` → latest version of each store definition
+- `GET /profiles/{id}/stores/{name}` → definition (id, name, version, purpose,
+  proposed_by, schema, status, timestamps, rejection_reason)
+- `POST /profiles/{id}/stores/{name}/approve` (admin) — pending → approved
+- `POST /profiles/{id}/stores/{name}/reject` (admin) — body `{"reason": "..."}`
+- `POST /profiles/{id}/stores/{name}/archive` (admin) — approved → archived
+  (read-only; records stay queryable)
+- ★ `POST /profiles/{id}/stores/{name}/records` — body `{"data": {...}}`.
+  Only approved stores accept writes: pending/rejected/archived → 409;
+  schema violation → 422.
+- ★ `GET /profiles/{id}/stores/{name}/records?contains=&limit=50`
+- `GET /profiles/{id}/stores/{name}/audit`, `GET /profiles/{id}/audit` —
+  audit trail (proposed/approved/rejected/archived, with actor and detail)
+
+Versioning: schemas are immutable. To change one, reject/archive the current
+definition and re-propose the same name — version increments and the new
+schema needs its own approval. No data migrations; old records keep their
+`schema_version`.
+
+## Domain stores (legacy, slice zero — schemaless; superseded by dynamic stores)
 
 - `GET /profiles/{id}/domain` → list of store names, e.g. `["meals","products"]`
 - ★ `GET /profiles/{id}/domain/{store}?contains=<text>&limit=50` → records:

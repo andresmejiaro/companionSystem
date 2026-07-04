@@ -49,9 +49,42 @@ profile_os/
   each with `PRAGMA foreign_keys = ON`. FastAPI's threadpool can therefore
   call the same `Store` from any worker thread safely, with no shared
   connection and no ORM.
-- **Domain stores** are generic `(profile_id, store, json)` records — enough for
-  Tara's products/meals and Sidra's task_contracts/model_routing without
-  per-domain schemas in slice zero.
+- **Domain stores (legacy)** are generic `(profile_id, store, json)` records
+  from slice zero, kept for compatibility. New structured data should use
+  dynamic stores.
+
+## Dynamic stores (slice two)
+
+The platform does **not** hardcode Tara/Sidra/Rita/Rumbo domain schemas.
+Predefined schemas would make the platform decide, ahead of time, what every
+assistant may store — wrong for a system meant to host arbitrary profiles.
+Instead:
+
+1. **Profile proposes** a store (`name`, `purpose`, `proposed_by`, schema).
+2. **User/admin approves or rejects** it (audited).
+3. **Backend enforces** the schema on every record write.
+
+Dynamic stores are *not* memory events: memory events are free-text session
+memory; dynamic stores are durable structured data validated against an
+approved schema.
+
+Implementation: `profile_os/dynstores.py`, a separate `DynamicStores` service
+sharing the same SQLite database (tables `dynamic_stores`, `dynamic_records`,
+`store_audit`) — kept out of `Store` to avoid a god object. Schema format is
+a tiny custom subset (see module docstring / API.md) rather than full JSON
+Schema: ~60 lines of explicit validation, zero dependencies, and it can be
+swapped for JSON Schema behind `validate_record()` later.
+
+Versioning: schemas are immutable; re-proposing an archived/rejected name
+increments the version and restarts the approval cycle. Records carry the
+`schema_version` they were validated against. **Schema migrations are
+intentionally out of scope** for this slice.
+
+⚠️ Approval is a workflow, not security: until per-profile API keys and an
+admin key exist (see security plan below), any caller can hit the approve/
+reject/archive endpoints. Auth middleware will be inserted at the FastAPI
+layer, mapping keys → allowed profile_ids and marking lifecycle endpoints
+admin-only.
 
 ## HTTP-first, MCP later
 

@@ -53,3 +53,55 @@ def test_domain_endpoints(client):
     assert r.status_code == 201
     assert r.json()["data"]["food"] == "apple"
     assert client.get("/profiles/ghost/domain/meals").status_code == 404
+
+
+HOTEL_SCHEMA = {"fields": {"hotel_name": {"type": "string"},
+                           "city": {"type": "string"},
+                           "notes": {"type": "string", "required": False}}}
+
+
+def test_dynamic_store_lifecycle_via_api(client):
+    r = client.post("/profiles/tara/stores",
+                    json={"name": "hotel_reservations", "purpose": "bookings",
+                          "proposed_by": "tara", "schema": HOTEL_SCHEMA})
+    assert r.status_code == 201 and r.json()["status"] == "pending"
+
+    # pending: writes blocked with 409
+    r = client.post("/profiles/tara/stores/hotel_reservations/records",
+                    json={"data": {"hotel_name": "X", "city": "Y"}})
+    assert r.status_code == 409
+
+    assert client.post("/profiles/tara/stores/hotel_reservations/approve").json()["status"] == "approved"
+
+    r = client.post("/profiles/tara/stores/hotel_reservations/records",
+                    json={"data": {"hotel_name": "Grand", "city": "Sevilla"}})
+    assert r.status_code == 201
+
+    # invalid record → 422
+    r = client.post("/profiles/tara/stores/hotel_reservations/records",
+                    json={"data": {"hotel_name": "Grand", "city": "Sevilla", "stars": 5}})
+    assert r.status_code == 422
+
+    hits = client.get("/profiles/tara/stores/hotel_reservations/records",
+                      params={"contains": "sevilla"}).json()
+    assert len(hits) == 1
+
+    # profile scoping: sidra sees no such store
+    assert client.get("/profiles/sidra/stores/hotel_reservations/records").status_code == 404
+
+    # audit + listing
+    actions = {e["action"] for e in
+               client.get("/profiles/tara/stores/hotel_reservations/audit").json()}
+    assert {"proposed", "approved"} <= actions
+    names = {s["name"] for s in client.get("/profiles/tara/stores").json()}
+    assert "hotel_reservations" in names
+
+    assert client.post("/profiles/tara/stores/hotel_reservations/archive").json()["status"] == "archived"
+    assert client.get("/profiles/tara/stores/hotel_reservations/records").status_code == 200
+
+
+def test_invalid_schema_via_api(client):
+    r = client.post("/profiles/tara/stores",
+                    json={"name": "bad", "purpose": "p", "proposed_by": "tara",
+                          "schema": {"fields": {"x": {"type": "blob"}}}})
+    assert r.status_code == 422

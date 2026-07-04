@@ -25,6 +25,12 @@ Everything is inspectable on disk:
 - `data/profiles/<id>/base_prompt.md`, `role_prompt.md` — plain markdown prompts
 - `data/profiles/<id>/closeouts.jsonl` — append-only closeout log
 
+Slice two adds **dynamic stores**: profiles propose durable structured data
+stores (name + purpose + field schema); the user/admin approves, rejects, or
+archives them; the backend validates every record against the approved schema
+and audits all lifecycle changes. The platform never hardcodes what a profile
+may store. Approval endpoints are not yet auth-protected — see ARCHITECTURE.md.
+
 Note on closeout: the backend does not summarize sessions. The caller supplies
 the new compact state (`new_state`); the backend validates and stores it
 verbatim. This keeps the backend free of LLM calls.
