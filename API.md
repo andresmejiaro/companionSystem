@@ -45,9 +45,13 @@ store + schema, the user/admin **approves or rejects** it, the backend
 **enforces** the schema on every write. Dynamic stores are not memory events —
 they hold validated structured records, not free-text session memory.
 
-> ⚠️ `approve`/`reject`/`archive` are admin/user operations. **No auth exists
-> yet, so approval is not real security** — real per-profile keys + an admin
-> key will guard these endpoints later (see ARCHITECTURE.md).
+> ⚠️ `approve`/`reject`/`archive` are admin/user operations. By default auth
+> is **disabled** and they are open on localhost. With
+> `PROFILE_OS_AUTH_ENABLED=1` they require
+> `Authorization: Bearer <secret>` resolving to a principal granted
+> `stores:approve` for the route's profile (or `*`): missing/invalid/expired/
+> revoked credential → 401, no grant → 403. Other endpoints are not yet
+> protected. See ACCESS_CONTROL.md.
 
 Schema format (tiny subset, no dependencies):
 `{"fields": {"<name>": {"type": "string|number|integer|boolean|date", "required": true|false}}}`

@@ -18,6 +18,27 @@ python3 -m venv .venv
 
 First start seeds two example profiles (`sidra`, `tara`) into `./data/`.
 
+## Optional auth (dynamic-store lifecycle only)
+
+Auth is **disabled by default** — everything works locally with no keys, as
+before. To require credentials on store approve/reject/archive:
+
+```bash
+# 1. bootstrap an admin credential (local CLI, never over HTTP; stores a hash only)
+.venv/bin/python -m profile_os.bootstrap_admin --data-dir data --secret "$SECRET"
+# 2. start the server with enforcement on
+PROFILE_OS_AUTH_ENABLED=1 .venv/bin/uvicorn profile_os.api:app
+# 3. call lifecycle endpoints with the bearer secret
+curl -X POST -H "Authorization: Bearer $SECRET" \
+  http://127.0.0.1:8000/profiles/tara/stores/<name>/approve
+```
+
+Without a valid credential these endpoints return 401; with a credential but
+no `stores:approve` grant for that profile, 403. All other endpoints remain
+open in this slice. The /demo page has an optional API key field for this.
+Credentials belong to principals (apps, bridges, humans, admins), never to
+profiles — see [ACCESS_CONTROL.md](ACCESS_CONTROL.md).
+
 ## Demo console
 
 With the server running, open **http://127.0.0.1:8000/demo** — a single static

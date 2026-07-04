@@ -110,7 +110,17 @@ No cloud assumptions exist in the code.
 
 ## Security plan (documented, not implemented)
 
-Real auth is **intentionally not implemented yet**. The full design lives in
+The **access-control foundation** (data model + service) exists in
+`profile_os/access.py`: `access_principals`, `access_credentials` (salted
+PBKDF2 hashes only, never plaintext), and `access_grants` tables in the same
+SQLite database, with `allowed(principal, operation, profile)` and
+`authenticate_secret(secret)` checks. **Enforcement is partial and opt-in:**
+when `PROFILE_OS_AUTH_ENABLED=1`, the store lifecycle endpoints
+(approve/reject/archive) require a bearer credential granting
+`stores:approve` on the route's profile; everything else — and the default
+local mode — remains open. The first admin credential is minted via the
+local `profile_os.bootstrap_admin` CLI, never over HTTP. The full design
+lives in
 [ACCESS_CONTROL.md](ACCESS_CONTROL.md). The essentials:
 
 - **Assistant Profiles are resources, not auth principals.** They do not own

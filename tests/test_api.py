@@ -112,4 +112,4 @@ def test_demo_page_loads(client):
     assert r.status_code == 200
     assert "text/html" in r.headers["content-type"]
     assert "Assistant Profile OS" in r.text
-    assert "NOT SECURE YET" in r.text  # admin actions visibly labeled
+    assert "NOT SECURE" in r.text  # admin actions visibly labeled

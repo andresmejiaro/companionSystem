@@ -11,11 +11,12 @@ import os
 
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from . import seed
+from .access import AccessControl
 from .dynstores import DynamicStores
 from .errors import (DynStoreConflict, DynStoreNotFound, MalformedMemoryEvent,
                      MalformedRecord, ProfileNotFound, SchemaError)
@@ -50,7 +51,10 @@ class RejectIn(BaseModel):
     reason: str
 
 
-def create_app(data_dir: str = DATA_DIR, do_seed: bool = True) -> FastAPI:
+def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
+               auth_enabled: bool | None = None) -> FastAPI:
+    if auth_enabled is None:
+        auth_enabled = os.environ.get("PROFILE_OS_AUTH_ENABLED") == "1"
     app = FastAPI(title="Assistant Profile OS", version="0.1.0")
     store = Store(data_dir)
     if do_seed:
@@ -59,6 +63,27 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True) -> FastAPI:
 
     dyn = DynamicStores(store)
     app.state.dynstores = dyn
+    access = AccessControl(store)
+    app.state.access = access
+
+    def _require_stores_approve(profile_id: str, authorization: str | None) -> None:
+        """Partial enforcement (this slice): store lifecycle endpoints only.
+
+        The credential belongs to a principal/client (see ACCESS_CONTROL.md),
+        never to a profile. Missing/bad credential → 401; authenticated but
+        ungranted → 403. No-op while auth is disabled (the local default).
+        """
+        if not auth_enabled:
+            return
+        if not authorization or not authorization.startswith("Bearer "):
+            raise HTTPException(401, "missing bearer credential",
+                                headers={"WWW-Authenticate": "Bearer"})
+        principal_id = access.authenticate_secret(authorization[len("Bearer "):])
+        if principal_id is None:
+            raise HTTPException(401, "invalid, expired, or revoked credential",
+                                headers={"WWW-Authenticate": "Bearer"})
+        if not access.allowed(principal_id, "stores:approve", profile_id):
+            raise HTTPException(403, f"principal lacks stores:approve on {profile_id!r}")
 
     def _wrap(fn, *args, **kwargs):
         try:
@@ -117,9 +142,9 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True) -> FastAPI:
         return _wrap(store.add_domain_record, profile_id, store_name, body.data)
 
     # -- dynamic stores (slice two) ------------------------------------------
-    # NOTE: approve/reject/archive are ADMIN/USER operations. There is no auth
-    # yet, so they are NOT secure — real per-profile API keys plus an admin key
-    # will be enforced by middleware here in a later slice (see ARCHITECTURE.md).
+    # NOTE: approve/reject/archive are ADMIN/USER operations. They are enforced
+    # via _require_stores_approve when PROFILE_OS_AUTH_ENABLED=1 (default: off,
+    # open on localhost). Other endpoints are intentionally not protected yet.
 
     @app.post("/profiles/{profile_id}/stores", status_code=201)
     def propose_store(profile_id: str, body: StoreProposalIn):
@@ -135,15 +160,21 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True) -> FastAPI:
         return _wrap(dyn.get, profile_id, name)
 
     @app.post("/profiles/{profile_id}/stores/{name}/approve")
-    def approve_store(profile_id: str, name: str):
+    def approve_store(profile_id: str, name: str,
+                      authorization: str | None = Header(None)):
+        _require_stores_approve(profile_id, authorization)
         return _wrap(dyn.approve, profile_id, name)
 
     @app.post("/profiles/{profile_id}/stores/{name}/reject")
-    def reject_store(profile_id: str, name: str, body: RejectIn):
+    def reject_store(profile_id: str, name: str, body: RejectIn,
+                     authorization: str | None = Header(None)):
+        _require_stores_approve(profile_id, authorization)
         return _wrap(dyn.reject, profile_id, name, body.reason)
 
     @app.post("/profiles/{profile_id}/stores/{name}/archive")
-    def archive_store(profile_id: str, name: str):
+    def archive_store(profile_id: str, name: str,
+                      authorization: str | None = Header(None)):
+        _require_stores_approve(profile_id, authorization)
         return _wrap(dyn.archive, profile_id, name)
 
     @app.post("/profiles/{profile_id}/stores/{name}/records", status_code=201)

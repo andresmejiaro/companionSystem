@@ -1,7 +1,20 @@
-# Access control design (future — NOT implemented yet)
+# Access control design (NOT enforced yet)
 
-Nothing in this document is enforced today. The backend has no auth; every
-endpoint is open on localhost. This is the design real auth will implement.
+**Implementation status:** the storage/service foundation for this model
+exists in `profile_os/access.py` (principals, hashed credentials, grants,
+`allowed()`, `authenticate_secret()` — including `profile_id=None` global
+grants and `profile_id="*"` all-profiles grants).
+
+**Enforcement is partial:** with `PROFILE_OS_AUTH_ENABLED=1`, the dynamic-
+store lifecycle endpoints (approve/reject/archive) require a bearer
+credential whose principal holds `stores:approve` for the route's profile
+(401 for missing/invalid/expired/revoked credentials or disabled principals;
+403 for authenticated principals without the grant). **All other endpoints
+remain open**, and auth is disabled by default — full endpoint enforcement is
+a later slice. Credentials belong to principals/clients; profile-scoped keys
+remain explicitly not the design. Bootstrap the first admin credential
+locally (never over HTTP) with
+`python -m profile_os.bootstrap_admin --data-dir data --secret "$SECRET"`.
 
 ## Core stance: Assistant Profiles are resources, not principals
 

@@ -21,7 +21,10 @@
 <body>
 <h1>Assistant Profile OS — demo console</h1>
 <p class="banner">Inspection/demo tool for the backend. Not the final UI, not a chatbot, no LLM involved.
-There is <b>no auth yet</b>: anything marked <span class="admin">future admin action — NOT SECURE YET</span> will require an admin key later.</p>
+Anything marked <span class="admin">admin action — NOT SECURE unless auth is enabled</span> is open by default;
+start the server with <code>PROFILE_OS_AUTH_ENABLED=1</code> to require a bearer credential (see README).</p>
+<p>API key (optional, sent as <code>Authorization: Bearer …</code> when filled; kept in this page only):
+<input id="api-key" size="34" type="password" placeholder="leave empty for auth-disabled local use"></p>
 
 <h2>1. Profiles</h2>
 <button onclick="loadProfiles()">List profiles</button>
@@ -68,7 +71,7 @@ new_state <textarea id="co-state" rows="2" placeholder="required: replaces the c
 }}</textarea>
   <button onclick="proposeStore()">propose store</button>
 </fieldset>
-<fieldset><legend>lifecycle <span class="admin">future admin action — NOT SECURE YET</span></legend>
+<fieldset><legend>lifecycle <span class="admin">admin action — NOT SECURE unless auth is enabled</span></legend>
   store name <input id="st-target" size="20" value="hotel_reservations">
   <button onclick="storeAction('approve')">approve</button>
   <button onclick="storeAction('reject')">reject (reason below)</button>
@@ -96,9 +99,12 @@ const $ = id => document.getElementById(id);
 const pid = () => $('profile').value || 'tara';
 
 async function api(method, path, body) {
+  const headers = body ? {'Content-Type': 'application/json'} : {};
+  const key = $('api-key').value.trim();
+  if (key) headers['Authorization'] = `Bearer ${key}`;
   const res = await fetch(path, {
     method,
-    headers: body ? {'Content-Type': 'application/json'} : {},
+    headers,
     body: body ? JSON.stringify(body) : undefined,
   });
   const data = await res.json().catch(() => ({}));
@@ -204,7 +210,7 @@ async function taraDemo() {
                            confirmation_code: {type: 'string', required: false}}};
   await step(`1. propose ${name} for tara`, 'POST', '/profiles/tara/stores',
     {name, purpose: 'track hotel bookings (demo run)', proposed_by: 'tara', schema});
-  await step('2. approve (future admin action — NOT SECURE YET)', 'POST',
+  await step('2. approve (admin action — enforced only when auth is enabled)', 'POST',
     `/profiles/tara/stores/${name}/approve`);
   await step('3. add one reservation', 'POST', `/profiles/tara/stores/${name}/records`,
     {data: {hotel_name: 'Grand Vista', city: 'Sevilla', check_in: '2026-08-01', check_out: '2026-08-04'}});
