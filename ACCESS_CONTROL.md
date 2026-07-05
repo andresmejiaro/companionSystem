@@ -1,20 +1,39 @@
-# Access control design (NOT enforced yet)
+# Access control design (enforced on all routes)
 
 **Implementation status:** the storage/service foundation for this model
 exists in `profile_os/access.py` (principals, hashed credentials, grants,
-`allowed()`, `authenticate_secret()` — including `profile_id=None` global
-grants and `profile_id="*"` all-profiles grants).
+`allowed()`, `authenticate_secret()`, `visible_profile_ids()` — including
+`profile_id=None` global grants and `profile_id="*"` all-profiles grants).
 
-**Enforcement is partial:** with `PROFILE_OS_AUTH_ENABLED=1`, the dynamic-
-store lifecycle endpoints (approve/reject/archive) require a bearer
-credential whose principal holds `stores:approve` for the route's profile
-(401 for missing/invalid/expired/revoked credentials or disabled principals;
-403 for authenticated principals without the grant). **All other endpoints
-remain open**, and auth is disabled by default — full endpoint enforcement is
-a later slice. Credentials belong to principals/clients; profile-scoped keys
-remain explicitly not the design. Bootstrap the first admin credential
-locally (never over HTTP) with
+**Enforcement is complete for existing endpoints:** with
+`PROFILE_OS_AUTH_ENABLED=1`, every route except `GET /health` and
+`GET /demo` requires a bearer credential whose principal holds the route's
+operation grant for the route's profile (401 for missing/invalid/expired/
+revoked credentials or disabled principals; 403 for authenticated principals
+without the grant). Auth is disabled by default (open on localhost), and
+behavior with auth off is unchanged. Credentials belong to
+principals/clients; profile-scoped keys remain explicitly not the design.
+Bootstrap the first admin credential locally (never over HTTP) with
 `python -m profile_os.bootstrap_admin --data-dir data --secret "$SECRET"`.
+
+### Route → operation map
+
+| Route | Operation |
+|---|---|
+| `GET /health`, `GET /demo` | public |
+| `GET /profiles` | authenticated; filtered to profiles with any active grant (`*` sees all) |
+| `GET /profiles/{id}`, `POST /profiles/{id}/boot` | `boot` |
+| `POST /profiles/{id}/memories` | `remember` |
+| `GET /profiles/{id}/memories/search` | `search` |
+| `POST /profiles/{id}/closeout` | `closeout` |
+| `GET /profiles/{id}/domain`, `GET /profiles/{id}/domain/{store}` | `records:read` |
+| `POST /profiles/{id}/domain/{store}` | `records:write` |
+| `POST /profiles/{id}/stores` | `stores:propose` |
+| `GET /profiles/{id}/stores`, `GET /profiles/{id}/stores/{name}` | `records:read` |
+| `POST …/stores/{name}/approve\|reject\|archive` | `stores:approve` |
+| `GET …/stores/{name}/records` | `records:read` |
+| `POST …/stores/{name}/records` | `records:write` |
+| `GET …/stores/{name}/audit`, `GET /profiles/{id}/audit` | `audit:read` |
 
 ## Core stance: Assistant Profiles are resources, not principals
 
@@ -102,9 +121,9 @@ explicitly intended. Expiry makes leaked session credentials time-bounded.
 | admin operator | all | manage_profile, delete_profile, stores:approve, manage_grants, credentials:manage, audit:read | none |
 | temp session grant | tara | search, records:read | +24h |
 
-## Enforcement point (when implemented)
+## Enforcement point
 
-FastAPI middleware/dependency: credential → principal → grant lookup →
-allow/deny per (profile_id, operation) before any handler runs. Grants and
-credential hashes live in SQLite next to everything else; issuance and
-revocation are audited like store lifecycle events.
+Implemented in `profile_os/api.py`: each route resolves the bearer
+credential to a principal (`_authenticate`) and checks the route's
+operation grant (`_require`) before the handler body runs. Grants and
+credential hashes live in SQLite next to everything else.

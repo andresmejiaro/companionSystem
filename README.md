@@ -18,10 +18,11 @@ python3 -m venv .venv
 
 First start seeds two example profiles (`sidra`, `tara`) into `./data/`.
 
-## Optional auth (dynamic-store lifecycle only)
+## Optional auth (all endpoints)
 
 Auth is **disabled by default** — everything works locally with no keys, as
-before. To require credentials on store approve/reject/archive:
+before. To require credentials on every endpoint except `/health` and
+`/demo`:
 
 ```bash
 # 1. bootstrap an admin credential (local CLI, never over HTTP; stores a hash only)
@@ -33,9 +34,12 @@ curl -X POST -H "Authorization: Bearer $SECRET" \
   http://127.0.0.1:8000/profiles/tara/stores/<name>/approve
 ```
 
-Without a valid credential these endpoints return 401; with a credential but
-no `stores:approve` grant for that profile, 403. All other endpoints remain
-open in this slice. The /demo page has an optional API key field for this.
+Without a valid credential, protected endpoints return 401; with a
+credential but no grant for the route's operation on that profile, 403.
+`GET /profiles` returns only profiles the principal holds any grant on
+(a `*` wildcard grant sees all). The full route → operation map is in
+[ACCESS_CONTROL.md](ACCESS_CONTROL.md). The /demo page has an optional API
+key field for this.
 Credentials belong to principals (apps, bridges, humans, admins), never to
 profiles — see [ACCESS_CONTROL.md](ACCESS_CONTROL.md).
 
@@ -62,9 +66,9 @@ backend by hand.
    rejects unknown fields and the impossible date `2026-02-30` with a 422.
 
 What the demo is intentionally **not**: the final UI (see UI_SPEC.md), a
-chatbot, an LLM integration, or a secure admin panel — approve/reject/archive
-buttons are labeled "future admin action — NOT SECURE YET" because auth does
-not exist yet.
+chatbot, an LLM integration, or a polished admin panel. Approve/reject/
+archive (and every other endpoint) are enforced when
+`PROFILE_OS_AUTH_ENABLED=1`; the default local mode stays open.
 Override the data directory with `PROFILE_OS_DATA_DIR=/path`.
 
 Everything is inspectable on disk:
@@ -77,7 +81,8 @@ Slice two adds **dynamic stores**: profiles propose durable structured data
 stores (name + purpose + field schema); the user/admin approves, rejects, or
 archives them; the backend validates every record against the approved schema
 and audits all lifecycle changes. The platform never hardcodes what a profile
-may store. Approval endpoints are not yet auth-protected — see ARCHITECTURE.md.
+may store. All endpoints are grant-protected when auth is enabled — see
+ACCESS_CONTROL.md.
 
 Note on closeout: the backend does not summarize sessions. The caller supplies
 the new compact state (`new_state`); the backend validates and stores it

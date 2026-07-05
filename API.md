@@ -45,13 +45,12 @@ store + schema, the user/admin **approves or rejects** it, the backend
 **enforces** the schema on every write. Dynamic stores are not memory events —
 they hold validated structured records, not free-text session memory.
 
-> ⚠️ `approve`/`reject`/`archive` are admin/user operations. By default auth
-> is **disabled** and they are open on localhost. With
-> `PROFILE_OS_AUTH_ENABLED=1` they require
-> `Authorization: Bearer <secret>` resolving to a principal granted
-> `stores:approve` for the route's profile (or `*`): missing/invalid/expired/
-> revoked credential → 401, no grant → 403. Other endpoints are not yet
-> protected. See ACCESS_CONTROL.md.
+> ⚠️ By default auth is **disabled** and everything is open on localhost.
+> With `PROFILE_OS_AUTH_ENABLED=1`, every endpoint except `/health` and
+> `/demo` requires `Authorization: Bearer <secret>` resolving to a principal
+> granted the route's operation for the route's profile (or `*`):
+> missing/invalid/expired/revoked credential → 401, no grant → 403.
+> Route → operation map in ACCESS_CONTROL.md.
 
 Schema format (tiny subset, no dependencies):
 `{"fields": {"<name>": {"type": "string|number|integer|boolean|date", "required": true|false}}}`
@@ -91,6 +90,8 @@ schema needs its own approval. No data migrations; old records keep their
 
 - All operations are profile-scoped; no cross-profile reads/writes exist.
 - Memory operations can never modify prompt/identity files.
-- Auth: none yet (local only). The future model is principal/client-based
-  credentials with many-to-many grants over profiles and operations — not
-  one key per profile. See ACCESS_CONTROL.md.
+- Auth: opt-in via `PROFILE_OS_AUTH_ENABLED=1` (off by default for local
+  use). Principal/client-based credentials with many-to-many grants over
+  profiles and operations — not one key per profile. When enabled,
+  `GET /profiles` is filtered to profiles the principal holds any grant on.
+  See ACCESS_CONTROL.md.

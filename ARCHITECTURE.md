@@ -80,11 +80,11 @@ increments the version and restarts the approval cycle. Records carry the
 `schema_version` they were validated against. **Schema migrations are
 intentionally out of scope** for this slice.
 
-⚠️ Approval is a workflow, not security: until real auth exists (see
-[ACCESS_CONTROL.md](ACCESS_CONTROL.md)), any caller can hit the approve/
-reject/archive endpoints. Auth middleware will be inserted at the FastAPI
-layer, resolving credential → principal → grants and requiring the
-`stores:approve` operation on these lifecycle endpoints.
+Approval is enforced when auth is on (see
+[ACCESS_CONTROL.md](ACCESS_CONTROL.md)): with `PROFILE_OS_AUTH_ENABLED=1`,
+approve/reject/archive require a principal granted `stores:approve` on the
+route's profile, and every other endpoint requires its own operation grant.
+In the default local mode (auth off) all endpoints remain open.
 
 ## HTTP-first, MCP later
 
@@ -108,24 +108,24 @@ Local config is env-var based (`PROFILE_OS_DATA_DIR`). Cloud deployment later
 = same Docker image + a mounted volume (or swap SQLite→Postgres behind Store).
 No cloud assumptions exist in the code.
 
-## Security plan (documented, not implemented)
+## Security (implemented, opt-in)
 
 The **access-control foundation** (data model + service) exists in
 `profile_os/access.py`: `access_principals`, `access_credentials` (salted
 PBKDF2 hashes only, never plaintext), and `access_grants` tables in the same
 SQLite database, with `allowed(principal, operation, profile)` and
-`authenticate_secret(secret)` checks. **Enforcement is partial and opt-in:**
-when `PROFILE_OS_AUTH_ENABLED=1`, the store lifecycle endpoints
-(approve/reject/archive) require a bearer credential granting
-`stores:approve` on the route's profile; everything else — and the default
-local mode — remains open. The first admin credential is minted via the
-local `profile_os.bootstrap_admin` CLI, never over HTTP. The full design
-lives in
+`authenticate_secret(secret)` checks. **Enforcement is complete and
+opt-in:** when `PROFILE_OS_AUTH_ENABLED=1`, every route except `/health`
+and `/demo` requires a bearer credential granting the route's operation on
+the route's profile, and `GET /profiles` is filtered to granted profiles.
+The default local mode (auth off) remains open. The first admin credential
+is minted via the local `profile_os.bootstrap_admin` CLI, never over HTTP.
+The full design and the route → operation map live in
 [ACCESS_CONTROL.md](ACCESS_CONTROL.md). The essentials:
 
 - **Assistant Profiles are resources, not auth principals.** They do not own
   credentials or log in.
-- The future model is **principal/client-based**: credentials belong to
+- The model is **principal/client-based**: credentials belong to
   principals (humans, apps, tool bridges, admins) and grants are many-to-many
   over (principal, profile, operations), with optional expiration.
   **Profile-scoped keys (one key per profile) are not the primary design.**

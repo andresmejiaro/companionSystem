@@ -1,7 +1,8 @@
 """Access-control foundation: principals, credentials, grants.
 
-Storage/service layer ONLY — implements the model in ACCESS_CONTROL.md.
-Nothing here is enforced on API routes yet; middleware is a later slice.
+Storage/service layer — implements the model in ACCESS_CONTROL.md.
+Enforcement lives in api.py: every non-public route requires a bearer
+credential and a matching grant when PROFILE_OS_AUTH_ENABLED=1.
 
 Design (see ACCESS_CONTROL.md):
 - Assistant Profiles are resources, not principals.
@@ -87,7 +88,7 @@ def verify_secret(secret: str, stored: str) -> bool:
 
 
 class AccessControl:
-    """Service over the same SQLite database as Store. No route enforcement yet."""
+    """Service over the same SQLite database as Store; api.py enforces per route."""
 
     def __init__(self, store: Store):
         self._store = store
@@ -211,6 +212,24 @@ class AccessControl:
         return [dict(r) for r in self.db.execute(
             "SELECT * FROM access_grants WHERE principal_id=? ORDER BY created_at",
             (principal_id,)).fetchall()]
+
+    def visible_profile_ids(self, principal_id: str) -> set[str] | None:
+        """Profile ids the principal holds any active grant on.
+
+        Returns None to mean "all profiles" when the principal has an active
+        wildcard ('*') grant. Unknown/disabled principals see nothing.
+        """
+        row = self.db.execute("SELECT disabled_at FROM access_principals WHERE id=?",
+                              (principal_id,)).fetchone()
+        if row is None or row["disabled_at"] is not None:
+            return set()
+        rows = self.db.execute(
+            "SELECT DISTINCT profile_id FROM access_grants WHERE principal_id=?"
+            " AND profile_id IS NOT NULL AND revoked_at IS NULL"
+            " AND (expires_at IS NULL OR expires_at > ?)",
+            (principal_id, time.time())).fetchall()
+        ids = {r["profile_id"] for r in rows}
+        return None if ALL_PROFILES in ids else ids
 
     # -- authorization check ------------------------------------------------------------
 
