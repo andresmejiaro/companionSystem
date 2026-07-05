@@ -1,0 +1,197 @@
+"""Tool bridge for external hosted assistants (MCP-shaped, HTTP transport).
+
+A thin client that exposes the backend's operational endpoints as named
+tools with JSON-schema inputs (`TOOLS`), callable via `ToolBridge.call()`.
+A real MCP server later is a mechanical wrap: each entry in `TOOLS` is
+already an MCP tool definition (name / description / inputSchema), and
+`call(name, arguments)` is the MCP call_tool handler. See TOOL_BRIDGE.md.
+
+Auth stance (see ACCESS_CONTROL.md): the bridge owns the credential, not
+the model and not a profile. The secret comes from env/config and is sent
+as `Authorization: Bearer <secret>` on every request; the backend does all
+authorization. Nothing here bypasses or weakens route enforcement — a
+missing grant surfaces as the backend's own 401/403. No LLM calls, no
+storage, no business logic.
+
+Env:
+    PROFILE_OS_BRIDGE_BASE_URL  backend base URL (default http://127.0.0.1:8000)
+    PROFILE_OS_BRIDGE_BEARER    bearer secret (optional when auth is disabled)
+
+Admin lifecycle tools (approve/reject/archive) are deliberately NOT exposed:
+a bridge credential is operational, never `stores:approve`.
+"""
+
+from __future__ import annotations
+
+import os
+
+import httpx
+
+DEFAULT_BASE_URL = "http://127.0.0.1:8000"
+
+
+class ToolBridgeError(Exception):
+    """Backend refused or failed the call; carries the HTTP status.
+
+    401/403 mean the bridge credential is missing/invalid or lacks the
+    grant for (operation, profile) — fix grants, don't retry.
+    """
+
+    def __init__(self, status_code: int, detail: str):
+        super().__init__(f"backend returned {status_code}: {detail}")
+        self.status_code = status_code
+        self.detail = detail
+
+
+def _tool(name, description, properties, required):
+    return {"name": name, "description": description,
+            "inputSchema": {"type": "object", "properties": properties,
+                            "required": required}}
+
+
+_PID = {"type": "string", "description": "assistant profile id, e.g. 'tara'"}
+
+TOOLS = [
+    _tool("boot", "Boot a profile: compact state, prompts, recent memories.",
+          {"profile_id": _PID}, ["profile_id"]),
+    _tool("remember", "Append a memory event to a profile.",
+          {"profile_id": _PID,
+           "kind": {"type": "string"},
+           "content": {"type": "string"},
+           "tags": {"type": "array", "items": {"type": "string"}}},
+          ["profile_id", "kind", "content"]),
+    _tool("search_memories", "Full-text search over a profile's memory events.",
+          {"profile_id": _PID,
+           "query": {"type": "string"},
+           "limit": {"type": "integer", "default": 20}},
+          ["profile_id", "query"]),
+    _tool("closeout", "Close a session: log notes and set the new compact state.",
+          {"profile_id": _PID,
+           "notes": {"type": "string"},
+           "new_state": {"type": "string"}},
+          ["profile_id", "notes", "new_state"]),
+    _tool("propose_store", "Propose a dynamic store (needs admin approval before writes).",
+          {"profile_id": _PID,
+           "name": {"type": "string"},
+           "purpose": {"type": "string"},
+           "schema": {"type": "object",
+                      "description": "{'fields': {name: {'type': ..., 'required': ...}}}"}},
+          ["profile_id", "name", "purpose", "schema"]),
+    _tool("list_stores", "List a profile's dynamic store definitions.",
+          {"profile_id": _PID}, ["profile_id"]),
+    _tool("get_store", "Get one dynamic store definition (schema, status, version).",
+          {"profile_id": _PID, "name": {"type": "string"}},
+          ["profile_id", "name"]),
+    _tool("add_record", "Add a schema-validated record to an approved dynamic store.",
+          {"profile_id": _PID,
+           "store_name": {"type": "string"},
+           "data": {"type": "object"}},
+          ["profile_id", "store_name", "data"]),
+    _tool("query_records", "Query records of a dynamic store.",
+          {"profile_id": _PID,
+           "store_name": {"type": "string"},
+           "contains": {"type": "string"},
+           "limit": {"type": "integer", "default": 50}},
+          ["profile_id", "store_name"]),
+    _tool("audit", "Read the store lifecycle audit trail (profile-wide or one store).",
+          {"profile_id": _PID,
+           "store_name": {"type": "string"},
+           "limit": {"type": "integer", "default": 100}},
+          ["profile_id"]),
+]
+
+
+class ToolBridge:
+    """HTTP client exposing backend endpoints as tools. 1:1, no logic.
+
+    `client` injection exists for tests (any httpx.Client-compatible
+    object, e.g. fastapi.testclient.TestClient); production callers rely
+    on env/config.
+    """
+
+    def __init__(self, base_url: str | None = None, bearer: str | None = None,
+                 client: httpx.Client | None = None):
+        self._base_url = (base_url
+                          or os.environ.get("PROFILE_OS_BRIDGE_BASE_URL")
+                          or DEFAULT_BASE_URL)
+        self._bearer = bearer if bearer is not None else os.environ.get(
+            "PROFILE_OS_BRIDGE_BEARER")
+        self._client = client or httpx.Client(base_url=self._base_url)
+
+    def close(self):
+        self._client.close()
+
+    def _request(self, method: str, path: str, *, json: dict | None = None,
+                 params: dict | None = None):
+        headers = {}
+        if self._bearer:
+            headers["Authorization"] = f"Bearer {self._bearer}"
+        params = {k: v for k, v in (params or {}).items() if v is not None}
+        r = self._client.request(method, path, json=json, params=params,
+                                 headers=headers)
+        if r.status_code >= 400:
+            try:
+                detail = r.json().get("detail", r.text)
+            except ValueError:
+                detail = r.text
+            raise ToolBridgeError(r.status_code, detail)
+        return r.json()
+
+    # -- tools (names match TOOLS) -------------------------------------------
+
+    def boot(self, profile_id: str):
+        return self._request("POST", f"/profiles/{profile_id}/boot")
+
+    def remember(self, profile_id: str, kind: str, content: str,
+                 tags: list[str] | None = None):
+        return self._request("POST", f"/profiles/{profile_id}/memories",
+                             json={"kind": kind, "content": content,
+                                   "tags": tags or []})
+
+    def search_memories(self, profile_id: str, query: str, limit: int = 20):
+        return self._request("GET", f"/profiles/{profile_id}/memories/search",
+                             params={"q": query, "limit": limit})
+
+    def closeout(self, profile_id: str, notes: str, new_state: str):
+        return self._request("POST", f"/profiles/{profile_id}/closeout",
+                             json={"notes": notes, "new_state": new_state})
+
+    def propose_store(self, profile_id: str, name: str, purpose: str,
+                      schema: dict):
+        return self._request("POST", f"/profiles/{profile_id}/stores",
+                             json={"name": name, "purpose": purpose,
+                                   "proposed_by": f"bridge:{profile_id}",
+                                   "schema": schema})
+
+    def list_stores(self, profile_id: str):
+        return self._request("GET", f"/profiles/{profile_id}/stores")
+
+    def get_store(self, profile_id: str, name: str):
+        return self._request("GET", f"/profiles/{profile_id}/stores/{name}")
+
+    def add_record(self, profile_id: str, store_name: str, data: dict):
+        return self._request(
+            "POST", f"/profiles/{profile_id}/stores/{store_name}/records",
+            json={"data": data})
+
+    def query_records(self, profile_id: str, store_name: str,
+                      contains: str | None = None, limit: int = 50):
+        return self._request(
+            "GET", f"/profiles/{profile_id}/stores/{store_name}/records",
+            params={"contains": contains, "limit": limit})
+
+    def audit(self, profile_id: str, store_name: str | None = None,
+              limit: int = 100):
+        if store_name is None:
+            return self._request("GET", f"/profiles/{profile_id}/audit",
+                                 params={"limit": limit})
+        return self._request(
+            "GET", f"/profiles/{profile_id}/stores/{store_name}/audit",
+            params={"limit": limit})
+
+    # -- generic dispatch (the future MCP call_tool handler) ------------------
+
+    def call(self, name: str, arguments: dict):
+        if name not in {t["name"] for t in TOOLS}:
+            raise ToolBridgeError(404, f"unknown tool {name!r}")
+        return getattr(self, name)(**arguments)

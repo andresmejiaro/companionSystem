@@ -43,6 +43,16 @@ key field for this.
 Credentials belong to principals (apps, bridges, humans, admins), never to
 profiles — see [ACCESS_CONTROL.md](ACCESS_CONTROL.md).
 
+## Tool bridge (for external hosted assistants)
+
+`profile_os/bridge.py` exposes the operational endpoints as named tools
+(boot, remember, search_memories, closeout, propose_store, list_stores,
+get_store, add_record, query_records, audit) for Claude/ChatGPT/Gemini-hosted
+assistants. It is a pure HTTP client — the backend keeps doing all
+authorization — configured via `PROFILE_OS_BRIDGE_BASE_URL` and
+`PROFILE_OS_BRIDGE_BEARER`. See [TOOL_BRIDGE.md](TOOL_BRIDGE.md), including
+the mechanical path to a real MCP server.
+
 ## Demo console
 
 With the server running, open **http://127.0.0.1:8000/demo** — a single static

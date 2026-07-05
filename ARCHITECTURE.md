@@ -90,10 +90,11 @@ In the default local mode (auth off) all endpoints remain open.
 
 Slice zero ships **HTTP only** (smallest inspectable option): it's testable
 with plain httpx, serves the future web/mobile UI directly, and OpenAPI docs
-come free. The MCP adapter plan: a thin MCP server exposing tools
-`boot`, `remember`, `search`, `closeout`, `query_domain`, `add_domain_record` —
-each a 1:1 call into the same `Store` methods (or the HTTP API when remote).
-No logic will live in the MCP layer.
+come free. `profile_os/bridge.py` now provides an MCP-shaped **tool bridge**
+over the HTTP API — named tools with JSON-schema inputs and a
+`call(name, arguments)` dispatcher, each a 1:1 authenticated HTTP call (see
+[TOOL_BRIDGE.md](TOOL_BRIDGE.md)). A real MCP server is a mechanical wrap of
+`bridge.TOOLS` + `ToolBridge.call`; no logic will live in the MCP layer.
 
 ## Provider agnosticism
 
