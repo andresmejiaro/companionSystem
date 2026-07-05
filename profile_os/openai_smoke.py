@@ -69,20 +69,20 @@ def _resolve_client(client):
     return OpenAI()
 
 
-def _openai_tools():
+def _openai_tools(allowed=SMOKE_TOOLS):
     return [{"type": "function",
              "function": {"name": t["name"],
                           "description": t["description"],
                           "parameters": t["inputSchema"]}}
-            for t in TOOLS if t["name"] in SMOKE_TOOLS]
+            for t in TOOLS if t["name"] in allowed]
 
 
 def _execute(bridge: ToolBridge, name: str, arguments: dict,
-             printer) -> str:
+             printer, allowed=SMOKE_TOOLS) -> str:
     """Run one tool call; returns the JSON string fed back to the model."""
     printer(f"-> {name}({arguments})")
-    if name not in SMOKE_TOOLS:
-        printer("   !! refused: not an allowed smoke tool")
+    if name not in allowed:
+        printer("   !! refused: not an allowed tool")
         return json.dumps({"error": f"tool {name!r} is not allowed"})
     try:
         result = bridge.call(name, arguments)
@@ -97,7 +97,8 @@ def _execute(bridge: ToolBridge, name: str, arguments: dict,
 
 def run_tool_loop(bridge: ToolBridge, client, model: str,
                   messages: list[dict], tools: list[dict],
-                  printer=print, max_rounds: int = MAX_ROUNDS) -> str:
+                  printer=print, max_rounds: int = MAX_ROUNDS,
+                  allowed=SMOKE_TOOLS) -> str:
     """Run completions until the model answers in text; returns that text.
 
     Mutates `messages` in place (assistant tool-call turns, tool results,
@@ -116,7 +117,8 @@ def run_tool_loop(bridge: ToolBridge, client, model: str,
                                         for tc in msg.tool_calls]})
         for tc in msg.tool_calls:
             arguments = json.loads(tc.function.arguments or "{}")
-            output = _execute(bridge, tc.function.name, arguments, printer)
+            output = _execute(bridge, tc.function.name, arguments, printer,
+                              allowed=allowed)
             messages.append({"role": "tool", "tool_call_id": tc.id,
                              "content": output})
     raise RuntimeError(f"model did not finish within {max_rounds} rounds")

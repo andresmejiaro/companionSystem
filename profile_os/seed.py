@@ -1,34 +1,14 @@
 """Seed the two example Assistant Profiles: sidra and tara."""
 
+from . import prompts
 from .storage import Store
 
-SIDRA_BASE = """# Sidra — base behavior
-You are an agentic coding assistant profile. You work in explicit task contracts:
-scope, allowed context, acceptance criteria. You review diffs before declaring done.
-You record failure scars (mistakes worth never repeating) and model-routing notes.
-You never modify identity/prompt files through memory operations.
-"""
-
-SIDRA_ROLE = """# Sidra — role/lane
-Lane: software engineering execution.
-- Honor the task contract; do not expand scope silently.
-- Prefer small reviewable diffs.
-- Consult failure_scar memories before repeating a risky pattern.
-- Route heavy reasoning to strong models, mechanical edits to cheap models.
-"""
-
-TARA_BASE = """# Tara — base behavior
-You are a nutrition and food-tracking assistant profile. You keep accurate records
-of eaten food, nutrition facts, and product calibrations. You never invent nutrition
-numbers; unknown values are recorded as unknown.
-"""
-
-TARA_ROLE = """# Tara — role/lane
-Lane: food tracking and meal history.
-- Log eaten food with portion and time context.
-- Use calibrated product data when available before generic estimates.
-- Summarize daily intake at closeout.
-"""
+SIDRA_BASE = prompts.load("sidra_base")
+SIDRA_ROLE = prompts.load("sidra_role")
+TARA_BASE = prompts.load("tara_base")
+TARA_ROLE = prompts.load("tara_role")
+SECRETARY_BASE = prompts.load("secretary_base")
+SECRETARY_ROLE = prompts.load("secretary_role")
 
 
 def seed(store: Store) -> None:
@@ -59,7 +39,7 @@ def seed(store: Store) -> None:
             "tara", "Tara", TARA_BASE, TARA_ROLE,
             description="Food tracking: nutrition facts, eaten food, product calibration, meal history.",
             allowed_tools=["log_food", "query_products", "daily_summary"],
-            memory_policy={"kinds": ["fact", "observation", "note"], "max_boot_events": 10},
+            memory_policy={"kinds": ["fact", "observation", "preference", "note"], "max_boot_events": 10},
             closeout_rules="Write daily intake summary and flag uncalibrated products.",
             initial_state="No meals logged today.",
         )
@@ -77,3 +57,18 @@ def seed(store: Store) -> None:
         store.remember("tara", {"kind": "fact",
                                 "content": "User prefers protein-forward breakfasts.",
                                 "tags": ["preference", "breakfast"]})
+
+    if "secretary" not in existing:
+        # Prompt-only companion: no domain records, no stores, no schemas.
+        # Any structure (e.g. a todo store) must be proposed by the
+        # companion itself, through tools, when the need shows itself.
+        store.create_profile(
+            "secretary", "Secretary", SECRETARY_BASE, SECRETARY_ROLE,
+            description="Commitments, tasks, follow-ups; grows its own structure via store proposals.",
+            allowed_tools=[],
+            memory_policy={"kinds": ["decision", "fact", "note",
+                                     "observation", "preference"],
+                           "max_boot_events": 10},
+            closeout_rules="Write a handoff note: open commitments, pending store proposals, next checks.",
+            initial_state="Fresh profile. No commitments recorded, no stores.",
+        )

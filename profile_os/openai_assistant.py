@@ -33,38 +33,38 @@ import argparse
 import os
 import sys
 
+from . import prompts
 from .bridge import ToolBridge, ToolBridgeError
 from .openai_smoke import (DEFAULT_MODEL, SMOKE_TOOLS, _openai_tools,
                            _resolve_client, run_tool_loop)
 
-# Same operational-only allowlist as the smoke runner: no lifecycle tools,
-# no propose_store/add_record in this slice.
-ASSISTANT_TOOLS = SMOKE_TOOLS
+# Smoke allowlist plus `propose_store`: a companion may *decide* it needs a
+# structured store and propose one, but proposals stay pending until an
+# admin approves — and record writes (add_record) remain unexposed, so the
+# model can never write to a store in this slice. No lifecycle tools.
+ASSISTANT_TOOLS = SMOKE_TOOLS + ("propose_store",)
 
+# Layered system prompt. Identity (base/role prompts) comes ONLY from the
+# backend boot payload — nothing profile-specific may be hardcoded here.
 SYSTEM_TEMPLATE = """\
 You are the assistant for Assistant Profile OS profile {profile_id!r}, \
-running in a local REPL session.
+running in a local session.
 
+{tool_contract}
 {base_prompt}
 {role_prompt}
 ## Current compact state
 {compact_state}
-
-## Rules
-- The backend tools are the SOURCE OF TRUTH for memory: use `remember` to \
-store facts and `search_memories` to recall them — never rely on this \
-prompt or the conversation alone for stored knowledge.
-- When calling `remember`, `kind` MUST be exactly one of: decision, fact, \
-failure_scar, note, observation, preference. Use "note" when unsure.
-- The profile is already booted; call `boot` again only if you need a \
-fresh snapshot.
-- Answer the user in plain text when you have what you need.
 """
 
 
 def build_system_prompt(profile_id: str, boot: dict) -> str:
+    """Assemble: shared tool contract + base prompt + role prompt +
+    compact state. base/role come from the boot payload (backend is the
+    source of truth); the tool contract is shared across all profiles."""
     return SYSTEM_TEMPLATE.format(
         profile_id=profile_id,
+        tool_contract=prompts.tool_contract(),
         base_prompt=boot.get("base_prompt") or "",
         role_prompt=boot.get("role_prompt") or "",
         compact_state=boot.get("compact_state") or "(none)")
@@ -100,8 +100,8 @@ class AssistantSession:
         self.messages.append({"role": "user", "content": text})
         self.user_turns += 1
         return run_tool_loop(self.bridge, self.client, self.model,
-                             self.messages, _openai_tools(),
-                             printer=self.printer)
+                             self.messages, _openai_tools(ASSISTANT_TOOLS),
+                             printer=self.printer, allowed=ASSISTANT_TOOLS)
 
     def close(self, notes: str | None = None) -> dict:
         """Closeout with the given note, or one derived from the session."""

@@ -149,9 +149,11 @@ def test_disallowed_tool_refused_not_executed(tmp_path):
 
 
 def test_lifecycle_and_store_write_tools_not_exposed():
-    for name in ("approve", "reject", "archive", "propose_store",
-                 "add_record"):
+    # propose_store IS exposed (companions may request structure), but
+    # writes and lifecycle stay out: approval is a human admin act.
+    for name in ("approve", "reject", "archive", "add_record"):
         assert name not in ASSISTANT_TOOLS
+    assert "propose_store" in ASSISTANT_TOOLS
 
 
 def test_remember_schema_has_kind_enum():
