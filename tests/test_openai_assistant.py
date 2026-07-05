@@ -8,7 +8,7 @@ import types
 from fastapi.testclient import TestClient
 
 from profile_os.api import create_app
-from profile_os.bridge import ToolBridge
+from profile_os.bridge import MEMORY_KINDS, TOOLS, ToolBridge
 from profile_os.openai_assistant import ASSISTANT_TOOLS, AssistantSession, repl
 
 
@@ -152,6 +152,35 @@ def test_lifecycle_and_store_write_tools_not_exposed():
     for name in ("approve", "reject", "archive", "propose_store",
                  "add_record"):
         assert name not in ASSISTANT_TOOLS
+
+
+def test_remember_schema_has_kind_enum():
+    remember = next(t for t in TOOLS if t["name"] == "remember")
+    kind = remember["inputSchema"]["properties"]["kind"]
+    assert kind["enum"] == ["decision", "fact", "failure_scar", "note",
+                            "observation", "preference"] == MEMORY_KINDS
+
+
+def test_invalid_kind_fed_back_and_retried(tmp_path):
+    script = [
+        [_tool_call("1", "remember", {"profile_id": "tara",
+                                      "kind": "preference_or_setup",
+                                      "content": "repl setup done"})],
+        [_tool_call("2", "remember", {"profile_id": "tara", "kind": "note",
+                                      "content": "repl setup done"})],
+        "Stored as a note.",
+    ]
+    _, bridge, session = _session(tmp_path, script)
+    session.start()
+    assert session.send("remember my setup") == "Stored as a note."
+    tool_msgs = [m for m in session.messages if m["role"] == "tool"]
+    first = json.loads(tool_msgs[0]["content"])
+    assert first["status"] == 422  # error fed back to the model, no abort
+    assert "error" in first
+    second = json.loads(tool_msgs[1]["content"])
+    assert second["kind"] == "note"  # retry really stored the memory
+    hits = bridge.search_memories("tara", "repl setup")
+    assert any(e["kind"] == "note" for e in hits)
 
 
 def test_fake_client_needs_no_openai_package(tmp_path):

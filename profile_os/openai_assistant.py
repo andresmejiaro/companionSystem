@@ -54,6 +54,8 @@ running in a local REPL session.
 - The backend tools are the SOURCE OF TRUTH for memory: use `remember` to \
 store facts and `search_memories` to recall them — never rely on this \
 prompt or the conversation alone for stored knowledge.
+- When calling `remember`, `kind` MUST be exactly one of: decision, fact, \
+failure_scar, note, observation, preference. Use "note" when unsure.
 - The profile is already booted; call `boot` again only if you need a \
 fresh snapshot.
 - Answer the user in plain text when you have what you need.

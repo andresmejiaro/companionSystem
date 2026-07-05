@@ -51,12 +51,16 @@ def _tool(name, description, properties, required):
 
 _PID = {"type": "string", "description": "assistant profile id, e.g. 'tara'"}
 
+MEMORY_KINDS = ["decision", "fact", "failure_scar", "note", "observation",
+                "preference"]
+
 TOOLS = [
     _tool("boot", "Boot a profile: compact state, prompts, recent memories.",
           {"profile_id": _PID}, ["profile_id"]),
     _tool("remember", "Append a memory event to a profile.",
           {"profile_id": _PID,
-           "kind": {"type": "string"},
+           "kind": {"type": "string", "enum": MEMORY_KINDS,
+                    "description": "memory kind; use 'note' when unsure"},
            "content": {"type": "string"},
            "tags": {"type": "array", "items": {"type": "string"}}},
           ["profile_id", "kind", "content"]),
