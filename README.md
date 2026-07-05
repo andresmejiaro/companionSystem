@@ -53,6 +53,12 @@ authorization — configured via `PROFILE_OS_BRIDGE_BASE_URL` and
 `PROFILE_OS_BRIDGE_BEARER`. See [TOOL_BRIDGE.md](TOOL_BRIDGE.md), including
 the mechanical path to a real MCP server.
 
+For a real-model local test (not hosted, not public, not production auth),
+`python -m profile_os.openai_assistant --profile tara` runs an interactive
+assistant REPL over the bridge, and `python -m profile_os.openai_smoke`
+runs a one-shot version; both need `OPENAI_API_KEY` (and the bridge bearer
+if auth is enabled) in env. Details in TOOL_BRIDGE.md.
+
 ## Demo console
 
 With the server running, open **http://127.0.0.1:8000/demo** — a single static

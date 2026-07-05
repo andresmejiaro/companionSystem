@@ -124,6 +124,32 @@ need a publicly reachable HTTPS bridge (real MCP server plus a tunnel or
 deployment). This harness rehearses exactly the tool sequence such an
 assistant would perform, locally.
 
+## Local real-model runners (smoke + REPL)
+
+Two optional dev tools drive the bridge with an **actual OpenAI model**
+deciding the tool calls — still local-only: no server, no deployment, not
+public, and not production auth (they use the same bridge bearer from env
+as everything else). The `openai` package is lazily imported, so nothing
+else in the project (or its tests) needs it installed.
+
+```bash
+# one-shot smoke run
+OPENAI_API_KEY=... PROFILE_OS_BRIDGE_BEARER=$BRIDGE_SECRET \
+python -m profile_os.openai_smoke --profile tara "remember I tested this"
+
+# interactive assistant REPL (boots the profile once, keeps history,
+# /exit triggers a closeout)
+OPENAI_API_KEY=... PROFILE_OS_BRIDGE_BEARER=$BRIDGE_SECRET \
+python -m profile_os.openai_assistant --profile tara
+```
+
+Both expose only operational tools (boot, remember, search_memories,
+list_stores, get_store, query_records, audit, closeout) — no lifecycle
+tools, and no propose_store/add_record in this slice; a model request for
+anything else is refused without executing. Secrets stay in env and are
+never printed; backend 401/403 abort with a clear message. Fake-client
+tests live in `tests/test_openai_assistant.py`.
+
 ## Current limitations
 
 - Python-process client, not a standalone server: the hosted platform

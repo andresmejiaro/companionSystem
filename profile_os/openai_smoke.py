@@ -35,8 +35,6 @@ import json
 import os
 import sys
 
-from openai import OpenAI
-
 from .bridge import TOOLS, ToolBridge, ToolBridgeError
 
 DEFAULT_MODEL = "gpt-4o-mini"
@@ -54,6 +52,19 @@ SYSTEM_PROMPT = (
     "`search_memories` to verify or recall it. When done, answer the user "
     "in plain text summarizing what you did and found."
 )
+
+
+def _resolve_client(client):
+    """Return `client` or a real openai.OpenAI, imported only when needed."""
+    if client is not None:
+        return client
+    try:
+        from openai import OpenAI
+    except ImportError as e:
+        raise RuntimeError(
+            "the 'openai' package is required for a real-model run; "
+            "install it with: pip install openai") from e
+    return OpenAI()
 
 
 def _openai_tools():
@@ -82,23 +93,21 @@ def _execute(bridge: ToolBridge, name: str, arguments: dict,
     return json.dumps(result)
 
 
-def run_smoke(bridge: ToolBridge, prompt: str, profile_id: str = "tara",
-              model: str = DEFAULT_MODEL, client: OpenAI | None = None,
-              printer=print) -> str:
-    """Drive one model conversation to completion; returns the final text."""
-    client = client or OpenAI()
-    messages = [
-        {"role": "system",
-         "content": SYSTEM_PROMPT.format(profile_id=profile_id)},
-        {"role": "user", "content": prompt},
-    ]
-    tools = _openai_tools()
+def run_tool_loop(bridge: ToolBridge, client, model: str,
+                  messages: list[dict], tools: list[dict],
+                  printer=print, max_rounds: int = MAX_ROUNDS) -> str:
+    """Run completions until the model answers in text; returns that text.
 
-    for _ in range(MAX_ROUNDS):
+    Mutates `messages` in place (assistant tool-call turns, tool results,
+    and the final assistant text), so callers keeping a conversation
+    across turns can pass the same list again.
+    """
+    for _ in range(max_rounds):
         resp = client.chat.completions.create(
             model=model, messages=messages, tools=tools)
         msg = resp.choices[0].message
         if not msg.tool_calls:
+            messages.append({"role": "assistant", "content": msg.content})
             return msg.content or ""
         messages.append({"role": "assistant", "content": msg.content,
                          "tool_calls": [tc.model_dump()
@@ -108,7 +117,25 @@ def run_smoke(bridge: ToolBridge, prompt: str, profile_id: str = "tara",
             output = _execute(bridge, tc.function.name, arguments, printer)
             messages.append({"role": "tool", "tool_call_id": tc.id,
                              "content": output})
-    raise RuntimeError(f"model did not finish within {MAX_ROUNDS} rounds")
+    raise RuntimeError(f"model did not finish within {max_rounds} rounds")
+
+
+def run_smoke(bridge: ToolBridge, prompt: str, profile_id: str = "tara",
+              model: str = DEFAULT_MODEL, client=None,
+              printer=print) -> str:
+    """Drive one model conversation to completion; returns the final text.
+
+    `client` is any openai.OpenAI-compatible object (tests pass fakes);
+    the `openai` package is only imported when it is omitted.
+    """
+    client = _resolve_client(client)
+    messages = [
+        {"role": "system",
+         "content": SYSTEM_PROMPT.format(profile_id=profile_id)},
+        {"role": "user", "content": prompt},
+    ]
+    return run_tool_loop(bridge, client, model, messages, _openai_tools(),
+                         printer=printer)
 
 
 def main(argv=None):
@@ -128,7 +155,7 @@ def main(argv=None):
     bridge = ToolBridge()
     try:
         answer = run_smoke(bridge, args.prompt, args.profile, args.model)
-    except ToolBridgeError as e:
+    except (ToolBridgeError, RuntimeError) as e:
         print(f"SMOKE FAILED: {e}", file=sys.stderr)
         return 1
     finally:
