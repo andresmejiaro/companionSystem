@@ -95,6 +95,35 @@ admin/user decisions requiring `stores:approve`; a bridge credential is
 operational by design. An admin uses the demo console or the API directly.
 Also not exposed: profile CRUD, grant management, credential management.
 
+## Local harness (integration rehearsal)
+
+`profile_os/harness.py` simulates a hosted assistant driving the bridge —
+it tests the tool wiring end-to-end **without any deployment**. It is not
+a chatbot and calls no LLM: it runs a fixed scripted flow (boot → remember
+→ search → propose store → expected 409 on a pre-approval write → audit →
+closeout), printing each tool call and a final summary.
+
+```bash
+# against a running local backend (same env vars as the bridge)
+PROFILE_OS_BRIDGE_BASE_URL=http://127.0.0.1:8000 \
+PROFILE_OS_BRIDGE_BEARER=$BRIDGE_SECRET \
+python -m profile_os.harness --profile tara
+```
+
+With auth enabled the harness needs a bridge credential holding the
+operational grants (see "Tara-only bridge" above); it never bypasses auth
+and never approves schemas — 401/403 abort the run with a clear hint, and
+the proposed store is deliberately left `pending` for an admin.
+
+In tests the same flow runs in-process with no network:
+`run_harness(ToolBridge(client=TestClient(app)))` — see
+`tests/test_harness.py`.
+
+Connecting a real hosted Claude/ChatGPT is a later step: those platforms
+need a publicly reachable HTTPS bridge (real MCP server plus a tunnel or
+deployment). This harness rehearses exactly the tool sequence such an
+assistant would perform, locally.
+
 ## Current limitations
 
 - Python-process client, not a standalone server: the hosted platform
