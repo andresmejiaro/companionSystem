@@ -1,0 +1,71 @@
+services:
+  backend:
+    build: .
+    env_file:
+      - .env
+    environment:
+      PROFILE_OS_DATA_DIR: /app/data
+      PROFILE_OS_AUTH_ENABLED: "1"
+      PROFILE_OS_MCP_BACKEND_PROFILES: ${PROFILE_OS_MCP_BACKEND_PROFILES:-*}
+    command:
+      - /bin/sh
+      - -c
+      - >
+        python -m profile_os.bootstrap_bridge
+        --data-dir /app/data
+        --secret "$$PROFILE_OS_MCP_BACKEND_BEARER"
+        --profiles "$$PROFILE_OS_MCP_BACKEND_PROFILES"
+        &&
+        uvicorn profile_os.api:app --host 0.0.0.0 --port 8000
+    volumes:
+      - profile-os-data:/app/data
+    ports:
+      - "${PROFILE_OS_BACKEND_PORT:-8000}:8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2).read()"
+      interval: 10s
+      timeout: 3s
+      retries: 6
+
+  mcp:
+    build: .
+    env_file:
+      - .env
+    environment:
+      PROFILE_OS_BRIDGE_BASE_URL: http://backend:8000
+      PROFILE_OS_BRIDGE_BEARER: ${PROFILE_OS_MCP_BACKEND_BEARER}
+      MCP_PUBLIC_BASE_URL: ${MCP_PUBLIC_BASE_URL:-http://127.0.0.1:8080}
+      MCP_ALLOWED_ORIGINS: ${MCP_ALLOWED_ORIGINS:-https://claude.ai,https://*.claude.ai}
+      MCP_OAUTH_ALLOWED_REDIRECT_HOSTS: ${MCP_OAUTH_ALLOWED_REDIRECT_HOSTS:-claude.ai,*.claude.ai}
+      MCP_CONNECTOR_TOKEN: ${MCP_CONNECTOR_TOKEN:-}
+      MCP_CONNECTOR_TOKENS: ${MCP_CONNECTOR_TOKENS:-}
+      MCP_OAUTH_SIGNING_KEY: ${MCP_OAUTH_SIGNING_KEY:-}
+      MCP_AUTH_REQUIRED: ${MCP_AUTH_REQUIRED:-1}
+    command:
+      - uvicorn
+      - profile_os.mcp_server:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${PROFILE_OS_MCP_PORT:-8080}:8080"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=2).read()"
+      interval: 10s
+      timeout: 3s
+      retries: 6
+
+volumes:
+  profile-os-data:

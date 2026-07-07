@@ -1,10 +1,9 @@
-"""Tool bridge for external hosted assistants (MCP-shaped, HTTP transport).
+"""Tool bridge for local runners and the remote MCP adapter.
 
 A thin client that exposes the backend's operational endpoints as named
 tools with JSON-schema inputs (`TOOLS`), callable via `ToolBridge.call()`.
-A real MCP server later is a mechanical wrap: each entry in `TOOLS` is
-already an MCP tool definition (name / description / inputSchema), and
-`call(name, arguments)` is the MCP call_tool handler. See TOOL_BRIDGE.md.
+The deployable remote MCP server in `profile_os.mcp_server` reuses this
+client while exposing a narrower Claude-facing tool set. See TOOL_BRIDGE.md.
 
 Auth stance (see ACCESS_CONTROL.md): the bridge owns the credential, not
 the model and not a profile. The secret comes from env/config and is sent
@@ -143,6 +142,12 @@ class ToolBridge:
 
     # -- tools (names match TOOLS) -------------------------------------------
 
+    def list_profiles(self):
+        return self._request("GET", "/profiles")
+
+    def boot_profile(self, profile_id: str):
+        return self.boot(profile_id)
+
     def boot(self, profile_id: str):
         return self._request("POST", f"/profiles/{profile_id}/boot")
 
@@ -193,7 +198,7 @@ class ToolBridge:
             "GET", f"/profiles/{profile_id}/stores/{store_name}/audit",
             params={"limit": limit})
 
-    # -- generic dispatch (the future MCP call_tool handler) ------------------
+    # -- generic dispatch for local hosted-assistant runners ------------------
 
     def call(self, name: str, arguments: dict):
         if name not in {t["name"] for t in TOOLS}:

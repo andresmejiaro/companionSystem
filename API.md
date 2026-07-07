@@ -3,7 +3,9 @@
 Base URL: `http://127.0.0.1:8000`. All bodies JSON. Errors:
 `404 {"detail": "unknown profile: 'x'"}`, `422 {"detail": "malformed ..."}`.
 
-Future MCP tools map 1:1 to the starred operations.
+The remote MCP server in `profile_os/mcp_server.py` exposes a Claude-facing
+subset of these operations over `POST /mcp` and `GET /mcp`; see
+[MCP_CONNECTOR.md](MCP_CONNECTOR.md).
 
 ## Profiles
 

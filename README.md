@@ -51,7 +51,30 @@ get_store, add_record, query_records, audit) for Claude/ChatGPT/Gemini-hosted
 assistants. It is a pure HTTP client — the backend keeps doing all
 authorization — configured via `PROFILE_OS_BRIDGE_BASE_URL` and
 `PROFILE_OS_BRIDGE_BEARER`. See [TOOL_BRIDGE.md](TOOL_BRIDGE.md), including
-the mechanical path to a real MCP server.
+how local runners reuse the same bridge.
+
+## Remote MCP server (Claude.ai custom connectors)
+
+`profile_os/mcp_server.py` is a deployable remote MCP server over Streamable
+HTTP:
+
+- `POST /mcp` and `GET /mcp` on one endpoint
+- MCP tools: `list_profiles`, `boot_profile`, `remember`, `search_memories`,
+  `closeout`, `list_stores`, `propose_store`, `query_records`, `add_record`
+- Claude-facing auth handled by the MCP service; backend auth handled by a
+  separate bridge credential from env
+- no admin approve/reject/archive tools exposed
+
+Run backend + MCP locally with Docker:
+
+```bash
+cp .env.example .env
+# edit .env and replace every change-me value
+docker compose up --build
+```
+
+See [MCP_CONNECTOR.md](MCP_CONNECTOR.md) for OAuth, tunnel/deployment notes,
+and the Claude.ai custom connector setup flow.
 
 For a real-model local test (not hosted, not public, not production auth),
 `python -m profile_os.openai_assistant --profile tara` runs an interactive
@@ -115,11 +138,13 @@ Local only; no network, no API keys, no LLM calls.
 ## Docs
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) — reuse/build decision, design, security plan
-- [API.md](API.md) — HTTP API / tool contract (also mirrored as future MCP tools)
+- [API.md](API.md) — HTTP API / tool contract
 - [UI_SPEC.md](UI_SPEC.md) — spec for the later web/mobile client
 
-## Docker (for the later cloud path — not deployed in this slice)
+## Docker
 
 ```bash
 docker build -t profile-os . && docker run -p 8000:8000 -v $PWD/data:/app/data profile-os
 ```
+
+For the deployable backend + MCP stack, use `docker compose up --build`.

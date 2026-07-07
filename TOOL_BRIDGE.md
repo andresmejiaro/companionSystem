@@ -6,19 +6,23 @@ through named tools. It is a pure client of the existing HTTP API — no
 business logic, no storage, no LLM calls; the backend stays the source of
 truth and does **all** authorization.
 
-## Why HTTP bridge first, real MCP later
+## Bridge and remote MCP
 
-An MCP server would add a new dependency (`mcp` SDK) for what is, in this
-slice, ten 1:1 endpoint wrappers. Instead the bridge is already MCP-shaped
-so the later wrap is mechanical:
+The bridge remains the reusable HTTP client for local runners and the remote
+MCP server. `profile_os/mcp_server.py` now wraps it as a Streamable HTTP MCP
+server for Claude.ai custom connectors; see [MCP_CONNECTOR.md](MCP_CONNECTOR.md)
+for deployment and connector setup.
+
+The original bridge shape is still useful:
 
 - `bridge.TOOLS` — a list of `{name, description, inputSchema}` dicts,
-  which is exactly MCP's `list_tools` response shape.
-- `ToolBridge.call(name, arguments)` — exactly MCP's `call_tool` handler.
+  which local runners use as hosted-assistant tool definitions.
+- `ToolBridge.call(name, arguments)` — generic dispatch for the older local
+  harness and smoke runners.
 
-A future `profile_os/mcp_server.py` is ~30 lines: instantiate `ToolBridge`
-from env, return `TOOLS` from `list_tools`, forward `call_tool` to
-`bridge.call`, run over stdio. Nothing else changes.
+The remote MCP server deliberately exposes a narrower, Claude-facing tool set:
+`list_profiles`, `boot_profile`, `remember`, `search_memories`, `closeout`,
+`list_stores`, `propose_store`, `query_records`, and `add_record`.
 
 ## Configuration
 
@@ -40,7 +44,7 @@ bridge surfaces both as `ToolBridgeError` and never retries around them.
 python -m profile_os.bootstrap_admin --data-dir data --secret "$ADMIN_SECRET"
 PROFILE_OS_AUTH_ENABLED=1 .venv/bin/uvicorn profile_os.api:app
 
-# use the bridge from Python (the future MCP server calls it the same way)
+# use the bridge from Python (the remote MCP server uses the same backend calls)
 PROFILE_OS_BRIDGE_BEARER=$BRIDGE_SECRET .venv/bin/python -c '
 from profile_os.bridge import ToolBridge
 b = ToolBridge()
@@ -152,9 +156,8 @@ tests live in `tests/test_openai_assistant.py`.
 
 ## Current limitations
 
-- Python-process client, not a standalone server: the hosted platform
-  needs a runtime that can import `profile_os.bridge` (or the future MCP
-  server wrapping it).
+- The bridge itself is a Python-process client. Hosted platforms should use
+  the standalone remote MCP server in `profile_os/mcp_server.py`.
 - Synchronous `httpx.Client`; fine for a single-assistant bridge.
 - No streaming, no pagination beyond the backend's `limit` params.
 - No secret rotation helper — revoke and re-issue via `AccessControl`.
