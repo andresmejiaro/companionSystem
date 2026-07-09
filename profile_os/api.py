@@ -7,22 +7,41 @@ same service calls later (see ARCHITECTURE.md).
 
 from __future__ import annotations
 
+import base64
 import os
+import re
+import time
 
 from pathlib import Path
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from . import seed
 from .access import AccessControl
 from .dynstores import DynamicStores
+from .enroll import Enrollment, InviteConsumed, InviteInvalid
 from .errors import (DynStoreConflict, DynStoreNotFound, MalformedMemoryEvent,
                      MalformedRecord, ProfileNotFound, SchemaError)
+from .sign import signing_message
 from .storage import Store
 
 DATA_DIR = os.environ.get("PROFILE_OS_DATA_DIR", "data")
+
+SIGNATURE_SKEW_SECONDS = 120
+_SIG_RE = re.compile(
+    r'key_id=(?P<key_id>[^,]+),ts=(?P<ts>\d+),nonce=(?P<nonce>[0-9a-fA-F]+),sig=(?P<sig>[A-Za-z0-9+/=]+)')
+
+# Owner grants auto-issued to the creating principal on POST /profiles.
+OWNER_OPS = ["boot", "remember", "search", "closeout", "records:read",
+            "records:write", "stores:propose", "manage_profile"]
+
+AUTO_STORE_LIMIT = int(os.environ.get("PROFILE_OS_AUTO_STORE_LIMIT", "3"))
+AUTO_STORE_MAX_FIELDS = int(os.environ.get("PROFILE_OS_AUTO_STORE_MAX_FIELDS", "12"))
+MAX_PROFILES_PER_PRINCIPAL = int(os.environ.get("PROFILE_OS_MAX_PROFILES_PER_PRINCIPAL", "10"))
+
+PROFILE_ID_RE = re.compile(r"^[a-z0-9_-]{1,64}$")
 
 
 class MemoryEventIn(BaseModel):
@@ -51,6 +70,19 @@ class RejectIn(BaseModel):
     reason: str
 
 
+class ProfileCreateIn(BaseModel):
+    id: str
+    display_name: str
+    base_prompt: str = ""
+    role_prompt: str = ""
+
+
+class EnrollIn(BaseModel):
+    invite_token: str
+    display_name: str
+    public_key: str
+
+
 def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
                auth_enabled: bool | None = None) -> FastAPI:
     if auth_enabled is None:
@@ -65,9 +97,60 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
     app.state.dynstores = dyn
     access = AccessControl(store)
     app.state.access = access
+    enrollment = Enrollment(access)
+    app.state.enrollment = enrollment
 
-    def _authenticate(authorization: str | None) -> str | None:
-        """Resolve the bearer credential to a principal id, or 401.
+    _nonce_cache: dict[tuple[str, str], float] = {}
+    _enroll_hits: dict[str, list[float]] = {}
+
+    @app.middleware("http")
+    async def _buffer_body(request: Request, call_next):
+        """Read the body once and replay it so both signature auth and
+        pydantic parsing see the same bytes (needed for sha256(body))."""
+        body = await request.body()
+        request.state.raw_body = body
+
+        async def receive():
+            return {"type": "http.request", "body": body, "more_body": False}
+
+        request._receive = receive
+        return await call_next(request)
+
+    def _check_signature(request: Request, authorization: str) -> str | None:
+        m = _SIG_RE.match(authorization[len("Signature "):])
+        if not m:
+            raise HTTPException(401, "malformed signature header",
+                                headers={"WWW-Authenticate": "Signature"})
+        key_id, ts, nonce, sig_b64 = m["key_id"], m["ts"], m["nonce"], m["sig"]
+        now = time.time()
+        if abs(now - int(ts)) > SIGNATURE_SKEW_SECONDS:
+            raise HTTPException(401, "signature timestamp outside allowed skew",
+                                headers={"WWW-Authenticate": "Signature"})
+        cache_key = (key_id, nonce)
+        if cache_key in _nonce_cache:
+            raise HTTPException(401, "replayed nonce",
+                                headers={"WWW-Authenticate": "Signature"})
+        try:
+            signature = base64.b64decode(sig_b64, validate=True)
+        except Exception:
+            raise HTTPException(401, "malformed signature",
+                                headers={"WWW-Authenticate": "Signature"})
+        message = signing_message(ts, nonce, request.method,
+                                  request.url.path, request.state.raw_body)
+        principal = access.authenticate_signature(key_id, message, signature)
+        if principal is None:
+            raise HTTPException(401, "invalid, expired, or revoked key",
+                                headers={"WWW-Authenticate": "Signature"})
+        _nonce_cache[cache_key] = now
+        # opportunistic cleanup so the in-memory cache doesn't grow unbounded
+        stale = [k for k, seen in _nonce_cache.items()
+                if seen < now - 2 * SIGNATURE_SKEW_SECONDS]
+        for k in stale:
+            _nonce_cache.pop(k, None)
+        return principal["id"]
+
+    def _authenticate(request: Request) -> str | None:
+        """Resolve the bearer/signature credential to a principal id, or 401.
 
         Returns None only when auth is disabled (the local default). The
         credential belongs to a principal/client (see ACCESS_CONTROL.md),
@@ -75,26 +158,42 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
         """
         if not auth_enabled:
             return None
-        if not authorization or not authorization.startswith("Bearer "):
-            raise HTTPException(401, "missing bearer credential",
+        authorization = request.headers.get("authorization")
+        if not authorization:
+            raise HTTPException(401, "missing credential",
                                 headers={"WWW-Authenticate": "Bearer"})
-        principal_id = access.authenticate_secret(authorization[len("Bearer "):])
-        if principal_id is None:
-            raise HTTPException(401, "invalid, expired, or revoked credential",
-                                headers={"WWW-Authenticate": "Bearer"})
-        return principal_id
+        if authorization.startswith("Bearer "):
+            principal_id = access.authenticate_secret(authorization[len("Bearer "):])
+            if principal_id is None:
+                raise HTTPException(401, "invalid, expired, or revoked credential",
+                                    headers={"WWW-Authenticate": "Bearer"})
+            return principal_id
+        if authorization.startswith("Signature "):
+            return _check_signature(request, authorization)
+        raise HTTPException(401, "unsupported authorization scheme",
+                            headers={"WWW-Authenticate": "Bearer"})
 
-    def _require(operation: str, profile_id: str,
-                 authorization: str | None) -> None:
+    def _require(operation: str, profile_id: str, request: Request) -> str | None:
         """Missing/bad credential → 401; authenticated but ungranted → 403.
 
-        No-op while auth is disabled.
+        No-op while auth is disabled. Returns the principal id (or None with
+        auth disabled) so callers needing the caller's identity don't have
+        to authenticate twice.
         """
-        principal_id = _authenticate(authorization)
+        principal_id = _authenticate(request)
         if principal_id is None:
-            return
+            return None
         if not access.allowed(principal_id, operation, profile_id):
             raise HTTPException(403, f"principal lacks {operation} on {profile_id!r}")
+        return principal_id
+
+    def _require_global(operation: str, request: Request) -> str | None:
+        principal_id = _authenticate(request)
+        if principal_id is None:
+            return None
+        if not access.allowed(principal_id, operation, None):
+            raise HTTPException(403, f"principal lacks global {operation}")
+        return principal_id
 
     def _wrap(fn, *args, **kwargs):
         try:
@@ -116,8 +215,8 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
         return (Path(__file__).parent / "demo.html").read_text()
 
     @app.get("/profiles")
-    def list_profiles(authorization: str | None = Header(None)):
-        principal_id = _authenticate(authorization)
+    def list_profiles(request: Request):
+        principal_id = _authenticate(request)
         profiles = store.list_profiles()
         if principal_id is None:
             return profiles
@@ -126,50 +225,88 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
             return profiles
         return [p for p in profiles if p["id"] in visible]
 
+    @app.post("/profiles", status_code=201)
+    def create_profile(body: ProfileCreateIn, request: Request):
+        principal_id = _require_global("create_profile", request)
+        if not PROFILE_ID_RE.match(body.id):
+            raise HTTPException(422, "id must match [a-z0-9_-]{1,64}")
+        existing = {p["id"] for p in store.list_profiles()}
+        if body.id in existing:
+            raise HTTPException(409, f"profile {body.id!r} already exists")
+        if principal_id is not None:
+            count = access.db.execute(
+                "SELECT COUNT(*) c FROM access_grants WHERE principal_id=?"
+                " AND operation='manage_profile' AND revoked_at IS NULL",
+                (principal_id,)).fetchone()["c"]
+            if count >= MAX_PROFILES_PER_PRINCIPAL:
+                raise HTTPException(
+                    403, f"principal already owns {count} profiles"
+                        f" (limit {MAX_PROFILES_PER_PRINCIPAL})")
+        profile = store.create_profile(
+            body.id, body.display_name, body.base_prompt, body.role_prompt)
+        if principal_id is not None:
+            for op in OWNER_OPS:
+                access.grant(principal_id, op, profile_id=body.id)
+            access.record_audit(principal_id, "create_profile", body.id)
+        return profile
+
+    @app.post("/enroll", status_code=201)
+    def enroll(body: EnrollIn, request: Request):
+        client_ip = request.client.host if request.client else "unknown"
+        now = time.time()
+        hits = [t for t in _enroll_hits.get(client_ip, []) if t > now - 60]
+        if len(hits) >= 5:
+            raise HTTPException(429, "too many enrollment attempts; try again later")
+        hits.append(now)
+        _enroll_hits[client_ip] = hits
+        try:
+            return enrollment.enroll(body.invite_token, body.display_name,
+                                     body.public_key)
+        except InviteConsumed as e:
+            raise HTTPException(410, str(e))
+        except InviteInvalid as e:
+            raise HTTPException(401, str(e))
+
     @app.get("/profiles/{profile_id}")
-    def get_profile(profile_id: str, authorization: str | None = Header(None)):
-        _require("boot", profile_id, authorization)
+    def get_profile(profile_id: str, request: Request):
+        _require("boot", profile_id, request)
         return _wrap(store.get_profile, profile_id)
 
     @app.post("/profiles/{profile_id}/boot")
-    def boot(profile_id: str, authorization: str | None = Header(None)):
-        _require("boot", profile_id, authorization)
+    def boot(profile_id: str, request: Request):
+        _require("boot", profile_id, request)
         return _wrap(store.boot, profile_id)
 
     @app.post("/profiles/{profile_id}/memories", status_code=201)
-    def remember(profile_id: str, event: MemoryEventIn,
-                 authorization: str | None = Header(None)):
-        _require("remember", profile_id, authorization)
+    def remember(profile_id: str, event: MemoryEventIn, request: Request):
+        _require("remember", profile_id, request)
         return _wrap(store.remember, profile_id, event.model_dump())
 
     @app.get("/profiles/{profile_id}/memories/search")
-    def search(profile_id: str, q: str, limit: int = 20,
-               authorization: str | None = Header(None)):
-        _require("search", profile_id, authorization)
+    def search(profile_id: str, q: str, request: Request, limit: int = 20):
+        _require("search", profile_id, request)
         return _wrap(store.search, profile_id, q, limit)
 
     @app.post("/profiles/{profile_id}/closeout", status_code=201)
-    def closeout(profile_id: str, body: CloseoutIn,
-                 authorization: str | None = Header(None)):
-        _require("closeout", profile_id, authorization)
+    def closeout(profile_id: str, body: CloseoutIn, request: Request):
+        _require("closeout", profile_id, request)
         return _wrap(store.closeout, profile_id, body.notes, body.new_state)
 
     @app.get("/profiles/{profile_id}/domain")
-    def list_stores(profile_id: str, authorization: str | None = Header(None)):
-        _require("records:read", profile_id, authorization)
+    def list_stores(profile_id: str, request: Request):
+        _require("records:read", profile_id, request)
         return _wrap(store.list_domain_stores, profile_id)
 
     @app.get("/profiles/{profile_id}/domain/{store_name}")
-    def query_domain(profile_id: str, store_name: str,
-                     contains: str | None = None, limit: int = 50,
-                     authorization: str | None = Header(None)):
-        _require("records:read", profile_id, authorization)
+    def query_domain(profile_id: str, store_name: str, request: Request,
+                     contains: str | None = None, limit: int = 50):
+        _require("records:read", profile_id, request)
         return _wrap(store.query_domain, profile_id, store_name, contains, limit)
 
     @app.post("/profiles/{profile_id}/domain/{store_name}", status_code=201)
     def add_domain(profile_id: str, store_name: str, body: DomainRecordIn,
-                   authorization: str | None = Header(None)):
-        _require("records:write", profile_id, authorization)
+                   request: Request):
+        _require("records:write", profile_id, request)
         return _wrap(store.add_domain_record, profile_id, store_name, body.data)
 
     # -- dynamic stores (slice two) ------------------------------------------
@@ -177,65 +314,74 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
     # (default: off, open on localhost). See ACCESS_CONTROL.md for the map.
 
     @app.post("/profiles/{profile_id}/stores", status_code=201)
-    def propose_store(profile_id: str, body: StoreProposalIn,
-                      authorization: str | None = Header(None)):
-        _require("stores:propose", profile_id, authorization)
-        return _wrap(dyn.propose, profile_id, body.name, body.purpose,
-                     body.proposed_by, body.schema_def)
+    def propose_store(profile_id: str, body: StoreProposalIn, request: Request):
+        principal_id = _require("stores:propose", profile_id, request)
+        result = _wrap(dyn.propose, profile_id, body.name, body.purpose,
+                       body.proposed_by, body.schema_def)
+        return _maybe_auto_approve(profile_id, body.name, principal_id, result)
 
     @app.get("/profiles/{profile_id}/stores")
-    def list_stores(profile_id: str, authorization: str | None = Header(None)):
-        _require("records:read", profile_id, authorization)
+    def list_stores(profile_id: str, request: Request):
+        _require("records:read", profile_id, request)
         return _wrap(dyn.list, profile_id)
 
     @app.get("/profiles/{profile_id}/stores/{name}")
-    def get_store(profile_id: str, name: str,
-                  authorization: str | None = Header(None)):
-        _require("records:read", profile_id, authorization)
+    def get_store(profile_id: str, name: str, request: Request):
+        _require("records:read", profile_id, request)
         return _wrap(dyn.get, profile_id, name)
 
     @app.post("/profiles/{profile_id}/stores/{name}/approve")
-    def approve_store(profile_id: str, name: str,
-                      authorization: str | None = Header(None)):
-        _require("stores:approve", profile_id, authorization)
+    def approve_store(profile_id: str, name: str, request: Request):
+        _require("stores:approve", profile_id, request)
         return _wrap(dyn.approve, profile_id, name)
 
     @app.post("/profiles/{profile_id}/stores/{name}/reject")
-    def reject_store(profile_id: str, name: str, body: RejectIn,
-                     authorization: str | None = Header(None)):
-        _require("stores:approve", profile_id, authorization)
+    def reject_store(profile_id: str, name: str, body: RejectIn, request: Request):
+        _require("stores:approve", profile_id, request)
         return _wrap(dyn.reject, profile_id, name, body.reason)
 
     @app.post("/profiles/{profile_id}/stores/{name}/archive")
-    def archive_store(profile_id: str, name: str,
-                      authorization: str | None = Header(None)):
-        _require("stores:approve", profile_id, authorization)
+    def archive_store(profile_id: str, name: str, request: Request):
+        _require("stores:approve", profile_id, request)
         return _wrap(dyn.archive, profile_id, name)
 
     @app.post("/profiles/{profile_id}/stores/{name}/records", status_code=201)
     def add_store_record(profile_id: str, name: str, body: DomainRecordIn,
-                         authorization: str | None = Header(None)):
-        _require("records:write", profile_id, authorization)
+                         request: Request):
+        _require("records:write", profile_id, request)
         return _wrap(dyn.add_record, profile_id, name, body.data)
 
     @app.get("/profiles/{profile_id}/stores/{name}/records")
-    def query_store_records(profile_id: str, name: str,
-                            contains: str | None = None, limit: int = 50,
-                            authorization: str | None = Header(None)):
-        _require("records:read", profile_id, authorization)
+    def query_store_records(profile_id: str, name: str, request: Request,
+                            contains: str | None = None, limit: int = 50):
+        _require("records:read", profile_id, request)
         return _wrap(dyn.query_records, profile_id, name, contains, limit)
 
     @app.get("/profiles/{profile_id}/stores/{name}/audit")
-    def store_audit(profile_id: str, name: str, limit: int = 100,
-                    authorization: str | None = Header(None)):
-        _require("audit:read", profile_id, authorization)
+    def store_audit(profile_id: str, name: str, request: Request, limit: int = 100):
+        _require("audit:read", profile_id, request)
         return _wrap(dyn.audit_events, profile_id, name, limit)
 
     @app.get("/profiles/{profile_id}/audit")
-    def profile_audit(profile_id: str, limit: int = 100,
-                      authorization: str | None = Header(None)):
-        _require("audit:read", profile_id, authorization)
+    def profile_audit(profile_id: str, request: Request, limit: int = 100):
+        _require("audit:read", profile_id, request)
         return _wrap(dyn.audit_events, profile_id, None, limit)
+
+    def _maybe_auto_approve(profile_id: str, name: str,
+                            principal_id: str | None, proposal: dict) -> dict:
+        """Auto-approve a just-proposed store when the proposer owns the
+        profile (manage_profile) and the proposal is within budget."""
+        if principal_id is None:
+            return proposal
+        if not access.allowed(principal_id, "manage_profile", profile_id):
+            return proposal
+        approved_or_pending = sum(
+            1 for s in dyn.list(profile_id) if s["status"] in ("pending", "approved")
+            and s["name"] != name)
+        field_count = len(proposal["schema"]["fields"])
+        if approved_or_pending >= AUTO_STORE_LIMIT or field_count > AUTO_STORE_MAX_FIELDS:
+            return proposal
+        return dyn.approve(profile_id, name, actor=f"auto:{principal_id}")
 
     return app
 

@@ -17,6 +17,16 @@ subset of these operations over `POST /mcp` and `GET /mcp`; see
    "allowed_tools": ["log_food"], "memory_policy": {"kinds": ["fact"]},
    "closeout_rules": "...", "created_at": 1751640000.0}
   ```
+- `POST /profiles` `{id, display_name, base_prompt, role_prompt}` → 201,
+  profile object. Requires the global `create_profile` grant; the creating
+  principal automatically receives the owner grant bundle on the new
+  profile (see ACCESS_CONTROL.md). `id` must match `[a-z0-9_-]{1,64}`; 409
+  if it already exists.
+- `POST /enroll` `{invite_token, display_name, public_key}` → 201
+  `{principal_id, key_id}`. Unauthenticated, single-use; consumes an invite
+  minted locally via `python -m profile_os.mint_invite`. 410 if the invite
+  is already used/expired, 401 for an unknown token. See "Agent
+  self-enrollment" in ACCESS_CONTROL.md.
 
 ## Core lifecycle
 

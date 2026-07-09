@@ -15,6 +15,13 @@ storage, no business logic.
 Env:
     PROFILE_OS_BRIDGE_BASE_URL  backend base URL (default http://127.0.0.1:8000)
     PROFILE_OS_BRIDGE_BEARER    bearer secret (optional when auth is disabled)
+    PROFILE_OS_BRIDGE_KEY_ID          Ed25519 credential id (alternative to bearer)
+    PROFILE_OS_BRIDGE_PRIVATE_KEY     base64 raw 32-byte Ed25519 private key
+
+When both a bearer secret and a keypair are configured, the bearer wins
+(it is the simpler, more common bridge setup). The keypair path exists for
+self-enrolled `agent` principals from PLAN_AGENT_ENROLLMENT.md, which only
+ever hold a signing key, not a shared secret.
 
 Admin lifecycle tools (approve/reject/archive) are deliberately NOT exposed:
 a bridge credential is operational, never `stores:approve`.
@@ -22,9 +29,14 @@ a bridge credential is operational, never `stores:approve`.
 
 from __future__ import annotations
 
+import base64
+import json
 import os
 
 import httpx
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+from .sign import sign_request
 
 DEFAULT_BASE_URL = "http://127.0.0.1:8000"
 
@@ -113,12 +125,20 @@ class ToolBridge:
     """
 
     def __init__(self, base_url: str | None = None, bearer: str | None = None,
-                 client: httpx.Client | None = None):
+                 client: httpx.Client | None = None, key_id: str | None = None,
+                 private_key: Ed25519PrivateKey | None = None):
         self._base_url = (base_url
                           or os.environ.get("PROFILE_OS_BRIDGE_BASE_URL")
                           or DEFAULT_BASE_URL)
         self._bearer = bearer if bearer is not None else os.environ.get(
             "PROFILE_OS_BRIDGE_BEARER")
+        self._key_id = key_id or os.environ.get("PROFILE_OS_BRIDGE_KEY_ID")
+        self._private_key = private_key
+        if self._private_key is None:
+            raw = os.environ.get("PROFILE_OS_BRIDGE_PRIVATE_KEY")
+            if raw:
+                self._private_key = Ed25519PrivateKey.from_private_bytes(
+                    base64.b64decode(raw))
         self._client = client or httpx.Client(base_url=self._base_url)
 
     def close(self):
@@ -127,9 +147,13 @@ class ToolBridge:
     def _request(self, method: str, path: str, *, json: dict | None = None,
                  params: dict | None = None):
         headers = {}
+        params = {k: v for k, v in (params or {}).items() if v is not None}
         if self._bearer:
             headers["Authorization"] = f"Bearer {self._bearer}"
-        params = {k: v for k, v in (params or {}).items() if v is not None}
+        elif self._private_key and self._key_id:
+            body_bytes = b"" if json is None else __import__("json").dumps(json).encode()
+            headers["Authorization"] = sign_request(
+                self._private_key, self._key_id, method, path, body_bytes)
         r = self._client.request(method, path, json=json, params=params,
                                  headers=headers)
         if r.status_code >= 400:

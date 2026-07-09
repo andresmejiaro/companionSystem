@@ -4,24 +4,96 @@
 exists in `profile_os/access.py` (principals, hashed credentials, grants,
 `allowed()`, `authenticate_secret()`, `visible_profile_ids()` — including
 `profile_id=None` global grants and `profile_id="*"` all-profiles grants).
+Credentials come in two kinds: shared-secret (`secret_hash`, PBKDF2) and
+Ed25519 public-key (`kind='ed25519'`, `public_key`) — see `add_public_key()`
+and `authenticate_signature()`.
 
 **Enforcement is complete for existing endpoints:** with
-`PROFILE_OS_AUTH_ENABLED=1`, every route except `GET /health` and
-`GET /demo` requires a bearer credential whose principal holds the route's
-operation grant for the route's profile (401 for missing/invalid/expired/
-revoked credentials or disabled principals; 403 for authenticated principals
-without the grant). Auth is disabled by default (open on localhost), and
-behavior with auth off is unchanged. Credentials belong to
-principals/clients; profile-scoped keys remain explicitly not the design.
-Bootstrap the first admin credential locally (never over HTTP) with
+`PROFILE_OS_AUTH_ENABLED=1`, every route except `GET /health`, `GET /demo`,
+and `POST /enroll` requires a credential (bearer secret or Ed25519 signature)
+whose principal holds the route's operation grant for the route's profile
+(401 for missing/invalid/expired/revoked credentials or disabled principals;
+403 for authenticated principals without the grant). Auth is disabled by
+default (open on localhost), and behavior with auth off is unchanged.
+Credentials belong to principals/clients; profile-scoped keys remain
+explicitly not the design. Bootstrap the first admin credential locally
+(never over HTTP) with
 `python -m profile_os.bootstrap_admin --data-dir data --secret "$SECRET"`.
+
+## Signed-request auth (Ed25519)
+
+An alternative to bearer secrets, for principals that hold a keypair instead
+of (or in addition to) a shared secret — notably self-enrolled `agent`
+principals (see "Agent self-enrollment" below).
+
+```
+Authorization: Signature key_id=<credential-id>,ts=<unix-seconds>,nonce=<hex>,sig=<base64>
+signed message = f"{ts}\n{nonce}\n{METHOD}\n{PATH}\n{sha256(body).hexdigest()}"
+```
+
+`PATH` is the request path only (no query string). `api.py` tries `Bearer`
+first, then `Signature`; both resolve to a principal, then the existing
+grant check (`allowed()`) applies identically — no changes to the route →
+operation map below.
+
+- Requests older or newer than 120s (clock skew) are rejected (401).
+- Replay protection is an in-memory `(key_id, nonce)` cache with a
+  240s TTL — fine for a single-process server, not durable across restarts.
+- `profile_os/sign.py` provides `sign_request(private_key, key_id, method,
+  path, body) -> header value` for clients/tests. `ToolBridge` (bridge.py)
+  can use it in place of a bearer secret via
+  `PROFILE_OS_BRIDGE_KEY_ID` / `PROFILE_OS_BRIDGE_PRIVATE_KEY`.
+
+## Agent self-enrollment
+
+An admin mints a single-use invite **locally, never over HTTP**:
+
+```
+python -m profile_os.mint_invite --data-dir data --expires-hours 24
+```
+
+The agent then calls the one public, unauthenticated route:
+
+```
+POST /enroll {"invite_token": "...", "display_name": "...", "public_key": "<base64 ed25519 pubkey>"}
+-> {"principal_id": "...", "key_id": "..."}
+```
+
+This atomically: consumes the invite (single-use; replay/expiry → 410),
+creates a principal of kind `agent`, registers its Ed25519 key, and grants
+it the global `create_profile` operation — nothing else. `/enroll` is
+naively rate-limited (5/min per client IP) since it is unauthenticated.
+
+From there the agent is self-service within that one grant:
+
+- `POST /profiles {id, display_name, base_prompt, role_prompt}` (signed)
+  creates its own profile and **automatically grants the creating principal
+  the owner bundle** on it: `boot, remember, search, closeout,
+  records:read, records:write, stores:propose, manage_profile`. Explicitly
+  *not* granted: `stores:approve, manage_grants, credentials:manage,
+  delete_profile, audit:read` — schema approval and permissions stay with
+  the admin. A principal is capped at `PROFILE_OS_MAX_PROFILES_PER_PRINCIPAL`
+  profiles (default 10).
+- **Store auto-approval within a budget:** when the proposing principal owns
+  the profile (holds `manage_profile` on it), a proposed dynamic store is
+  auto-approved with no admin step, provided the profile has fewer than
+  `PROFILE_OS_AUTO_STORE_LIMIT` (default 3) approved-or-pending stores and
+  the schema has at most `PROFILE_OS_AUTO_STORE_MAX_FIELDS` (default 12)
+  fields. Auto-approvals are recorded in `store_audit` as
+  `approved_by="auto:<principal_id>"`. Proposals over budget fall back to
+  the normal pending → admin approve/reject flow.
+
+An enrolled agent can never call `stores:approve`, touch another profile,
+create a second principal, or grant itself anything beyond what enrollment
+and self-created-profile ownership provide.
 
 ### Route → operation map
 
 | Route | Operation |
 |---|---|
-| `GET /health`, `GET /demo` | public |
+| `GET /health`, `GET /demo`, `POST /enroll` | public |
 | `GET /profiles` | authenticated; filtered to profiles with any active grant (`*` sees all) |
+| `POST /profiles` | global `create_profile`; auto-grants owner bundle on the new profile |
 | `GET /profiles/{id}`, `POST /profiles/{id}/boot` | `boot` |
 | `POST /profiles/{id}/memories` | `remember` |
 | `GET /profiles/{id}/memories/search` | `search` |
