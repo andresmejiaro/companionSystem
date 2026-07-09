@@ -40,6 +40,23 @@ subset of these operations over `POST /mcp` and `GET /mcp`; see
    "compact_state": "No meals logged today.", "state_updated_at": 1751640000.0,
    "recent_memories": [ {memory event}, ... ]}
   ```
+- `POST /profiles/{id}/session` — one-call bundle for a companion's first
+  turn (MCP tool `start_session`): everything `boot` returns, minus
+  `recent_memories`, plus `identity` (the `whoami` file content, or `null`
+  without `identity:read`), `last_closeouts` (last 2 full closeout records:
+  `notes`/`new_state`/`created_at`, not just the current compact state),
+  and `memories` (the full memory history, uncapped). Requires the same
+  `boot` grant.
+- `POST /profiles/{id}/prompt` `{base_prompt?, role_prompt?}` → 201, a
+  pending approval record. Requires `manage_profile` on that profile.
+  Companions can propose an edit to their own prompts; it only takes effect
+  once an admin approves it with a live TOTP code — see "TOTP-gated
+  approvals" in ACCESS_CONTROL.md.
+- `GET /approvals?profile_id=` → list pending approvals. Requires global
+  `approvals:decide`.
+- `POST /approvals/{id}/decide` `{"approve": true|false, "totp_code": "..."}`
+  → the approval record. Approving requires a valid, unused TOTP code
+  (401 without one); rejecting does not. 409 if already decided.
 - ★ `POST /profiles/{id}/memories` — remember. Body:
   `{"kind": "note|fact|decision|failure_scar|preference|observation",
     "content": "non-empty", "tags": ["optional"]}` → 201 + stored event

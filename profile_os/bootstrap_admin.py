@@ -20,7 +20,10 @@ from .access import ALL_PROFILES, AccessControl
 from .storage import Store
 
 ADMIN_NAME = "bootstrap admin"
-ADMIN_OPS = ["stores:approve", "audit:read", "manage_grants", "credentials:manage"]
+ADMIN_OPS = ["stores:approve", "audit:read", "manage_grants", "credentials:manage",
+            "delete_profile", "manage_profile"]
+# Global operations (profile_id=None), not scoped to a profile at all.
+ADMIN_GLOBAL_OPS = ["create_profile", "approvals:decide"]
 
 
 def bootstrap(data_dir: str, secret: str, label: str = "bootstrap key") -> dict:
@@ -38,6 +41,10 @@ def bootstrap(data_dir: str, secret: str, label: str = "bootstrap key") -> dict:
             if not access.allowed(principal["id"], op, ALL_PROFILES):
                 access.grant(principal["id"], op, profile_id=ALL_PROFILES)
                 granted.append(op)
+        for op in ADMIN_GLOBAL_OPS:
+            if not access.allowed(principal["id"], op, None):
+                access.grant(principal["id"], op, profile_id=None)
+                granted.append(op)
         return {"principal_id": principal["id"], "credential_id": credential["id"],
                 "granted": granted, "profile_scope": ALL_PROFILES}
     finally:
@@ -54,7 +61,8 @@ def main(argv: list[str] | None = None) -> None:
     result = bootstrap(args.data_dir, args.secret, args.label)
     print(f"admin principal: {result['principal_id']}")
     print(f"credential:      {result['credential_id']} (hash stored; secret NOT stored)")
-    print(f"grants ensured:  {ADMIN_OPS} on profiles '{ALL_PROFILES}'")
+    print(f"grants ensured:  {ADMIN_OPS} on profiles '{ALL_PROFILES}'"
+          f" plus global {ADMIN_GLOBAL_OPS}")
     print('use with: curl -H "Authorization: Bearer <your secret>" '
           "-X POST .../stores/<name>/approve (requires PROFILE_OS_AUTH_ENABLED=1)")
 

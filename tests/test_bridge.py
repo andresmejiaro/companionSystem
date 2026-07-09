@@ -103,6 +103,8 @@ def test_no_tool_bypasses_api_authorization(tmp_path):
     bridge = _bridge_over(app)
     calls = {
         "whoami": {},
+        "start_session": {"profile_id": "tara"},
+        "propose_prompt_edit": {"profile_id": "tara", "base_prompt": "x"},
         "boot": {"profile_id": "tara"},
         "remember": {"profile_id": "tara", "kind": "note", "content": "x"},
         "search_memories": {"profile_id": "tara", "query": "x"},

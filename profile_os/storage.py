@@ -177,6 +177,32 @@ class Store:
         path = self.profiles_dir / profile_id / name
         return path.read_text() if path.exists() else ""
 
+    def update_prompts(self, profile_id: str, base_prompt: str | None = None,
+                       role_prompt: str | None = None) -> dict:
+        """Overwrite one or both prompt files. None leaves that file untouched."""
+        self._require_profile(profile_id)
+        pdir = self.profiles_dir / profile_id
+        if base_prompt is not None:
+            (pdir / "base_prompt.md").write_text(base_prompt)
+        if role_prompt is not None:
+            (pdir / "role_prompt.md").write_text(role_prompt)
+        return self.get_profile(profile_id)
+
+    def recent_closeouts(self, profile_id: str, limit: int = 2) -> list[dict]:
+        self._require_profile(profile_id)
+        rows = self.db.execute(
+            "SELECT * FROM closeouts WHERE profile_id=? ORDER BY created_at DESC LIMIT ?",
+            (profile_id, limit)).fetchall()
+        return [{"id": r["id"], "notes": r["notes"], "new_state": r["new_state"],
+                 "created_at": r["created_at"]} for r in rows]
+
+    def all_memories(self, profile_id: str) -> list[dict]:
+        self._require_profile(profile_id)
+        rows = self.db.execute(
+            "SELECT * FROM memory_events WHERE profile_id=? ORDER BY created_at DESC",
+            (profile_id,)).fetchall()
+        return [self._event_dict(r) for r in rows]
+
     # -- core operations -----------------------------------------------------
 
     def boot(self, profile_id: str, recent_events: int | None = None) -> dict:

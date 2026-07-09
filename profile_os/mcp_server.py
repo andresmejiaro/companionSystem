@@ -190,6 +190,28 @@ MCP_TOOLS = [
         ["profile_id"],
     ),
     _tool(
+        "start_session",
+        "Start Session",
+        "Call this on your first response in a conversation instead of boot_profile:"
+        " returns whoami identity, prompts, compact_state, the last 2 closeouts"
+        " (not just the current state), and your full memory history in one call.",
+        {"profile_id": _PROFILE_ID},
+        ["profile_id"],
+    ),
+    _tool(
+        "propose_prompt_edit",
+        "Propose Prompt Edit",
+        "Propose a change to your own base_prompt and/or role_prompt. Held pending"
+        " until the human approves it with a live TOTP code from their authenticator"
+        " app — you cannot approve your own edits, and there is no way around that.",
+        {
+            "profile_id": _PROFILE_ID,
+            "base_prompt": {"type": "string"},
+            "role_prompt": {"type": "string"},
+        },
+        ["profile_id"],
+    ),
+    _tool(
         "remember",
         "Remember",
         "Append a durable memory event for a profile.",
@@ -405,6 +427,14 @@ class MCPToolRunner:
             return self.bridge.list_profiles()
         if name == "boot_profile":
             return self.bridge.boot_profile(arguments["profile_id"])
+        if name == "start_session":
+            return self.bridge.start_session(arguments["profile_id"])
+        if name == "propose_prompt_edit":
+            return self.bridge.propose_prompt_edit(
+                arguments["profile_id"],
+                base_prompt=arguments.get("base_prompt"),
+                role_prompt=arguments.get("role_prompt"),
+            )
         if name == "remember":
             return self.bridge.remember(
                 arguments["profile_id"],

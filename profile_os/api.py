@@ -19,7 +19,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from . import seed
-from .access import AccessControl
+from .access import AccessControl, AccessError
 from .dynstores import DynamicStores
 from .enroll import Enrollment, InviteConsumed, InviteInvalid
 from .errors import (DynStoreConflict, DynStoreNotFound, MalformedMemoryEvent,
@@ -81,6 +81,16 @@ class EnrollIn(BaseModel):
     invite_token: str
     display_name: str
     public_key: str
+
+
+class PromptEditProposeIn(BaseModel):
+    base_prompt: str | None = None
+    role_prompt: str | None = None
+
+
+class ApprovalDecideIn(BaseModel):
+    approve: bool
+    totp_code: str | None = None
 
 
 def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
@@ -301,6 +311,27 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
         _require("boot", profile_id, request)
         return _wrap(store.boot, profile_id)
 
+    @app.post("/profiles/{profile_id}/session")
+    def start_session(profile_id: str, request: Request):
+        """One-call bundle for a companion's first turn: identity file (if
+        granted), prompts/compact_state, the last 2 closeouts (not just the
+        current compact_state), and the full memory history (no cap)."""
+        principal_id = _require("boot", profile_id, request)
+        booted = _wrap(store.boot, profile_id)
+        booted.pop("recent_memories", None)  # superseded by "memories" below
+        identity_content = None
+        if principal_id is None or access.allowed(principal_id, "identity:read", None):
+            if identity_file:
+                path = Path(identity_file)
+                if path.is_file():
+                    identity_content = path.read_text()
+        return {
+            **booted,
+            "identity": identity_content,
+            "last_closeouts": store.recent_closeouts(profile_id, limit=2),
+            "memories": store.all_memories(profile_id),
+        }
+
     @app.post("/profiles/{profile_id}/memories", status_code=201)
     def remember(profile_id: str, event: MemoryEventIn, request: Request):
         _require("remember", profile_id, request)
@@ -315,6 +346,57 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
     def closeout(profile_id: str, body: CloseoutIn, request: Request):
         _require("closeout", profile_id, request)
         return _wrap(store.closeout, profile_id, body.notes, body.new_state)
+
+    # -- TOTP-gated approvals ("edgy" actions) --------------------------------
+    # Routine writes (remember, closeout, records) never need a code. Only
+    # actions a companion shouldn't be able to do unilaterally — starting
+    # with editing its own prompts — go through propose -> pending -> a
+    # human decision, and approving (not rejecting) requires a live TOTP
+    # code. See ACCESS_CONTROL.md "TOTP-gated approvals".
+
+    @app.post("/profiles/{profile_id}/prompt", status_code=201)
+    def propose_prompt_edit(profile_id: str, body: PromptEditProposeIn, request: Request):
+        principal_id = _require("manage_profile", profile_id, request)
+        _wrap(store.get_profile, profile_id)  # 404 if unknown
+        if body.base_prompt is None and body.role_prompt is None:
+            raise HTTPException(422, "at least one of base_prompt/role_prompt is required")
+        return access.propose_approval(
+            "prompt_edit", principal_id or "anonymous",
+            {"base_prompt": body.base_prompt, "role_prompt": body.role_prompt},
+            profile_id=profile_id)
+
+    @app.get("/approvals")
+    def list_approvals(request: Request, profile_id: str | None = None):
+        _require_global("approvals:decide", request)
+        return access.list_pending_approvals(profile_id)
+
+    @app.post("/approvals/{approval_id}/decide")
+    def decide_approval(approval_id: str, body: ApprovalDecideIn, request: Request):
+        principal_id = _require_global("approvals:decide", request)
+        try:
+            row = access.get_approval(approval_id)
+        except AccessError as e:
+            raise HTTPException(404, str(e))
+        if row["status"] != "pending":
+            raise HTTPException(409, f"approval already {row['status']}")
+        if body.approve:
+            if principal_id is None:
+                pass  # auth disabled: local/dev convenience, no TOTP surface
+            elif not access.has_totp(principal_id):
+                raise HTTPException(
+                    403, "no TOTP enrolled; run python -m profile_os.enroll_totp")
+            elif not access.verify_totp(principal_id, body.totp_code or ""):
+                raise HTTPException(401, "missing or invalid TOTP code")
+        try:
+            decided = access.decide_approval(approval_id, body.approve,
+                                            principal_id or "anonymous")
+        except AccessError as e:
+            raise HTTPException(409, str(e))
+        if body.approve and decided["kind"] == "prompt_edit":
+            payload = decided["payload"]
+            _wrap(store.update_prompts, decided["profile_id"],
+                 payload.get("base_prompt"), payload.get("role_prompt"))
+        return decided
 
     @app.get("/profiles/{profile_id}/domain")
     def list_stores(profile_id: str, request: Request):

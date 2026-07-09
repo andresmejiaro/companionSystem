@@ -72,6 +72,19 @@ TOOLS = [
           {}, []),
     _tool("boot", "Boot a profile: compact state, prompts, recent memories.",
           {"profile_id": _PID}, ["profile_id"]),
+    _tool("start_session", "Call this on your first response in a conversation instead"
+                          " of boot: returns identity (whoami), prompts, compact_state,"
+                          " the last 2 closeouts (not just the current state), and your"
+                          " full memory history in one call.",
+          {"profile_id": _PID}, ["profile_id"]),
+    _tool("propose_prompt_edit", "Propose a change to your own base_prompt/role_prompt."
+                                " Held pending until the human approves it with a live"
+                                " TOTP code from their authenticator app — you cannot"
+                                " approve your own edits.",
+          {"profile_id": _PID,
+           "base_prompt": {"type": "string"},
+           "role_prompt": {"type": "string"}},
+          ["profile_id"]),
     _tool("remember", "Append a memory event to a profile.",
           {"profile_id": _PID,
            "kind": {"type": "string", "enum": MEMORY_KINDS,
@@ -181,6 +194,14 @@ class ToolBridge:
 
     def boot(self, profile_id: str):
         return self._request("POST", f"/profiles/{profile_id}/boot")
+
+    def start_session(self, profile_id: str):
+        return self._request("POST", f"/profiles/{profile_id}/session")
+
+    def propose_prompt_edit(self, profile_id: str, base_prompt: str | None = None,
+                            role_prompt: str | None = None):
+        return self._request("POST", f"/profiles/{profile_id}/prompt",
+                             json={"base_prompt": base_prompt, "role_prompt": role_prompt})
 
     def remember(self, profile_id: str, kind: str, content: str,
                  tags: list[str] | None = None):

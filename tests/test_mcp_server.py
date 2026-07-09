@@ -220,6 +220,8 @@ def test_initialize_and_list_tools(tmp_path):
     names = {tool["name"] for tool in r.json()["result"]["tools"]}
     assert names == {
         "whoami",
+        "start_session",
+        "propose_prompt_edit",
         "list_profiles",
         "boot_profile",
         "remember",

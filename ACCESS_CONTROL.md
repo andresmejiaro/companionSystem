@@ -36,6 +36,47 @@ first, then `Signature`; both resolve to a principal, then the existing
 grant check (`allowed()`) applies identically — no changes to the route →
 operation map below.
 
+## `start_session`: one-call bootstrap for a companion's first turn
+
+`POST /profiles/{id}/session` (MCP tool `start_session`) bundles what a
+connector-side system prompt would otherwise have to assemble: the
+`whoami` identity content (if the caller has `identity:read`), current
+prompts and `compact_state`, the **last 2 closeouts** (full records —
+`notes`, `new_state`, `created_at` — not just the current compact state),
+and the **full memory history** (no `max_boot_events` cap). Gated by the
+same `boot` grant as the plain `boot`/`boot_profile` tool — it's a richer
+read, not a new privilege. Intended so a connector's provider-side system
+prompt can shrink to "on your first response, call `start_session`."
+
+## TOTP-gated approvals ("edgy" actions)
+
+Routine writes (`remember`, `closeout`, dynamic-store records) never need
+extra confirmation. A small set of actions a companion shouldn't be able to
+do unilaterally go through **propose → pending → human decision**, and
+*approving* (not rejecting) requires a live 6-digit TOTP code from an
+authenticator app (Google/Microsoft Authenticator, etc.) — companions can
+propose but can never approve their own edits.
+
+Currently covers: a companion editing its own `base_prompt`/`role_prompt`
+(`POST /profiles/{id}/prompt`, requires `manage_profile` on that profile —
+the same grant a profile owner already holds). More action kinds can reuse
+the same `access_pending_approvals` table/`kind` field later (e.g. agent
+enrollment approval) without a schema change.
+
+- Enroll the admin's authenticator app **locally, once**: `python -m
+  profile_os.enroll_totp --data-dir data` prints an `otpauth://` URI to
+  scan or paste manually, then `--confirm <code>` activates it. Unconfirmed
+  secrets are refused by `verify_totp()`, so a half-finished enrollment
+  can't silently gate approvals.
+- `GET /approvals` (global `approvals:decide`) lists pending proposals.
+- `POST /approvals/{id}/decide {"approve": true, "totp_code": "123456"}`
+  applies the edit; `{"approve": false}` rejects it, no code required.
+  Each TOTP code is single-use (a per-principal `last_used_counter`
+  rejects any code from an already-consumed 30-second window — the same
+  replay concern as the nonce cache above, on a longer clock).
+- `python -m profile_os.bootstrap_admin` grants `approvals:decide` to the
+  admin principal by default.
+
 - Requests older or newer than 120s (clock skew) are rejected (401).
 - Replay protection is an in-memory `(key_id, nonce)` cache with a
   240s TTL — fine for a single-process server, not durable across restarts.
@@ -116,6 +157,9 @@ whatever a companion's memory says on conflict. Exposed as the MCP tool
 |---|---|
 | `GET /health`, `GET /demo`, `POST /enroll` | public |
 | `GET /identity` | global `identity:read` |
+| `POST /profiles/{id}/session` | `boot` (same grant as normal boot) |
+| `POST /profiles/{id}/prompt` (propose) | `manage_profile` |
+| `GET /approvals`, `POST /approvals/{id}/decide` | global `approvals:decide` |
 | `GET /profiles` | authenticated; filtered to profiles with any active grant (`*` sees all) |
 | `POST /profiles` | global `create_profile`; auto-grants owner bundle on the new profile |
 | `GET /profiles/{id}`, `POST /profiles/{id}/boot` | `boot` |

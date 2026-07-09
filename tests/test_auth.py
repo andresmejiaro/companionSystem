@@ -296,7 +296,9 @@ def test_bootstrap_admin_cli(tmp_path, capsys):
     data_dir = str(tmp_path / "data")
     result = bootstrap(data_dir, "root-secret")
     assert result["granted"] == ["stores:approve", "audit:read",
-                                 "manage_grants", "credentials:manage"]
+                                 "manage_grants", "credentials:manage",
+                                 "delete_profile", "manage_profile",
+                                 "create_profile", "approvals:decide"]
     # idempotent: same principal, no duplicate grants, new credential ok
     again = bootstrap(data_dir, "another-secret")
     assert again["principal_id"] == result["principal_id"]

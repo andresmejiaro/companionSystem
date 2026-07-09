@@ -19,10 +19,12 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import secrets as _secrets
 import time
 import uuid
 
+import pyotp
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PrivateKey, Ed25519PublicKey)
@@ -75,6 +77,24 @@ CREATE TABLE IF NOT EXISTS access_invites (
     used_at REAL,
     created_by_principal TEXT
 );
+CREATE TABLE IF NOT EXISTS access_totp (
+    principal_id TEXT PRIMARY KEY REFERENCES access_principals(id),
+    secret TEXT NOT NULL,                  -- base32, pyotp-generated
+    confirmed_at REAL,                     -- NULL until first valid code verifies enrollment
+    last_used_counter INTEGER,             -- replay protection: reject a reused 30s window
+    created_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS access_pending_approvals (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,                    -- e.g. 'prompt_edit'
+    profile_id TEXT,
+    proposed_by_principal TEXT NOT NULL,
+    payload TEXT NOT NULL,                 -- JSON
+    status TEXT NOT NULL DEFAULT 'pending',-- pending|approved|rejected
+    created_at REAL NOT NULL,
+    decided_at REAL,
+    decided_by_principal TEXT
+);
 """
 
 PRINCIPAL_KINDS = {"human", "app", "bridge", "admin", "agent"}
@@ -85,7 +105,7 @@ OPERATIONS = {
     "stores:propose", "stores:approve",
     "create_profile", "delete_profile", "manage_profile",
     "manage_grants", "audit:read", "credentials:manage",
-    "identity:read",
+    "identity:read", "approvals:decide",
 }
 
 ALL_PROFILES = "*"
@@ -262,6 +282,129 @@ class AccessControl:
         except (InvalidSignature, ValueError, TypeError):
             return None
         return self.get_principal(row["principal_id"])
+
+    # -- TOTP (authenticator-app second factor for "edgy" approvals) --------------
+
+    def enroll_totp(self, principal_id: str, issuer: str = "Profile OS") -> str:
+        """Generate and store a fresh TOTP secret; returns the otpauth:// URI
+        to scan/paste into Google/Microsoft Authenticator. Unconfirmed until
+        confirm_totp() succeeds once — verify_totp() refuses unconfirmed
+        secrets so a botched enrollment can't silently disable approvals."""
+        principal = self.get_principal(principal_id)
+        secret = pyotp.random_base32()
+        with self.db:
+            self.db.execute(
+                "INSERT INTO access_totp (principal_id, secret, confirmed_at,"
+                " last_used_counter, created_at) VALUES (?,?,NULL,NULL,?)"
+                " ON CONFLICT(principal_id) DO UPDATE SET secret=excluded.secret,"
+                " confirmed_at=NULL, last_used_counter=NULL, created_at=excluded.created_at",
+                (principal_id, secret, time.time()))
+        return pyotp.TOTP(secret).provisioning_uri(
+            name=principal["display_name"], issuer_name=issuer)
+
+    @staticmethod
+    def _totp_matched_counter(totp: "pyotp.TOTP", code: str, window: int = 1) -> int | None:
+        """Which 30s counter (not wall-clock 'now') this code actually matches,
+        so replay tracking reflects the code's own window, not the caller's."""
+        if not code:
+            return None
+        current = int(time.time()) // totp.interval
+        for offset in range(-window, window + 1):
+            counter = current + offset
+            if _secrets.compare_digest(totp.at(counter * totp.interval), code):
+                return counter
+        return None
+
+    def confirm_totp(self, principal_id: str, code: str) -> bool:
+        row = self.db.execute("SELECT * FROM access_totp WHERE principal_id=?",
+                              (principal_id,)).fetchone()
+        if row is None:
+            return False
+        totp = pyotp.TOTP(row["secret"])
+        counter = self._totp_matched_counter(totp, code)
+        if counter is None:
+            return False
+        with self.db:
+            self.db.execute(
+                "UPDATE access_totp SET confirmed_at=?, last_used_counter=?"
+                " WHERE principal_id=?",
+                (time.time(), counter, principal_id))
+        return True
+
+    def verify_totp(self, principal_id: str, code: str) -> bool:
+        """One code, one use: rejects a reused counter within the drift
+        window so a captured code can't be replayed."""
+        row = self.db.execute("SELECT * FROM access_totp WHERE principal_id=?",
+                              (principal_id,)).fetchone()
+        if row is None or row["confirmed_at"] is None or not code:
+            return False
+        totp = pyotp.TOTP(row["secret"])
+        counter = self._totp_matched_counter(totp, code)
+        if counter is None:
+            return False
+        if row["last_used_counter"] is not None and counter <= row["last_used_counter"]:
+            return False
+        with self.db:
+            self.db.execute(
+                "UPDATE access_totp SET last_used_counter=? WHERE principal_id=?",
+                (counter, principal_id))
+        return True
+
+    def has_totp(self, principal_id: str) -> bool:
+        row = self.db.execute(
+            "SELECT confirmed_at FROM access_totp WHERE principal_id=?",
+            (principal_id,)).fetchone()
+        return row is not None and row["confirmed_at"] is not None
+
+    # -- pending approvals ("edgy" actions needing a TOTP-approved decision) ------
+
+    def propose_approval(self, kind: str, proposed_by_principal: str,
+                         payload: dict, profile_id: str | None = None) -> dict:
+        aid = str(uuid.uuid4())
+        with self.db:
+            self.db.execute(
+                "INSERT INTO access_pending_approvals (id, kind, profile_id,"
+                " proposed_by_principal, payload, created_at) VALUES (?,?,?,?,?,?)",
+                (aid, kind, profile_id, proposed_by_principal, json.dumps(payload),
+                 time.time()))
+        return self.get_approval(aid)
+
+    def get_approval(self, approval_id: str) -> dict:
+        row = self.db.execute(
+            "SELECT * FROM access_pending_approvals WHERE id=?", (approval_id,)).fetchone()
+        if row is None:
+            raise AccessError(f"unknown approval {approval_id!r}")
+        d = dict(row)
+        d["payload"] = json.loads(d["payload"])
+        return d
+
+    def list_pending_approvals(self, profile_id: str | None = None) -> list[dict]:
+        sql = "SELECT * FROM access_pending_approvals WHERE status='pending'"
+        params: list = []
+        if profile_id is not None:
+            sql += " AND profile_id=?"
+            params.append(profile_id)
+        sql += " ORDER BY created_at"
+        rows = self.db.execute(sql, params).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["payload"] = json.loads(d["payload"])
+            out.append(d)
+        return out
+
+    def decide_approval(self, approval_id: str, approve: bool,
+                        decided_by_principal: str) -> dict:
+        row = self.get_approval(approval_id)
+        if row["status"] != "pending":
+            raise AccessError(f"approval {approval_id!r} already {row['status']}")
+        with self.db:
+            self.db.execute(
+                "UPDATE access_pending_approvals SET status=?, decided_at=?,"
+                " decided_by_principal=? WHERE id=?",
+                ("approved" if approve else "rejected", time.time(),
+                 decided_by_principal, approval_id))
+        return self.get_approval(approval_id)
 
     # -- audit ----------------------------------------------------------------------
 

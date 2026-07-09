@@ -19,6 +19,8 @@ backend with its own backend credential from env.
 Exposed MCP tools:
 
 - `whoami`
+- `start_session`
+- `propose_prompt_edit`
 - `list_profiles`
 - `boot_profile`
 - `remember`
