@@ -149,6 +149,56 @@ def test_prompt_edit_requires_manage_profile_grant(auth_client):
     assert r.status_code == 403
 
 
+def test_admin_verify_totp_route(auth_client, clock):
+    client, access, admin_id = auth_client
+    totp = _enroll_and_confirm(access, admin_id, clock)
+
+    ok = client.post("/admin/verify-totp",
+                     json={"secret": "root-secret", "totp_code": clock.next_code(totp)})
+    assert ok.status_code == 200
+    assert ok.json()["principal_id"] == admin_id
+
+    bad_secret = client.post("/admin/verify-totp",
+                             json={"secret": "wrong", "totp_code": clock.next_code(totp)})
+    assert bad_secret.status_code == 401
+
+    bad_code = client.post("/admin/verify-totp",
+                           json={"secret": "root-secret", "totp_code": "000000"})
+    assert bad_code.status_code == 401
+
+    # no bearer header needed at all — this route IS the login form
+    assert "authorization" not in {k.lower() for k in ok.request.headers}
+
+
+def test_admin_verify_totp_requires_approvals_decide_grant(tmp_path, clock):
+    from profile_os.access import AccessControl
+    from profile_os.storage import Store
+    data_dir = str(tmp_path / "data")
+    store = Store(data_dir)
+    access = AccessControl(store)
+    p = access.create_principal("app", "no-decide-grant")
+    access.create_credential(p["id"], "k", "narrow-secret")
+    uri = access.enroll_totp(p["id"])
+    secret = dict(pyotp.parse_uri(uri).__dict__)["secret"]
+    totp = pyotp.TOTP(secret)
+    assert access.confirm_totp(p["id"], clock.next_code(totp))
+    store.close()
+
+    app = create_app(data_dir=data_dir, auth_enabled=True)
+    with TestClient(app) as client:
+        r = client.post("/admin/verify-totp",
+                        json={"secret": "narrow-secret", "totp_code": clock.next_code(totp)})
+        assert r.status_code == 403
+
+
+def test_admin_verify_totp_rate_limited(auth_client, clock):
+    client, access, admin_id = auth_client
+    for _ in range(6):
+        r = client.post("/admin/verify-totp",
+                        json={"secret": "wrong", "totp_code": "000000"})
+    assert r.status_code == 429
+
+
 def test_decide_without_totp_enrolled_is_403(auth_client):
     client, access, admin_id = auth_client
     owner = access.create_principal("agent", "rita-owner")

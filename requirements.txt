@@ -5,3 +5,4 @@ pytest>=8
 httpx>=0.27,<0.28
 cryptography>=42
 pyotp>=2.9
+python-multipart>=0.0.9

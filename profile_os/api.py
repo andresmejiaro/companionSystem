@@ -93,6 +93,11 @@ class ApprovalDecideIn(BaseModel):
     totp_code: str | None = None
 
 
+class AdminVerifyIn(BaseModel):
+    secret: str
+    totp_code: str
+
+
 def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
                auth_enabled: bool | None = None,
                identity_file: str | None = None) -> FastAPI:
@@ -115,6 +120,15 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
 
     _nonce_cache: dict[tuple[str, str], float] = {}
     _enroll_hits: dict[str, list[float]] = {}
+    _verify_hits: dict[str, list[float]] = {}
+
+    def _rate_limited(bucket: dict[str, list[float]], key: str,
+                      limit: int = 5, window: float = 60) -> bool:
+        now = time.time()
+        hits = [t for t in bucket.get(key, []) if t > now - window]
+        hits.append(now)
+        bucket[key] = hits
+        return len(hits) > limit
 
     @app.middleware("http")
     async def _buffer_body(request: Request, call_next):
@@ -276,12 +290,8 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
     @app.post("/enroll", status_code=201)
     def enroll(body: EnrollIn, request: Request):
         client_ip = request.client.host if request.client else "unknown"
-        now = time.time()
-        hits = [t for t in _enroll_hits.get(client_ip, []) if t > now - 60]
-        if len(hits) >= 5:
+        if _rate_limited(_enroll_hits, client_ip):
             raise HTTPException(429, "too many enrollment attempts; try again later")
-        hits.append(now)
-        _enroll_hits[client_ip] = hits
         try:
             return enrollment.enroll(body.invite_token, body.display_name,
                                      body.public_key)
@@ -289,6 +299,25 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
             raise HTTPException(410, str(e))
         except InviteInvalid as e:
             raise HTTPException(401, str(e))
+
+    @app.post("/admin/verify-totp")
+    def admin_verify_totp(body: AdminVerifyIn, request: Request):
+        """Login check for the MCP OAuth consent screen: does this secret +
+        live TOTP code belong to a principal holding approvals:decide? This
+        route is intentionally public at the transport layer (no bearer
+        header) — the credential being checked IS the request body, exactly
+        like any login form. Rate-limited against brute force."""
+        client_ip = request.client.host if request.client else "unknown"
+        if _rate_limited(_verify_hits, client_ip):
+            raise HTTPException(429, "too many attempts; try again later")
+        principal_id = access.authenticate_secret(body.secret)
+        if principal_id is None:
+            raise HTTPException(401, "invalid secret")
+        if not access.allowed(principal_id, "approvals:decide", None):
+            raise HTTPException(403, "principal lacks approvals:decide")
+        if not access.verify_totp(principal_id, body.totp_code):
+            raise HTTPException(401, "invalid, missing, or reused TOTP code")
+        return {"ok": True, "principal_id": principal_id}
 
     @app.get("/profiles/{profile_id}")
     def get_profile(profile_id: str, request: Request):

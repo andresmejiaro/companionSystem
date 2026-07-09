@@ -77,6 +77,34 @@ enrollment approval) without a schema change.
 - `python -m profile_os.bootstrap_admin` grants `approvals:decide` to the
   admin principal by default.
 
+## OAuth authorize consent screen
+
+`POST /oauth/register` (dynamic client registration) is open by design —
+that's how Claude.ai/ChatGPT auto-configure a connector from just a URL,
+and it's required by the MCP spec. That also means **anyone** can register
+their own client the same way. Without a human check somewhere in the
+flow, `GET /oauth/authorize` would hand out a real access token to any
+browser that hit it — client registration authenticates the *software*,
+not the person clicking "approve."
+
+So `GET /oauth/authorize` renders a login form (admin secret + live TOTP
+code) instead of auto-issuing a code. `POST /oauth/authorize` verifies
+those against the backend's `POST /admin/verify-totp` (requires
+`approvals:decide`) before creating the code and redirecting back to the
+connector. Wrong secret/code re-shows the form with an error, no code
+issued; the endpoint is rate-limited (5/min per IP) against brute force.
+
+This only happens once per connector setup, not per message: the issued
+access token is valid for `MCP_OAUTH_ACCESS_TOKEN_TTL_SECONDS` (a personal
+single-operator deployment can reasonably set this long — e.g. a year —
+since re-authorizing means going through the TOTP screen again; there is
+no refresh-token grant, only `authorization_code`).
+
+`create_mcp_app(..., admin_verify=...)` accepts an injectable async
+`(secret, totp_code) -> bool` for tests; production defaults to
+`default_admin_verify`, which calls the backend over HTTP using
+`PROFILE_OS_BRIDGE_BASE_URL`.
+
 - Requests older or newer than 120s (clock skew) are rejected (401).
 - Replay protection is an in-memory `(key_id, nonce)` cache with a
   240s TTL — fine for a single-process server, not durable across restarts.

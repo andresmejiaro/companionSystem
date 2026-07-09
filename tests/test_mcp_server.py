@@ -353,7 +353,12 @@ def test_oauth_metadata_dcr_pkce_and_bearer_use(tmp_path):
         oauth_allowed_redirect_hosts=["claude.ai", "*.claude.ai"],
     )
     bridge = FakeBridge()
-    client = ThreadedASGIClient(create_mcp_app(bridge=bridge, settings=settings))
+
+    async def fake_admin_verify(secret: str, totp_code: str) -> bool:
+        return secret == "root-secret" and totp_code == "123456"
+
+    client = ThreadedASGIClient(create_mcp_app(
+        bridge=bridge, settings=settings, admin_verify=fake_admin_verify))
 
     resource = client.get("/.well-known/oauth-protected-resource").json()
     assert resource["resource"] == f"{PUBLIC_BASE}/mcp"
@@ -373,7 +378,7 @@ def test_oauth_metadata_dcr_pkce_and_bearer_use(tmp_path):
     verifier = "A" * 48
     challenge = _b64url(hashlib.sha256(verifier.encode("ascii")).digest())
     redirect_uri = "https://claude.ai/oauth/callback"
-    r = client.get("/oauth/authorize", params={
+    authorize_params = {
         "response_type": "code",
         "client_id": client_id,
         "redirect_uri": redirect_uri,
@@ -381,8 +386,26 @@ def test_oauth_metadata_dcr_pkce_and_bearer_use(tmp_path):
         "code_challenge_method": "S256",
         "state": "state-1",
         "resource": f"{PUBLIC_BASE}/mcp",
+    }
+
+    # GET renders a login form — no code is issued to an unauthenticated visitor.
+    form_page = client.get("/oauth/authorize", params=authorize_params)
+    assert form_page.status_code == 200
+    assert "admin_secret" in form_page.text
+    assert "totp_code" in form_page.text
+
+    # Wrong secret/code: no redirect, no code.
+    bad = client.post("/oauth/authorize", data={
+        **authorize_params, "admin_secret": "wrong", "totp_code": "000000",
     }, follow_redirects=False)
-    assert r.status_code in {302, 307}
+    assert bad.status_code == 401
+    assert "Invalid secret or code" in bad.text
+
+    # Correct secret/code: issues the code and redirects.
+    r = client.post("/oauth/authorize", data={
+        **authorize_params, "admin_secret": "root-secret", "totp_code": "123456",
+    }, follow_redirects=False)
+    assert r.status_code == 303
     location = r.headers["location"]
     parsed = urllib.parse.urlparse(location)
     params = urllib.parse.parse_qs(parsed.query)

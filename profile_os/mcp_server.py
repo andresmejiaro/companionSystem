@@ -21,10 +21,16 @@ import urllib.parse
 from dataclasses import dataclass, field
 from typing import Any
 
+import html as _html
+from typing import Awaitable, Callable
+
+import httpx
 from fastapi import FastAPI, Request, Response
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from .bridge import ToolBridge, ToolBridgeError
+
+AdminVerifyFn = Callable[[str, str], Awaitable[bool]]
 
 MCP_PROTOCOL_VERSION = "2025-06-18"
 SUPPORTED_PROTOCOL_VERSIONS = {MCP_PROTOCOL_VERSION, "2025-03-26"}
@@ -102,6 +108,47 @@ def _redirect_host_allowed(uri: str, allowed_hosts: list[str]) -> bool:
     if not allowed_hosts:
         return True
     return any(_host_matches(pattern, parsed.hostname) for pattern in allowed_hosts)
+
+
+async def default_admin_verify(secret: str, totp_code: str) -> bool:
+    """Calls the backend's login-check route. Injected so tests can stub it
+    without a real backend — see create_mcp_app's admin_verify param."""
+    base_url = os.environ.get("PROFILE_OS_BRIDGE_BASE_URL", "http://127.0.0.1:8000")
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            r = await client.post(f"{base_url}/admin/verify-totp",
+                                  json={"secret": secret, "totp_code": totp_code})
+    except httpx.HTTPError:
+        return False
+    return r.status_code == 200
+
+
+def _consent_page(params: dict[str, str], client_name: str,
+                  error: str | None = None) -> str:
+    hidden = "".join(
+        f'<input type="hidden" name="{_html.escape(k)}" value="{_html.escape(v)}">'
+        for k, v in params.items() if v is not None
+    )
+    error_html = (f'<p style="color:#c00;font-weight:600">{_html.escape(error)}</p>'
+                 if error else "")
+    return f"""<!doctype html>
+<html><head><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Authorize {_html.escape(client_name)}</title></head>
+<body style="font-family:system-ui,sans-serif;max-width:420px;margin:64px auto;padding:0 16px">
+<h2>Authorize connector</h2>
+<p><strong>{_html.escape(client_name)}</strong> wants access to Profile OS.</p>
+{error_html}
+<form method="POST">
+{hidden}
+<label>Admin secret<br>
+<input type="password" name="admin_secret" autocomplete="off" required
+ style="width:100%;padding:8px;margin:4px 0 16px"></label>
+<label>Authenticator code<br>
+<input type="text" name="totp_code" inputmode="numeric" pattern="[0-9]*"
+ autocomplete="off" required style="width:100%;padding:8px;margin:4px 0 16px"></label>
+<button type="submit" style="padding:10px 20px">Approve</button>
+</form>
+</body></html>"""
 
 
 def _resource_url(settings: "MCPSettings", request: Request) -> str:
@@ -724,12 +771,15 @@ def create_mcp_app(
     bridge: ToolBridge | None = None,
     settings: MCPSettings | None = None,
     oauth_state: OAuthState | None = None,
+    admin_verify: AdminVerifyFn | None = None,
 ) -> FastAPI:
     settings = settings or MCPSettings.from_env()
     app = FastAPI(title="Profile OS Remote MCP", version=SERVER_VERSION)
     app.state.settings = settings
     app.state.oauth = oauth_state or OAuthState()
     app.state.runner = MCPToolRunner(bridge or ToolBridge())
+    app.state.admin_verify = admin_verify or default_admin_verify
+    _authorize_hits: dict[str, list[float]] = {}
 
     @app.get("/health", name="health")
     async def health():
@@ -795,33 +845,81 @@ def create_mcp_app(
             "token_endpoint_auth_method": "none",
         }
 
-    @app.get("/oauth/authorize")
-    async def oauth_authorize(request: Request):
-        q = request.query_params
-        if q.get("response_type") != "code":
-            return JSONResponse({"error": "unsupported_response_type"}, status_code=400)
-        client_id = q.get("client_id") or ""
+    def _validate_authorize_params(params, request: Request):
+        """Returns (error_response, None) or (None, {client, redirect_uri,
+        code_challenge, resource, state}). Shared by GET (render form) and
+        POST (re-validate before issuing a code) so a tampered hidden field
+        can't bypass checks the GET already did."""
+        if params.get("response_type") != "code":
+            return JSONResponse({"error": "unsupported_response_type"}, status_code=400), None
+        client_id = params.get("client_id") or ""
         client = app.state.oauth.get_client(client_id)
         if client is None:
-            return JSONResponse({"error": "invalid_client"}, status_code=400)
-        redirect_uri = q.get("redirect_uri") or ""
+            return JSONResponse({"error": "invalid_client"}, status_code=400), None
+        redirect_uri = params.get("redirect_uri") or ""
         if redirect_uri not in client.redirect_uris:
-            return JSONResponse({"error": "invalid_redirect_uri"}, status_code=400)
-        if q.get("code_challenge_method") != "S256" or not q.get("code_challenge"):
+            return JSONResponse({"error": "invalid_redirect_uri"}, status_code=400), None
+        if params.get("code_challenge_method") != "S256" or not params.get("code_challenge"):
             return JSONResponse({"error": "invalid_request",
                                  "error_description": "PKCE S256 is required"},
-                                status_code=400)
-        resource = q.get("resource") or _resource_url(settings, request)
+                                status_code=400), None
+        resource = params.get("resource") or _resource_url(settings, request)
         if resource != _resource_url(settings, request):
-            return JSONResponse({"error": "invalid_target"}, status_code=400)
+            return JSONResponse({"error": "invalid_target"}, status_code=400), None
+        return None, {
+            "client": client, "client_id": client_id, "redirect_uri": redirect_uri,
+            "code_challenge": params["code_challenge"], "resource": resource,
+            "state": params.get("state"),
+        }
+
+    _AUTHORIZE_FIELDS = ("response_type", "client_id", "redirect_uri",
+                        "code_challenge", "code_challenge_method", "resource", "state")
+
+    @app.get("/oauth/authorize")
+    async def oauth_authorize(request: Request):
+        """Renders a login form instead of auto-issuing a code: dynamic
+        client registration is open by design (any MCP client can call
+        /oauth/register), so without a human check here anyone who finds
+        this URL could mint themselves a valid access token. See
+        ACCESS_CONTROL.md 'OAuth authorize consent screen'."""
+        error, validated = _validate_authorize_params(request.query_params, request)
+        if error is not None:
+            return error
+        hidden = {k: request.query_params.get(k) for k in _AUTHORIZE_FIELDS}
+        return HTMLResponse(_consent_page(hidden, validated["client"].client_name))
+
+    @app.post("/oauth/authorize")
+    async def oauth_authorize_decide(request: Request):
+        client_ip = request.client.host if request.client else "unknown"
+        now = time.time()
+        hits = [t for t in _authorize_hits.get(client_ip, []) if t > now - 60]
+        if len(hits) >= 5:
+            return HTMLResponse("Too many attempts; try again in a minute.",
+                                status_code=429)
+        hits.append(now)
+        _authorize_hits[client_ip] = hits
+
+        form = await request.form()
+        error, validated = _validate_authorize_params(form, request)
+        if error is not None:
+            return error
+        hidden = {k: form.get(k) for k in _AUTHORIZE_FIELDS}
+        secret = str(form.get("admin_secret") or "")
+        totp_code = str(form.get("totp_code") or "")
+        if not await app.state.admin_verify(secret, totp_code):
+            return HTMLResponse(
+                _consent_page(hidden, validated["client"].client_name,
+                             error="Invalid secret or code."),
+                status_code=401)
         code = app.state.oauth.create_code(
-            client_id, redirect_uri, q["code_challenge"], resource)
+            validated["client_id"], validated["redirect_uri"],
+            validated["code_challenge"], validated["resource"])
         params = {"code": code}
-        if q.get("state") is not None:
-            params["state"] = q["state"]
-        separator = "&" if urllib.parse.urlparse(redirect_uri).query else "?"
-        location = redirect_uri + separator + urllib.parse.urlencode(params)
-        return RedirectResponse(location)
+        if validated["state"] is not None:
+            params["state"] = validated["state"]
+        separator = "&" if urllib.parse.urlparse(validated["redirect_uri"]).query else "?"
+        location = validated["redirect_uri"] + separator + urllib.parse.urlencode(params)
+        return RedirectResponse(location, status_code=303)
 
     @app.post("/oauth/token")
     async def oauth_token(request: Request):

@@ -158,13 +158,17 @@ OAuth is intentionally minimal and single-operator oriented:
 - dynamic client registration validates redirect hosts against
   `MCP_OAUTH_ALLOWED_REDIRECT_HOSTS`
 - authorization uses code flow with PKCE S256
+- `GET /oauth/authorize` shows a login form (admin secret + live TOTP code
+  from an authenticator app) instead of auto-issuing a code — dynamic
+  client registration is open by design, so this is the actual gate
+  against a stranger self-authorizing. See ACCESS_CONTROL.md "OAuth
+  authorize consent screen." Enroll with `python -m profile_os.enroll_totp`.
 - access tokens are signed locally with `MCP_OAUTH_SIGNING_KEY`
 - tokens include issuer, audience, scope, issued-at, expiry, and client id
 - `/mcp` validates bearer token expiry, scope, issuer, and audience
-
-This shim does not implement a multi-user login database. If the MCP URL is
-public beyond your own Claude connector setup, put the OAuth authorize path
-behind your normal identity layer or use a real OAuth provider/reverse proxy.
+- this only happens once per connector, not per message: tokens last
+  `MCP_OAUTH_ACCESS_TOKEN_TTL_SECONDS` and there's no refresh grant, so
+  re-authorizing after expiry means the TOTP screen again
 
 ## Origin handling and logging
 
