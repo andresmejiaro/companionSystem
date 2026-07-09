@@ -160,6 +160,19 @@ class Store:
         rows = self.db.execute("SELECT id FROM profiles ORDER BY id").fetchall()
         return [self.get_profile(r["id"]) for r in rows]
 
+    def delete_profile(self, profile_id: str) -> None:
+        """Permanently remove a profile: registry row, state, memories,
+        legacy domain records, and prompt files. Dynamic-store data lives in
+        DynamicStores and is cleaned up separately by the caller (api.py)."""
+        self._require_profile(profile_id)
+        with self.db:
+            self.db.execute("DELETE FROM domain_records WHERE profile_id=?", (profile_id,))
+            self.db.execute("DELETE FROM memory_events WHERE profile_id=?", (profile_id,))
+            self.db.execute("DELETE FROM closeouts WHERE profile_id=?", (profile_id,))
+            self.db.execute("DELETE FROM compact_state WHERE profile_id=?", (profile_id,))
+            self.db.execute("DELETE FROM profiles WHERE id=?", (profile_id,))
+        shutil.rmtree(self.profiles_dir / profile_id, ignore_errors=True)
+
     def _prompt(self, profile_id: str, name: str) -> str:
         path = self.profiles_dir / profile_id / name
         return path.read_text() if path.exists() else ""

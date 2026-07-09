@@ -271,6 +271,14 @@ class DynamicStores:
         params.append(limit)
         return [dict(r) for r in self.db.execute(sql, params).fetchall()]
 
+    def delete_profile_data(self, profile_id: str) -> None:
+        """Drop all dynamic-store rows for a deleted profile. Storage.delete_profile
+        handles the core profile/memory rows; this covers the dynstores tables."""
+        with self.db:
+            self.db.execute("DELETE FROM dynamic_records WHERE profile_id=?", (profile_id,))
+            self.db.execute("DELETE FROM dynamic_stores WHERE profile_id=?", (profile_id,))
+            self.db.execute("DELETE FROM store_audit WHERE profile_id=?", (profile_id,))
+
     # -- internals ---------------------------------------------------------------
 
     def _latest(self, profile_id: str, name: str):

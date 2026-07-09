@@ -22,6 +22,10 @@ subset of these operations over `POST /mcp` and `GET /mcp`; see
   principal automatically receives the owner grant bundle on the new
   profile (see ACCESS_CONTROL.md). `id` must match `[a-z0-9_-]{1,64}`; 409
   if it already exists.
+- `DELETE /profiles/{id}` → 204. Requires `delete_profile` on that profile.
+  Permanently removes the profile row, compact state, memories, legacy
+  domain records, dynamic stores/records/audit, prompt files, and revokes
+  any grants scoped to that profile id. 404 if unknown.
 - `POST /enroll` `{invite_token, display_name, public_key}` → 201
   `{principal_id, key_id}`. Unauthenticated, single-use; consumes an invite
   minted locally via `python -m profile_os.mint_invite`. 410 if the invite

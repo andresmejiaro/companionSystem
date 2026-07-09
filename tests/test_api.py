@@ -113,3 +113,24 @@ def test_demo_page_loads(client):
     assert "text/html" in r.headers["content-type"]
     assert "Assistant Profile OS" in r.text
     assert "NOT SECURE" in r.text  # admin actions visibly labeled
+
+
+def test_delete_profile_removes_everything(client):
+    client.post("/profiles/tara/memories",
+               json={"kind": "note", "content": "will vanish"})
+    r = client.post("/profiles/tara/stores",
+                    json={"name": "throwaway", "purpose": "p", "proposed_by": "tara",
+                          "schema": {"fields": {"xx": {"type": "string"}}}})
+    assert r.status_code == 201
+
+    assert client.delete("/profiles/tara").status_code == 204
+    assert client.get("/profiles/tara").status_code == 404
+    assert client.get("/profiles").json() and \
+        "tara" not in {p["id"] for p in client.get("/profiles").json()}
+
+    assert client.delete("/profiles/ghost").status_code == 404
+
+    # a same-named profile can be recreated cleanly afterward
+    r = client.post("/profiles", json={"id": "tara", "display_name": "Tara II"})
+    assert r.status_code == 201
+    assert client.get("/profiles/tara/stores").json() == []

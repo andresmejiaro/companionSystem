@@ -272,6 +272,17 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
         _require("boot", profile_id, request)
         return _wrap(store.get_profile, profile_id)
 
+    @app.delete("/profiles/{profile_id}", status_code=204)
+    def delete_profile(profile_id: str, request: Request):
+        _require("delete_profile", profile_id, request)
+        _wrap(store.get_profile, profile_id)  # 404 if unknown, before any deletion
+        dyn.delete_profile_data(profile_id)
+        store.delete_profile(profile_id)
+        with access.db:
+            access.db.execute(
+                "UPDATE access_grants SET revoked_at=? WHERE profile_id=? AND revoked_at IS NULL",
+                (time.time(), profile_id))
+
     @app.post("/profiles/{profile_id}/boot")
     def boot(profile_id: str, request: Request):
         _require("boot", profile_id, request)
@@ -386,4 +397,4 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
     return app
 
 
-app = create_app()
+app = create_app(do_seed=os.environ.get("PROFILE_OS_SEED_DEMO_PROFILES", "1") == "1")
