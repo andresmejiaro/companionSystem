@@ -219,6 +219,7 @@ def test_initialize_and_list_tools(tmp_path):
     assert r.status_code == 200
     names = {tool["name"] for tool in r.json()["result"]["tools"]}
     assert names == {
+        "whoami",
         "list_profiles",
         "boot_profile",
         "remember",

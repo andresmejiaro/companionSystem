@@ -58,6 +58,11 @@ def bootstrap(
                 if not access.allowed(principal["id"], op, profile_id):
                     access.grant(principal["id"], op, profile_id=profile_id)
                     granted.append({"profile_id": profile_id, "operation": op})
+        # identity:read is global (not profile-scoped): every bridge gets
+        # read access to the "who am I" drift-prevention file, if configured.
+        if not access.allowed(principal["id"], "identity:read", None):
+            access.grant(principal["id"], "identity:read", profile_id=None)
+            granted.append({"profile_id": None, "operation": "identity:read"})
         return {
             "principal_id": principal["id"],
             "credential_id": credential["id"],

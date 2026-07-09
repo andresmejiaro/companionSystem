@@ -84,9 +84,12 @@ class EnrollIn(BaseModel):
 
 
 def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
-               auth_enabled: bool | None = None) -> FastAPI:
+               auth_enabled: bool | None = None,
+               identity_file: str | None = None) -> FastAPI:
     if auth_enabled is None:
         auth_enabled = os.environ.get("PROFILE_OS_AUTH_ENABLED") == "1"
+    if identity_file is None:
+        identity_file = os.environ.get("PROFILE_OS_IDENTITY_FILE")
     app = FastAPI(title="Assistant Profile OS", version="0.1.0")
     store = Store(data_dir)
     if do_seed:
@@ -208,6 +211,16 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
     @app.get("/health")
     def health():
         return {"ok": True}
+
+    @app.get("/identity")
+    def identity(request: Request):
+        _require_global("identity:read", request)
+        if not identity_file:
+            raise HTTPException(404, "no identity file configured")
+        path = Path(identity_file)
+        if not path.is_file():
+            raise HTTPException(404, "identity file not found")
+        return {"content": path.read_text()}
 
     @app.get("/demo", response_class=HTMLResponse)
     def demo():

@@ -263,6 +263,35 @@ def test_wildcard_grant_accesses_all_profiles(auth_client):
                            headers=h).status_code == 200
 
 
+def test_identity_route(tmp_path, monkeypatch):
+    identity_path = tmp_path / "quien_soy.md"
+    identity_path.write_text("canonical facts")
+    monkeypatch.setenv("PROFILE_OS_IDENTITY_FILE", str(identity_path))
+    app = create_app(data_dir=str(tmp_path / "data"), auth_enabled=True)
+    with TestClient(app) as client:
+        access = app.state.access
+        assert client.get("/identity").status_code == 401
+
+        p = access.create_principal("app", "no-grant")
+        access.create_credential(p["id"], "k", "no-grant-secret")
+        r = client.get("/identity", headers=_bearer("no-grant-secret"))
+        assert r.status_code == 403
+
+        g = access.create_principal("app", "identity reader")
+        access.create_credential(g["id"], "k", "identity-secret")
+        access.grant(g["id"], "identity:read", profile_id=None)
+        r = client.get("/identity", headers=_bearer("identity-secret"))
+        assert r.status_code == 200
+        assert r.json() == {"content": "canonical facts"}
+
+
+def test_identity_route_missing_file(tmp_path, monkeypatch):
+    monkeypatch.delenv("PROFILE_OS_IDENTITY_FILE", raising=False)
+    app = create_app(data_dir=str(tmp_path / "data"))  # auth disabled
+    with TestClient(app) as client:
+        assert client.get("/identity").status_code == 404
+
+
 def test_bootstrap_admin_cli(tmp_path, capsys):
     data_dir = str(tmp_path / "data")
     result = bootstrap(data_dir, "root-secret")

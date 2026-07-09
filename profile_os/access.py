@@ -85,6 +85,7 @@ OPERATIONS = {
     "stores:propose", "stores:approve",
     "create_profile", "delete_profile", "manage_profile",
     "manage_grants", "audit:read", "credentials:manage",
+    "identity:read",
 }
 
 ALL_PROFILES = "*"

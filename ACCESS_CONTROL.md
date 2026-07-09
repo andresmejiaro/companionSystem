@@ -87,11 +87,35 @@ An enrolled agent can never call `stores:approve`, touch another profile,
 create a second principal, or grant itself anything beyond what enrollment
 and self-created-profile ownership provide.
 
+## Identity file ("quién soy" — drift prevention)
+
+`GET /identity` (global `identity:read` grant, not profile-scoped) serves a
+canonical, human-authored "who am I talking to" document that overrides
+whatever a companion's memory says on conflict. Exposed as the MCP tool
+`whoami`.
+
+- The file itself (`PROFILE_OS_IDENTITY_FILE` env var, an absolute path) is
+  **never committed to the repo** — it typically contains health, family,
+  and other sensitive personal details. It lives on the VPS only, outside
+  the git-tracked tree (see `.gitignore`'s `quien_soy*` / `*identity*.md`
+  patterns as a backstop in case it's ever placed inside the repo dir by
+  mistake).
+- Companions never write to it — only the admin edits it directly on the
+  server. There is deliberately no write route.
+- Access is gated like everything else: a principal needs the global
+  `identity:read` grant. `bootstrap_bridge.py` grants it to the MCP bridge
+  principal by default, so any connector authenticated through that bridge
+  (Claude via OAuth, ChatGPT via OAuth or connector token) can call
+  `whoami` — the existing MCP-layer auth (OAuth/connector token) plus this
+  backend grant is the access control; there is no separate auth system
+  for this one endpoint.
+
 ### Route → operation map
 
 | Route | Operation |
 |---|---|
 | `GET /health`, `GET /demo`, `POST /enroll` | public |
+| `GET /identity` | global `identity:read` |
 | `GET /profiles` | authenticated; filtered to profiles with any active grant (`*` sees all) |
 | `POST /profiles` | global `create_profile`; auto-grants owner bundle on the new profile |
 | `GET /profiles/{id}`, `POST /profiles/{id}/boot` | `boot` |

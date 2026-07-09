@@ -166,6 +166,16 @@ _MEMORY_KINDS = [
 
 MCP_TOOLS = [
     _tool(
+        "whoami",
+        "Who Am I",
+        "Canonical 'who am I talking to' identity file. Overrides your memory"
+        " on conflict — the file wins and drift gets logged by the human."
+        " Call this when unsure about personal facts (identity, health,"
+        " work, family, key people) rather than trusting your own memory.",
+        {},
+        [],
+    ),
+    _tool(
         "list_profiles",
         "List Profiles",
         "List profiles visible to this connector's backend credential.",
@@ -389,6 +399,8 @@ class MCPToolRunner:
         self.bridge = bridge
 
     def call(self, name: str, arguments: dict[str, Any]) -> Any:
+        if name == "whoami":
+            return self.bridge.whoami()
         if name == "list_profiles":
             return self.bridge.list_profiles()
         if name == "boot_profile":

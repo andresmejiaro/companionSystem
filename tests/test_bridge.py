@@ -102,6 +102,7 @@ def test_no_tool_bypasses_api_authorization(tmp_path):
     app = create_app(data_dir=str(tmp_path / "data"), auth_enabled=True)
     bridge = _bridge_over(app)
     calls = {
+        "whoami": {},
         "boot": {"profile_id": "tara"},
         "remember": {"profile_id": "tara", "kind": "note", "content": "x"},
         "search_memories": {"profile_id": "tara", "query": "x"},

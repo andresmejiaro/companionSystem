@@ -7,6 +7,7 @@ services:
       PROFILE_OS_DATA_DIR: /app/data
       PROFILE_OS_AUTH_ENABLED: "1"
       PROFILE_OS_MCP_BACKEND_PROFILES: ${PROFILE_OS_MCP_BACKEND_PROFILES:-*}
+      PROFILE_OS_IDENTITY_FILE: /app/identity.md
     command:
       - /bin/sh
       - -c
@@ -19,6 +20,7 @@ services:
         uvicorn profile_os.api:app --host 0.0.0.0 --port 8000
     volumes:
       - profile-os-data:/app/data
+      - ${PROFILE_OS_IDENTITY_HOST_PATH:-/dev/null}:/app/identity.md:ro
     ports:
       - "${PROFILE_OS_BACKEND_PORT:-8000}:8000"
     healthcheck:

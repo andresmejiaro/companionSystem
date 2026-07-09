@@ -66,6 +66,10 @@ MEMORY_KINDS = ["decision", "fact", "failure_scar", "note", "observation",
                 "preference"]
 
 TOOLS = [
+    _tool("whoami", "Canonical 'who am I talking to' identity file. Overrides"
+                    " your memory on conflict — file wins, drift gets logged"
+                    " by the human. Call this when unsure about personal facts.",
+          {}, []),
     _tool("boot", "Boot a profile: compact state, prompts, recent memories.",
           {"profile_id": _PID}, ["profile_id"]),
     _tool("remember", "Append a memory event to a profile.",
@@ -165,6 +169,9 @@ class ToolBridge:
         return r.json()
 
     # -- tools (names match TOOLS) -------------------------------------------
+
+    def whoami(self):
+        return self._request("GET", "/identity")
 
     def list_profiles(self):
         return self._request("GET", "/profiles")

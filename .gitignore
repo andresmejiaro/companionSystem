@@ -4,3 +4,7 @@ __pycache__/
 data/
 *.pyc
 .pytest_cache/
+
+# personal identity/canonical-facts files — never committed, VPS-only
+quien_soy*
+*identity*.md
