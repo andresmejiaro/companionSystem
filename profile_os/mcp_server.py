@@ -426,6 +426,41 @@ MCP_TOOLS = [
         ["profile_id", "message_id"],
     ),
     _tool(
+        "write_file",
+        "Write File",
+        "Write (or overwrite) a plain file in your own scratch file store — for"
+        " scripts, notes, anything that doesn't belong as a structured record."
+        " Self-service, never in git, never a database blob. Max 256KB.",
+        {
+            "profile_id": _PROFILE_ID,
+            "filename": {"type": "string",
+                        "description": "e.g. 'notes.md' or 'script.py'; no path separators"},
+            "content": {"type": "string"},
+        },
+        ["profile_id", "filename", "content"],
+    ),
+    _tool(
+        "list_files",
+        "List Files",
+        "List files in your scratch file store.",
+        {"profile_id": _PROFILE_ID},
+        ["profile_id"],
+    ),
+    _tool(
+        "read_file",
+        "Read File",
+        "Read a file from your scratch file store.",
+        {"profile_id": _PROFILE_ID, "filename": {"type": "string"}},
+        ["profile_id", "filename"],
+    ),
+    _tool(
+        "delete_file",
+        "Delete File",
+        "Delete a file from your scratch file store.",
+        {"profile_id": _PROFILE_ID, "filename": {"type": "string"}},
+        ["profile_id", "filename"],
+    ),
+    _tool(
         "closeout",
         "Close Out",
         "End a session by logging notes and replacing the profile compact_state with the supplied new_state.",
@@ -686,6 +721,15 @@ class MCPToolRunner:
         if name == "mark_message_read":
             return self.bridge.mark_message_read(
                 arguments["profile_id"], arguments["message_id"])
+        if name == "write_file":
+            return self.bridge.write_file(
+                arguments["profile_id"], arguments["filename"], arguments["content"])
+        if name == "list_files":
+            return self.bridge.list_files(arguments["profile_id"])
+        if name == "read_file":
+            return self.bridge.read_file(arguments["profile_id"], arguments["filename"])
+        if name == "delete_file":
+            return self.bridge.delete_file(arguments["profile_id"], arguments["filename"])
         if name == "closeout":
             return self.bridge.closeout(
                 arguments["profile_id"],

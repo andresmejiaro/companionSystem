@@ -23,9 +23,9 @@ from . import seed
 from .access import AccessControl, AccessError
 from .dynstores import DynamicStores
 from .enroll import Enrollment, InviteConsumed, InviteInvalid
-from .errors import (DynStoreConflict, DynStoreNotFound, MalformedMemoryEvent,
-                     MalformedMessage, MalformedRecord, MemoryEventNotFound,
-                     MessageNotFound, ProfileNotFound, SchemaError)
+from .errors import (DynStoreConflict, DynStoreNotFound, FileNotFoundInStore,
+                     MalformedMemoryEvent, MalformedMessage, MalformedRecord,
+                     MemoryEventNotFound, MessageNotFound, ProfileNotFound, SchemaError)
 from .sign import signing_message
 from .storage import Store
 
@@ -69,6 +69,10 @@ class ProfileCreateTotpIn(BaseModel):
     base_prompt: str = ""
     role_prompt: str = ""
     totp_code: str
+
+
+class FileWriteIn(BaseModel):
+    content: str
 
 
 class CloseoutIn(BaseModel):
@@ -256,7 +260,7 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
         try:
             return fn(*args, **kwargs)
         except (ProfileNotFound, DynStoreNotFound, MemoryEventNotFound,
-                MessageNotFound) as e:
+                MessageNotFound, FileNotFoundInStore) as e:
             raise HTTPException(404, str(e))
         except DynStoreConflict as e:
             raise HTTPException(409, str(e))
@@ -467,6 +471,28 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
     def mark_message_read(profile_id: str, message_id: str, request: Request):
         _require("search", profile_id, request)
         return _wrap(store.mark_message_read, profile_id, message_id)
+
+    # -- file store: plain files on disk, self-service, never git/DB blob --------
+
+    @app.put("/profiles/{profile_id}/files/{filename}", status_code=201)
+    def write_file(profile_id: str, filename: str, body: FileWriteIn, request: Request):
+        _require("remember", profile_id, request)
+        return _wrap(store.write_file, profile_id, filename, body.content)
+
+    @app.get("/profiles/{profile_id}/files")
+    def list_files(profile_id: str, request: Request):
+        _require("search", profile_id, request)
+        return _wrap(store.list_files, profile_id)
+
+    @app.get("/profiles/{profile_id}/files/{filename}")
+    def read_file(profile_id: str, filename: str, request: Request):
+        _require("search", profile_id, request)
+        return _wrap(store.read_file, profile_id, filename)
+
+    @app.delete("/profiles/{profile_id}/files/{filename}", status_code=204)
+    def delete_file(profile_id: str, filename: str, request: Request):
+        _require("remember", profile_id, request)
+        _wrap(store.delete_file, profile_id, filename)
 
     @app.post("/profiles/{profile_id}/closeout", status_code=201)
     def closeout(profile_id: str, body: CloseoutIn, request: Request):

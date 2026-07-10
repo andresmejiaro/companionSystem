@@ -32,6 +32,11 @@ class MessageNotFound(Exception):
         super().__init__(f"no message {message_id!r} in {profile_id!r}'s inbox")
 
 
+class FileNotFoundInStore(Exception):
+    def __init__(self, profile_id: str, filename: str):
+        super().__init__(f"no file {filename!r} for profile {profile_id!r}")
+
+
 class DynStoreNotFound(Exception):
     def __init__(self, profile_id: str, name: str):
         super().__init__(f"no dynamic store {name!r} for profile {profile_id!r}")

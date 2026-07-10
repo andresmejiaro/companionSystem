@@ -6,11 +6,14 @@ Layout (under a data directory, default ./data):
     profiles/<id>/base_prompt.md       base behavior prompt (plain file, inspectable)
     profiles/<id>/role_prompt.md       role/lane prompt
     profiles/<id>/closeouts.jsonl      append-only closeout log (also mirrored in DB state)
+    profiles/<id>/files/<name>         plain-file scratch store (scripts, notes) —
+                                        never in git, never a DB blob; see write_file()
 """
 
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import sqlite3
 import threading
@@ -18,8 +21,9 @@ import time
 import uuid
 from pathlib import Path
 
-from .errors import (MalformedMemoryEvent, MalformedMessage, MalformedRecord,
-                     MemoryEventNotFound, MessageNotFound, ProfileNotFound)
+from .errors import (FileNotFoundInStore, MalformedMemoryEvent, MalformedMessage,
+                     MalformedRecord, MemoryEventNotFound, MessageNotFound,
+                     ProfileNotFound)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS profiles (
@@ -375,6 +379,62 @@ class Store:
         return {"id": row["id"], "from_profile_id": row["from_profile_id"],
                 "to_profile_id": row["to_profile_id"], "content": row["content"],
                 "created_at": row["created_at"], "read_at": row["read_at"]}
+
+    # -- file store (plain files on disk — scripts, notes; never git, never a DB blob) --
+
+    _FILENAME_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
+    MAX_FILE_BYTES = 256 * 1024
+
+    @classmethod
+    def _validate_filename(cls, filename: str) -> None:
+        if (not cls._FILENAME_RE.match(filename or "")
+                or filename in (".", "..") or ".." in filename):
+            raise MalformedRecord(
+                "filename must match [A-Za-z0-9._-]{1,128}, no path separators")
+
+    def _files_dir(self, profile_id: str) -> Path:
+        d = self.profiles_dir / profile_id / "files"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def write_file(self, profile_id: str, filename: str, content: str) -> dict:
+        """Self-service: same trust level as remember(). Overwrites if it
+        already exists — this is a scratch store, not versioned storage."""
+        self._require_profile(profile_id)
+        self._validate_filename(filename)
+        if not isinstance(content, str):
+            raise MalformedRecord("content must be a string")
+        data = content.encode("utf-8")
+        if len(data) > self.MAX_FILE_BYTES:
+            raise MalformedRecord(f"file too large (max {self.MAX_FILE_BYTES} bytes)")
+        (self._files_dir(profile_id) / filename).write_bytes(data)
+        return self._file_meta(profile_id, filename)
+
+    def read_file(self, profile_id: str, filename: str) -> dict:
+        self._require_profile(profile_id)
+        self._validate_filename(filename)
+        path = self._files_dir(profile_id) / filename
+        if not path.is_file():
+            raise FileNotFoundInStore(profile_id, filename)
+        return {**self._file_meta(profile_id, filename), "content": path.read_text()}
+
+    def list_files(self, profile_id: str) -> list[dict]:
+        self._require_profile(profile_id)
+        d = self._files_dir(profile_id)
+        return [self._file_meta(profile_id, p.name)
+                for p in sorted(d.iterdir()) if p.is_file()]
+
+    def delete_file(self, profile_id: str, filename: str) -> None:
+        self._require_profile(profile_id)
+        self._validate_filename(filename)
+        path = self._files_dir(profile_id) / filename
+        if not path.is_file():
+            raise FileNotFoundInStore(profile_id, filename)
+        path.unlink()
+
+    def _file_meta(self, profile_id: str, filename: str) -> dict:
+        stat = (self._files_dir(profile_id) / filename).stat()
+        return {"filename": filename, "size": stat.st_size, "updated_at": stat.st_mtime}
 
     def search(self, profile_id: str, query: str, limit: int = 20) -> list[dict]:
         """Case-insensitive substring search over content and tags. Boring on purpose."""

@@ -97,6 +97,24 @@ conversations.
   inbox (including a message `id` itself sent — only the recipient can
   mark it read).
 
+## File store (plain files on disk — scripts, notes)
+
+Self-service like the inbox above: no approval, not a database table, and
+never touches git (lives under the gitignored `data/` dir, one
+`files/` folder per profile). For stashing a script or note that doesn't
+belong as a structured dynamic-store record.
+
+- `PUT /profiles/{id}/files/{filename}` `{content}` → 201, file metadata
+  (`filename`, `size`, `updated_at`). Requires `remember` on `id`.
+  Overwrites if it exists — this is scratch storage, not versioned.
+  `filename` must match `[A-Za-z0-9._-]{1,128}` (no path separators, no
+  `..`); max 256KB.
+- `GET /profiles/{id}/files` → list of file metadata. Requires `search`.
+- `GET /profiles/{id}/files/{filename}` → metadata + `content`. Requires
+  `search`; 404 if it doesn't exist.
+- `DELETE /profiles/{id}/files/{filename}` → 204. Requires `remember`; 404
+  if it doesn't exist.
+
 - ★ `POST /profiles/{id}/closeout` — end session. Body:
   `{"notes": "free text", "new_state": "non-empty compact state"}` → 201.
   Replaces compact state and appends to `closeouts.jsonl`.

@@ -73,6 +73,60 @@ def test_update_and_delete_memory_via_api(client):
     assert d_again.status_code == 404
 
 
+def test_file_store_write_read_list_delete(client):
+    w = client.put("/profiles/tara/files/notes.md", json={"content": "hello world"})
+    assert w.status_code == 201, w.text
+    assert w.json()["filename"] == "notes.md"
+    assert w.json()["size"] == len(b"hello world")
+
+    listed = client.get("/profiles/tara/files").json()
+    assert [f["filename"] for f in listed] == ["notes.md"]
+
+    r = client.get("/profiles/tara/files/notes.md")
+    assert r.status_code == 200
+    assert r.json()["content"] == "hello world"
+
+    # overwrite
+    w2 = client.put("/profiles/tara/files/notes.md", json={"content": "updated"})
+    assert w2.status_code == 201
+    assert client.get("/profiles/tara/files/notes.md").json()["content"] == "updated"
+
+    # separate profile has its own isolated store
+    assert client.get("/profiles/sidra/files").json() == []
+
+    d = client.delete("/profiles/tara/files/notes.md")
+    assert d.status_code == 204
+    assert client.get("/profiles/tara/files").json() == []
+    assert client.get("/profiles/tara/files/notes.md").status_code == 404
+    assert client.delete("/profiles/tara/files/notes.md").status_code == 404
+
+
+def test_file_store_path_traversal_rejected(client, tmp_path):
+    # "a/b" and "/etc/passwd" don't even reach our handler (multi-segment
+    # paths 404 at routing); ".." is a single segment and must be rejected
+    # explicitly by _validate_filename, so exercise that directly too.
+    from profile_os.errors import MalformedRecord
+    from profile_os.storage import Store
+
+    for bad_name in ("a/../../etc/passwd", "/etc/passwd", "a/b"):
+        r = client.put(f"/profiles/tara/files/{bad_name}", json={"content": "x"})
+        assert r.status_code == 404, f"{bad_name} -> {r.status_code}"
+
+    store = Store(str(tmp_path / "direct"))
+    store.create_profile("p", "P", "b", "r")
+    for traversal in ("..", "../escaped", "..%2fescaped"):
+        with pytest.raises(MalformedRecord):
+            store.write_file("p", traversal, "x")
+    assert not (tmp_path / "direct" / "profiles" / "escaped").exists()
+
+
+def test_file_store_size_limit(client):
+    from profile_os.storage import Store
+    too_big = "x" * (Store.MAX_FILE_BYTES + 1)
+    r = client.put("/profiles/tara/files/big.txt", json={"content": too_big})
+    assert r.status_code == 422
+
+
 def test_inbox_flow_between_profiles(client):
     r = client.post("/profiles/tara/messages",
                     json={"to_profile_id": "sidra", "content": "hey, check this out"})

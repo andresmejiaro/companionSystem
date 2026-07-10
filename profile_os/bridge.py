@@ -125,6 +125,23 @@ TOOLS = [
     _tool("mark_message_read", "Mark one of your inbox messages as read.",
           {"profile_id": _PID, "message_id": {"type": "string"}},
           ["profile_id", "message_id"]),
+    _tool("write_file", "Write (or overwrite) a plain file in your own scratch file"
+                       " store — for scripts, notes, anything that doesn't belong as"
+                       " a structured record. Self-service, never in git, never a"
+                       " database blob. Max 256KB.",
+          {"profile_id": _PID,
+           "filename": {"type": "string",
+                       "description": "e.g. 'notes.md' or 'script.py'; no path separators"},
+           "content": {"type": "string"}},
+          ["profile_id", "filename", "content"]),
+    _tool("list_files", "List files in your scratch file store.",
+          {"profile_id": _PID}, ["profile_id"]),
+    _tool("read_file", "Read a file from your scratch file store.",
+          {"profile_id": _PID, "filename": {"type": "string"}},
+          ["profile_id", "filename"]),
+    _tool("delete_file", "Delete a file from your scratch file store.",
+          {"profile_id": _PID, "filename": {"type": "string"}},
+          ["profile_id", "filename"]),
     _tool("closeout", "Close a session: log notes and set the new compact state.",
           {"profile_id": _PID,
            "notes": {"type": "string"},
@@ -285,6 +302,20 @@ class ToolBridge:
 
     def mark_message_read(self, profile_id: str, message_id: str):
         return self._request("POST", f"/profiles/{profile_id}/inbox/{message_id}/read")
+
+    def write_file(self, profile_id: str, filename: str, content: str):
+        return self._request("PUT", f"/profiles/{profile_id}/files/{filename}",
+                             json={"content": content})
+
+    def list_files(self, profile_id: str):
+        return self._request("GET", f"/profiles/{profile_id}/files")
+
+    def read_file(self, profile_id: str, filename: str):
+        return self._request("GET", f"/profiles/{profile_id}/files/{filename}")
+
+    def delete_file(self, profile_id: str, filename: str):
+        self._request("DELETE", f"/profiles/{profile_id}/files/{filename}")
+        return {"deleted": True, "filename": filename}
 
     def closeout(self, profile_id: str, notes: str, new_state: str):
         return self._request("POST", f"/profiles/{profile_id}/closeout",

@@ -29,6 +29,10 @@ Exposed MCP tools:
 - `send_message`
 - `read_inbox`
 - `mark_message_read`
+- `write_file`
+- `list_files`
+- `read_file`
+- `delete_file`
 - `search_memories`
 - `closeout`
 - `list_stores`
