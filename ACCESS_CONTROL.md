@@ -43,10 +43,12 @@ connector-side system prompt would otherwise have to assemble: the
 `whoami` identity content (if the caller has `identity:read`), current
 prompts and `compact_state`, the **last 2 closeouts** (full records —
 `notes`, `new_state`, `created_at` — not just the current compact state),
-and the **full memory history** (no `max_boot_events` cap). Gated by the
-same `boot` grant as the plain `boot`/`boot_profile` tool — it's a richer
-read, not a new privilege. Intended so a connector's provider-side system
-prompt can shrink to "on your first response, call `start_session`."
+the **full memory history** (no `max_boot_events` cap), and `server_time`
+(`unix` epoch seconds + `iso` UTC timestamp — a companion has no other way
+to know the real current date/time). Gated by the same `boot` grant as the
+plain `boot`/`boot_profile` tool — it's a richer read, not a new privilege.
+Intended so a connector's provider-side system prompt can shrink to "on
+your first response, call `start_session`."
 
 ## TOTP-gated approvals ("edgy" actions)
 

@@ -12,6 +12,7 @@ import os
 import re
 import time
 
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
@@ -362,11 +363,16 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
                 path = Path(identity_file)
                 if path.is_file():
                     identity_content = path.read_text()
+        now = time.time()
         return {
             **booted,
             "identity": identity_content,
             "last_closeouts": store.recent_closeouts(profile_id, limit=2),
             "memories": store.all_memories(profile_id),
+            "server_time": {
+                "unix": now,
+                "iso": datetime.fromtimestamp(now, tz=timezone.utc).isoformat(),
+            },
         }
 
     @app.post("/profiles/{profile_id}/memories", status_code=201)

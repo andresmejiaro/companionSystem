@@ -275,7 +275,8 @@ MCP_TOOLS = [
         "Start Session",
         "Call this on your first response in a conversation instead of boot_profile:"
         " returns whoami identity, prompts, compact_state, the last 2 closeouts"
-        " (not just the current state), and your full memory history in one call.",
+        " (not just the current state), your full memory history, and the current"
+        " server date/time (server_time) in one call.",
         {"profile_id": _PROFILE_ID},
         ["profile_id"],
     ),

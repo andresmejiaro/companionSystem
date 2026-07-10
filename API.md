@@ -45,8 +45,9 @@ subset of these operations over `POST /mcp` and `GET /mcp`; see
   `recent_memories`, plus `identity` (the `whoami` file content, or `null`
   without `identity:read`), `last_closeouts` (last 2 full closeout records:
   `notes`/`new_state`/`created_at`, not just the current compact state),
-  and `memories` (the full memory history, uncapped). Requires the same
-  `boot` grant.
+  `memories` (the full memory history, uncapped), and `server_time`
+  (`{"unix": 1751640000.0, "iso": "2026-07-10T12:00:00+00:00"}`). Requires
+  the same `boot` grant.
 - `POST /profiles/{id}/prompt` `{base_prompt?, role_prompt?}` → 201, a
   pending approval record. Requires `manage_profile` on that profile.
   Companions can propose an edit to their own prompts; it only takes effect

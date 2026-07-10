@@ -74,8 +74,9 @@ TOOLS = [
           {"profile_id": _PID}, ["profile_id"]),
     _tool("start_session", "Call this on your first response in a conversation instead"
                           " of boot: returns identity (whoami), prompts, compact_state,"
-                          " the last 2 closeouts (not just the current state), and your"
-                          " full memory history in one call.",
+                          " the last 2 closeouts (not just the current state), your"
+                          " full memory history, and the current server date/time"
+                          " (server_time) in one call.",
           {"profile_id": _PID}, ["profile_id"]),
     _tool("propose_prompt_edit", "Propose a change to your own base_prompt/role_prompt."
                                 " Held pending until the human approves it with a live"

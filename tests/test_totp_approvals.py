@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 import pyotp
 import pytest
 from fastapi.testclient import TestClient
@@ -288,6 +290,9 @@ def test_start_session_bundles_identity_closeouts_and_all_memories(tmp_path, mon
         assert len(body["last_closeouts"]) == 2
         assert [c["new_state"] for c in body["last_closeouts"]] == ["state3", "state2"]
         assert "recent_memories" not in body
+        assert isinstance(body["server_time"]["unix"], (int, float))
+        assert body["server_time"]["iso"].startswith(
+            datetime.now(timezone.utc).strftime("%Y-%m-%d"))
 
 
 def test_start_session_omits_identity_without_grant(tmp_path, monkeypatch):
