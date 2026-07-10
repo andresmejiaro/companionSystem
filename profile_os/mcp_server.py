@@ -325,6 +325,28 @@ MCP_TOOLS = [
         ["profile_id", "query"],
     ),
     _tool(
+        "update_memory",
+        "Update Memory",
+        "Revise one of your own memory events (kind/content/tags). Self-service —"
+        " no approval needed, same trust level as remembering one.",
+        {
+            "profile_id": _PROFILE_ID,
+            "event_id": {"type": "string"},
+            "kind": {"type": "string", "enum": _MEMORY_KINDS},
+            "content": {"type": "string"},
+            "tags": {"type": "array", "items": {"type": "string"}},
+        },
+        ["profile_id", "event_id"],
+    ),
+    _tool(
+        "forget",
+        "Forget",
+        "Permanently erase one of your own memory events. Self-service — no"
+        " approval needed.",
+        {"profile_id": _PROFILE_ID, "event_id": {"type": "string"}},
+        ["profile_id", "event_id"],
+    ),
+    _tool(
         "closeout",
         "Close Out",
         "End a session by logging notes and replacing the profile compact_state with the supplied new_state.",
@@ -563,6 +585,16 @@ class MCPToolRunner:
                 arguments["query"],
                 limit=int(arguments.get("limit", 20)),
             )
+        if name == "update_memory":
+            return self.bridge.update_memory(
+                arguments["profile_id"],
+                arguments["event_id"],
+                kind=arguments.get("kind"),
+                content=arguments.get("content"),
+                tags=arguments.get("tags"),
+            )
+        if name == "forget":
+            return self.bridge.forget(arguments["profile_id"], arguments["event_id"])
         if name == "closeout":
             return self.bridge.closeout(
                 arguments["profile_id"],

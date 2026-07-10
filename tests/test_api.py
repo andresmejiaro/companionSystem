@@ -39,6 +39,40 @@ def test_remember_search_closeout_flow(client):
     assert client.post("/profiles/tara/boot").json()["compact_state"] == "Paella day logged."
 
 
+def test_update_and_delete_memory_via_api(client):
+    r = client.post("/profiles/tara/memories",
+                    json={"kind": "note", "content": "original", "tags": ["a"]})
+    assert r.status_code == 201
+    event_id = r.json()["id"]
+
+    upd = client.patch(f"/profiles/tara/memories/{event_id}",
+                       json={"content": "revised", "tags": ["b", "c"]})
+    assert upd.status_code == 200, upd.text
+    assert upd.json()["content"] == "revised"
+    assert upd.json()["tags"] == ["b", "c"]
+    assert upd.json()["kind"] == "note"  # untouched field preserved
+
+    hits = client.get("/profiles/tara/memories/search", params={"q": "revised"}).json()
+    assert len(hits) == 1
+    assert not client.get("/profiles/tara/memories/search", params={"q": "original"}).json()
+
+    empty = client.patch(f"/profiles/tara/memories/{event_id}", json={})
+    assert empty.status_code == 422
+
+    bad_kind = client.patch(f"/profiles/tara/memories/{event_id}", json={"kind": "bogus"})
+    assert bad_kind.status_code == 422
+
+    unknown = client.patch("/profiles/tara/memories/does-not-exist", json={"content": "x"})
+    assert unknown.status_code == 404
+
+    d = client.delete(f"/profiles/tara/memories/{event_id}")
+    assert d.status_code == 204
+    assert not client.get("/profiles/tara/memories/search", params={"q": "revised"}).json()
+
+    d_again = client.delete(f"/profiles/tara/memories/{event_id}")
+    assert d_again.status_code == 404
+
+
 def test_malformed_event_via_api(client):
     r = client.post("/profiles/tara/memories",
                     json={"kind": "bogus", "content": "x"})

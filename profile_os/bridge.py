@@ -98,6 +98,18 @@ TOOLS = [
            "query": {"type": "string"},
            "limit": {"type": "integer", "default": 20}},
           ["profile_id", "query"]),
+    _tool("update_memory", "Revise one of your own memory events (kind/content/tags)."
+                          " Self-service — no approval needed, same as remembering one.",
+          {"profile_id": _PID,
+           "event_id": {"type": "string"},
+           "kind": {"type": "string", "enum": MEMORY_KINDS},
+           "content": {"type": "string"},
+           "tags": {"type": "array", "items": {"type": "string"}}},
+          ["profile_id", "event_id"]),
+    _tool("forget", "Permanently erase one of your own memory events."
+                   " Self-service — no approval needed.",
+          {"profile_id": _PID, "event_id": {"type": "string"}},
+          ["profile_id", "event_id"]),
     _tool("closeout", "Close a session: log notes and set the new compact state.",
           {"profile_id": _PID,
            "notes": {"type": "string"},
@@ -180,6 +192,8 @@ class ToolBridge:
             except ValueError:
                 detail = r.text
             raise ToolBridgeError(r.status_code, detail)
+        if r.status_code == 204 or not r.content:
+            return None
         return r.json()
 
     # -- tools (names match TOOLS) -------------------------------------------
@@ -224,6 +238,16 @@ class ToolBridge:
     def search_memories(self, profile_id: str, query: str, limit: int = 20):
         return self._request("GET", f"/profiles/{profile_id}/memories/search",
                              params={"q": query, "limit": limit})
+
+    def update_memory(self, profile_id: str, event_id: str, kind: str | None = None,
+                      content: str | None = None, tags: list[str] | None = None):
+        body = {"kind": kind, "content": content, "tags": tags}
+        return self._request("PATCH", f"/profiles/{profile_id}/memories/{event_id}",
+                             json=body)
+
+    def forget(self, profile_id: str, event_id: str):
+        self._request("DELETE", f"/profiles/{profile_id}/memories/{event_id}")
+        return {"deleted": True, "event_id": event_id}
 
     def closeout(self, profile_id: str, notes: str, new_state: str):
         return self._request("POST", f"/profiles/{profile_id}/closeout",

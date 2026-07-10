@@ -16,6 +16,11 @@ class MalformedRecord(Exception):
         super().__init__(f"malformed record: {reason}")
 
 
+class MemoryEventNotFound(Exception):
+    def __init__(self, profile_id: str, event_id: str):
+        super().__init__(f"no memory event {event_id!r} for profile {profile_id!r}")
+
+
 class DynStoreNotFound(Exception):
     def __init__(self, profile_id: str, name: str):
         super().__init__(f"no dynamic store {name!r} for profile {profile_id!r}")

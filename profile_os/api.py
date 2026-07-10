@@ -24,7 +24,7 @@ from .access import AccessControl, AccessError
 from .dynstores import DynamicStores
 from .enroll import Enrollment, InviteConsumed, InviteInvalid
 from .errors import (DynStoreConflict, DynStoreNotFound, MalformedMemoryEvent,
-                     MalformedRecord, ProfileNotFound, SchemaError)
+                     MalformedRecord, MemoryEventNotFound, ProfileNotFound, SchemaError)
 from .sign import signing_message
 from .storage import Store
 
@@ -49,6 +49,12 @@ class MemoryEventIn(BaseModel):
     kind: str
     content: str
     tags: list[str] = Field(default_factory=list)
+
+
+class MemoryEventUpdateIn(BaseModel):
+    kind: str | None = None
+    content: str | None = None
+    tags: list[str] | None = None
 
 
 class CloseoutIn(BaseModel):
@@ -234,7 +240,7 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
     def _wrap(fn, *args, **kwargs):
         try:
             return fn(*args, **kwargs)
-        except (ProfileNotFound, DynStoreNotFound) as e:
+        except (ProfileNotFound, DynStoreNotFound, MemoryEventNotFound) as e:
             raise HTTPException(404, str(e))
         except DynStoreConflict as e:
             raise HTTPException(409, str(e))
@@ -379,6 +385,23 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
     def remember(profile_id: str, event: MemoryEventIn, request: Request):
         _require("remember", profile_id, request)
         return _wrap(store.remember, profile_id, event.model_dump())
+
+    @app.patch("/profiles/{profile_id}/memories/{event_id}")
+    def update_memory(profile_id: str, event_id: str, body: MemoryEventUpdateIn,
+                      request: Request):
+        """Self-service: a companion may revise its own memory events. Same
+        grant as writing one (remember) — not a backend/admin action."""
+        _require("remember", profile_id, request)
+        if body.kind is None and body.content is None and body.tags is None:
+            raise HTTPException(422, "at least one of kind/content/tags is required")
+        return _wrap(store.update_memory, profile_id, event_id,
+                    body.kind, body.content, body.tags)
+
+    @app.delete("/profiles/{profile_id}/memories/{event_id}", status_code=204)
+    def delete_memory(profile_id: str, event_id: str, request: Request):
+        """Self-service: a companion may erase its own memory events."""
+        _require("remember", profile_id, request)
+        _wrap(store.delete_memory, profile_id, event_id)
 
     @app.get("/profiles/{profile_id}/memories/search")
     def search(profile_id: str, q: str, request: Request, limit: int = 20):

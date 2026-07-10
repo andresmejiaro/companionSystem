@@ -64,6 +64,13 @@ subset of these operations over `POST /mcp` and `GET /mcp`; see
   (`id`, `profile_id`, `kind`, `content`, `tags`, `created_at`).
 - ★ `GET /profiles/{id}/memories/search?q=<text>&limit=20` — case-insensitive
   substring match over content and tags, newest first.
+- `PATCH /profiles/{id}/memories/{event_id}` `{kind?, content?, tags?}` →
+  200, the updated event. Self-service — same `remember` grant, no admin
+  approval — a companion may revise its own memory. At least one field
+  required; 404 if the event doesn't exist under that profile; 422 for an
+  invalid kind/empty content/non-string tags.
+- `DELETE /profiles/{id}/memories/{event_id}` → 204. Self-service erase,
+  same `remember` grant. 404 if the event doesn't exist under that profile.
 - ★ `POST /profiles/{id}/closeout` — end session. Body:
   `{"notes": "free text", "new_state": "non-empty compact state"}` → 201.
   Replaces compact state and appends to `closeouts.jsonl`.

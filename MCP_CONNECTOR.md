@@ -24,6 +24,8 @@ Exposed MCP tools:
 - `list_profiles`
 - `boot_profile`
 - `remember`
+- `update_memory`
+- `forget`
 - `search_memories`
 - `closeout`
 - `list_stores`

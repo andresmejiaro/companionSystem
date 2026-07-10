@@ -250,6 +250,8 @@ def test_initialize_and_list_tools(tmp_path):
         "list_profiles",
         "boot_profile",
         "remember",
+        "update_memory",
+        "forget",
         "search_memories",
         "closeout",
         "list_stores",

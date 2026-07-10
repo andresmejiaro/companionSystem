@@ -18,7 +18,8 @@ import time
 import uuid
 from pathlib import Path
 
-from .errors import MalformedMemoryEvent, MalformedRecord, ProfileNotFound
+from .errors import (MalformedMemoryEvent, MalformedRecord, MemoryEventNotFound,
+                     ProfileNotFound)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS profiles (
@@ -261,6 +262,55 @@ class Store:
             )
         return self._event_dict(self.db.execute(
             "SELECT * FROM memory_events WHERE id=?", (eid,)).fetchone())
+
+    def _require_memory(self, profile_id: str, event_id: str) -> sqlite3.Row:
+        row = self.db.execute(
+            "SELECT * FROM memory_events WHERE id=? AND profile_id=?",
+            (event_id, profile_id)).fetchone()
+        if row is None:
+            raise MemoryEventNotFound(profile_id, event_id)
+        return row
+
+    def update_memory(self, profile_id: str, event_id: str, kind: str | None = None,
+                      content: str | None = None, tags: list[str] | None = None) -> dict:
+        """Self-service edit: a companion may revise its own memory events.
+        Not a backend/admin action — same trust level as remember()."""
+        self._require_profile(profile_id)
+        self._require_memory(profile_id, event_id)
+        if kind is not None and kind not in MEMORY_KINDS:
+            raise MalformedMemoryEvent(f"kind must be one of {sorted(MEMORY_KINDS)}")
+        if content is not None and (not isinstance(content, str) or not content.strip()):
+            raise MalformedMemoryEvent("content must be a non-empty string")
+        if tags is not None and (not isinstance(tags, list)
+                                 or not all(isinstance(t, str) for t in tags)):
+            raise MalformedMemoryEvent("tags must be a list of strings")
+        sets, params = [], []
+        if kind is not None:
+            sets.append("kind=?")
+            params.append(kind)
+        if content is not None:
+            sets.append("content=?")
+            params.append(content)
+        if tags is not None:
+            sets.append("tags=?")
+            params.append(json.dumps(tags))
+        if sets:
+            params += [event_id, profile_id]
+            with self.db:
+                self.db.execute(
+                    f"UPDATE memory_events SET {', '.join(sets)} WHERE id=? AND profile_id=?",
+                    params)
+        return self._event_dict(self.db.execute(
+            "SELECT * FROM memory_events WHERE id=?", (event_id,)).fetchone())
+
+    def delete_memory(self, profile_id: str, event_id: str) -> None:
+        """Self-service erase: a companion may remove its own memory events."""
+        self._require_profile(profile_id)
+        self._require_memory(profile_id, event_id)
+        with self.db:
+            self.db.execute(
+                "DELETE FROM memory_events WHERE id=? AND profile_id=?",
+                (event_id, profile_id))
 
     def search(self, profile_id: str, query: str, limit: int = 20) -> list[dict]:
         """Case-insensitive substring search over content and tags. Boring on purpose."""

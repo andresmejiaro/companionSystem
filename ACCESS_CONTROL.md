@@ -223,6 +223,7 @@ whatever a companion's memory says on conflict. Exposed as the MCP tool
 | `POST /profiles` | global `create_profile`; auto-grants owner bundle on the new profile |
 | `GET /profiles/{id}`, `POST /profiles/{id}/boot` | `boot` |
 | `POST /profiles/{id}/memories` | `remember` |
+| `PATCH \| DELETE /profiles/{id}/memories/{event_id}` | `remember` (self-service edit/erase, no admin approval) |
 | `GET /profiles/{id}/memories/search` | `search` |
 | `POST /profiles/{id}/closeout` | `closeout` |
 | `GET /profiles/{id}/domain`, `GET /profiles/{id}/domain/{store}` | `records:read` |
