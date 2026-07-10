@@ -415,10 +415,42 @@ class OAuthCode:
 
 
 class OAuthState:
-    def __init__(self):
+    """Registered clients persist to disk so a redeploy (docker compose up
+    --build recreates the container, wiping in-process memory) doesn't
+    invalidate every connector that already completed dynamic client
+    registration — Claude/ChatGPT don't re-register on their own, so a lost
+    client_id shows up to the user as a mysterious 'invalid_client' 400.
+    Codes stay in-memory only; their 5-minute TTL makes restart-loss a
+    non-issue (worst case: redo one authorize round-trip)."""
+
+    def __init__(self, state_file: str | None = None):
         self._lock = threading.Lock()
         self._clients: dict[str, OAuthClient] = {}
         self._codes: dict[str, OAuthCode] = {}
+        self._state_file = state_file
+        self._load()
+
+    def _load(self) -> None:
+        if not self._state_file or not os.path.isfile(self._state_file):
+            return
+        try:
+            with open(self._state_file) as f:
+                raw = json.load(f)
+            self._clients = {cid: OAuthClient(**data) for cid, data in raw.items()}
+        except (OSError, ValueError, TypeError):
+            LOGGER.warning("failed to load OAuth client state from %s", self._state_file)
+
+    def _save(self) -> None:
+        if not self._state_file:
+            return
+        try:
+            os.makedirs(os.path.dirname(self._state_file) or ".", exist_ok=True)
+            tmp = f"{self._state_file}.tmp"
+            with open(tmp, "w") as f:
+                json.dump({cid: c.__dict__ for cid, c in self._clients.items()}, f)
+            os.replace(tmp, self._state_file)
+        except OSError:
+            LOGGER.warning("failed to persist OAuth client state to %s", self._state_file)
 
     def register(self, redirect_uris: list[str], client_name: str) -> OAuthClient:
         now = int(time.time())
@@ -430,6 +462,7 @@ class OAuthState:
         )
         with self._lock:
             self._clients[client.client_id] = client
+            self._save()
         return client
 
     def get_client(self, client_id: str) -> OAuthClient | None:
@@ -776,7 +809,8 @@ def create_mcp_app(
     settings = settings or MCPSettings.from_env()
     app = FastAPI(title="Profile OS Remote MCP", version=SERVER_VERSION)
     app.state.settings = settings
-    app.state.oauth = oauth_state or OAuthState()
+    app.state.oauth = oauth_state or OAuthState(
+        state_file=os.environ.get("MCP_OAUTH_STATE_FILE"))
     app.state.runner = MCPToolRunner(bridge or ToolBridge())
     app.state.admin_verify = admin_verify or default_admin_verify
     _authorize_hits: dict[str, list[float]] = {}

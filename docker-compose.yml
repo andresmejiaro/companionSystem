@@ -47,6 +47,8 @@ services:
       MCP_CONNECTOR_TOKENS: ${MCP_CONNECTOR_TOKENS:-}
       MCP_OAUTH_SIGNING_KEY: ${MCP_OAUTH_SIGNING_KEY:-}
       MCP_AUTH_REQUIRED: ${MCP_AUTH_REQUIRED:-1}
+      MCP_OAUTH_ACCESS_TOKEN_TTL_SECONDS: ${MCP_OAUTH_ACCESS_TOKEN_TTL_SECONDS:-}
+      MCP_OAUTH_STATE_FILE: /app/oauth-state/clients.json
     command:
       - uvicorn
       - profile_os.mcp_server:app
@@ -57,6 +59,8 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+    volumes:
+      - profile-os-mcp-oauth-state:/app/oauth-state
     ports:
       - "${PROFILE_OS_MCP_PORT:-8080}:8080"
     healthcheck:
@@ -71,3 +75,4 @@ services:
 
 volumes:
   profile-os-data:
+  profile-os-mcp-oauth-state:

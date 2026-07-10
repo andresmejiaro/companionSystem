@@ -10,7 +10,7 @@ import httpx
 from profile_os.bootstrap_bridge import BRIDGE_OPS, bootstrap
 from profile_os.access import AccessControl
 from profile_os.bridge import ToolBridge, ToolBridgeError
-from profile_os.mcp_server import MCPSettings, MCP_TOOLS, create_mcp_app
+from profile_os.mcp_server import MCPSettings, MCP_TOOLS, OAuthState, create_mcp_app
 from profile_os.storage import Store
 
 
@@ -433,6 +433,34 @@ def test_oauth_metadata_dcr_pkce_and_bearer_use(tmp_path):
     )
     assert r.status_code == 200
     assert r.json()["result"]["serverInfo"]["name"] == "profile-os-mcp"
+
+
+def test_oauth_client_registration_survives_process_restart(tmp_path):
+    """A redeploy recreates the mcp container (fresh process memory). A
+    connector that already completed dynamic client registration must not
+    get invalid_client on its next /oauth/authorize — that's exactly what
+    broke ChatGPT's connection after a mid-session redeploy."""
+    state_file = str(tmp_path / "oauth-state" / "clients.json")
+
+    first_process_state = OAuthState(state_file=state_file)
+    client = first_process_state.register(
+        ["https://chatgpt.com/connector/oauth/abc"], "ChatGPT")
+
+    # Simulate the container being recreated: a brand-new OAuthState loading
+    # from the same (persisted) file, with nothing carried over in memory.
+    second_process_state = OAuthState(state_file=state_file)
+    reloaded = second_process_state.get_client(client.client_id)
+    assert reloaded is not None
+    assert reloaded.redirect_uris == ["https://chatgpt.com/connector/oauth/abc"]
+    assert reloaded.client_name == "ChatGPT"
+
+
+def test_oauth_state_without_file_does_not_persist(tmp_path):
+    """No state_file configured (e.g. local dev) — in-memory only, same as
+    before; must not raise."""
+    state = OAuthState(state_file=None)
+    client = state.register(["https://claude.ai/oauth/callback"], "Claude")
+    assert state.get_client(client.client_id) is not None
 
 
 def test_bootstrap_bridge_cli_grants_operational_only(tmp_path):

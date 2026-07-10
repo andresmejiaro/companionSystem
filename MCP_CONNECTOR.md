@@ -169,6 +169,11 @@ OAuth is intentionally minimal and single-operator oriented:
 - this only happens once per connector, not per message: tokens last
   `MCP_OAUTH_ACCESS_TOKEN_TTL_SECONDS` and there's no refresh grant, so
   re-authorizing after expiry means the TOTP screen again
+- registered clients (from `POST /oauth/register`) persist to
+  `MCP_OAUTH_STATE_FILE` on a Docker volume, so a redeploy (which recreates
+  the mcp container) doesn't invalidate a connector that already completed
+  registration — without this, ChatGPT/Claude would need to reconnect from
+  scratch after every `docker compose up --build`
 
 ## Origin handling and logging
 
