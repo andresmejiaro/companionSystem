@@ -222,6 +222,14 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
             raise HTTPException(403, f"principal lacks global {operation}")
         return principal_id
 
+    def _require_global_any(operations: list[str], request: Request) -> str | None:
+        principal_id = _authenticate(request)
+        if principal_id is None:
+            return None
+        if not any(access.allowed(principal_id, op, None) for op in operations):
+            raise HTTPException(403, f"principal lacks any of global {operations}")
+        return principal_id
+
     def _wrap(fn, *args, **kwargs):
         try:
             return fn(*args, **kwargs)
@@ -394,14 +402,24 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
             {"base_prompt": body.base_prompt, "role_prompt": body.role_prompt},
             profile_id=profile_id)
 
+    _APPROVAL_OPS = ["approvals:decide", "approvals:totp_decide"]
+
     @app.get("/approvals")
     def list_approvals(request: Request, profile_id: str | None = None):
-        _require_global("approvals:decide", request)
+        _require_global_any(_APPROVAL_OPS, request)
         return access.list_pending_approvals(profile_id)
+
+    @app.get("/approvals/{approval_id}")
+    def get_approval_route(approval_id: str, request: Request):
+        _require_global_any(_APPROVAL_OPS, request)
+        try:
+            return access.get_approval(approval_id)
+        except AccessError as e:
+            raise HTTPException(404, str(e))
 
     @app.post("/approvals/{approval_id}/decide")
     def decide_approval(approval_id: str, body: ApprovalDecideIn, request: Request):
-        principal_id = _require_global("approvals:decide", request)
+        principal_id = _require_global_any(_APPROVAL_OPS, request)
         try:
             row = access.get_approval(approval_id)
         except AccessError as e:
@@ -411,11 +429,22 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
         if body.approve:
             if principal_id is None:
                 pass  # auth disabled: local/dev convenience, no TOTP surface
-            elif not access.has_totp(principal_id):
-                raise HTTPException(
-                    403, "no TOTP enrolled; run python -m profile_os.enroll_totp")
-            elif not access.verify_totp(principal_id, body.totp_code or ""):
-                raise HTTPException(401, "missing or invalid TOTP code")
+            else:
+                # A caller holding full approvals:decide (e.g. the admin's own
+                # bearer) verifies against their own TOTP, exactly as before.
+                # A caller with only approvals:totp_decide (the mcp service,
+                # acting on a companion's behalf via a public approval link)
+                # verifies against the single TOTP-enrolled admin instead —
+                # there is exactly one admin, so this is unambiguous, and the
+                # live single-use code is still the actual gate either way.
+                totp_principal = (principal_id
+                                 if access.allowed(principal_id, "approvals:decide", None)
+                                 else access.find_totp_admin_principal_id())
+                if totp_principal is None or not access.has_totp(totp_principal):
+                    raise HTTPException(
+                        403, "no TOTP enrolled; run python -m profile_os.enroll_totp")
+                if not access.verify_totp(totp_principal, body.totp_code or ""):
+                    raise HTTPException(401, "missing or invalid TOTP code")
         try:
             decided = access.decide_approval(approval_id, body.approve,
                                             principal_id or "anonymous")

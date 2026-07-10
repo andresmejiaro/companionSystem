@@ -88,6 +88,7 @@ class FakeBridge:
         self.stores = {}
         self.records = []
         self.store_approved = False
+        self.approvals = {}
 
     def list_profiles(self):
         return [
@@ -150,6 +151,30 @@ class FakeBridge:
         record = {"id": "rec-1", "store": store_name, "data": data}
         self.records.append(record)
         return record
+
+    def propose_prompt_edit(self, profile_id, base_prompt=None, role_prompt=None):
+        approval = {"id": "approval-1", "kind": "prompt_edit", "profile_id": profile_id,
+                   "status": "pending",
+                   "payload": {"base_prompt": base_prompt, "role_prompt": role_prompt}}
+        self.approvals[approval["id"]] = approval
+        return approval
+
+    def get_approval(self, approval_id):
+        approval = self.approvals.get(approval_id)
+        if approval is None:
+            raise ToolBridgeError(404, "unknown approval")
+        return approval
+
+    def decide_approval(self, approval_id, approve, totp_code=None):
+        approval = self.approvals.get(approval_id)
+        if approval is None:
+            raise ToolBridgeError(404, "unknown approval")
+        if approval["status"] != "pending":
+            raise ToolBridgeError(409, f"approval already {approval['status']}")
+        if approve and totp_code != "123456":
+            raise ToolBridgeError(401, "missing or invalid TOTP code")
+        approval["status"] = "approved" if approve else "rejected"
+        return approval
 
 
 class RecordingHTTPClient:
@@ -433,6 +458,63 @@ def test_oauth_metadata_dcr_pkce_and_bearer_use(tmp_path):
     )
     assert r.status_code == 200
     assert r.json()["result"]["serverInfo"]["name"] == "profile-os-mcp"
+
+
+def test_approval_link_page_totp_only_flow():
+    bridge = FakeBridge()
+    client = ThreadedASGIClient(create_mcp_app(bridge=bridge))
+
+    approval = bridge.propose_prompt_edit("tara", base_prompt="New text")
+    approval_id = approval["id"]
+
+    page = client.get(f"/approvals/{approval_id}")
+    assert page.status_code == 200
+    assert "totp_code" in page.text
+    assert "admin_secret" not in page.text  # TOTP-only, no shared secret field
+    assert "New text" in page.text
+
+    bad = client.post(f"/approvals/{approval_id}", data={
+        "totp_code": "000000", "decision": "approve"})
+    assert bad.status_code == 401
+    assert "totp_code" in bad.text  # re-shows the form
+
+    ok = client.post(f"/approvals/{approval_id}", data={
+        "totp_code": "123456", "decision": "approve"})
+    assert ok.status_code == 200
+    assert "approved" in ok.text
+    assert bridge.approvals[approval_id]["status"] == "approved"
+
+
+def test_approval_link_rejection_needs_no_code():
+    bridge = FakeBridge()
+    client = ThreadedASGIClient(create_mcp_app(bridge=bridge))
+    approval = bridge.propose_prompt_edit("tara", role_prompt="nope")
+
+    r = client.post(f"/approvals/{approval['id']}", data={
+        "totp_code": "", "decision": "reject"})
+    assert r.status_code == 200
+    assert bridge.approvals[approval["id"]]["status"] == "rejected"
+
+
+def test_approval_link_unknown_id_is_404():
+    bridge = FakeBridge()
+    client = ThreadedASGIClient(create_mcp_app(bridge=bridge))
+    r = client.get("/approvals/does-not-exist")
+    assert r.status_code == 404
+
+
+def test_propose_prompt_edit_tool_returns_approval_link():
+    bridge = FakeBridge()
+    settings = MCPSettings(auth_required=False, public_base_url=PUBLIC_BASE)
+    client = ThreadedASGIClient(create_mcp_app(bridge=bridge, settings=settings))
+
+    r = client.post("/mcp", json=_rpc("tools/call", {
+        "name": "propose_prompt_edit",
+        "arguments": {"profile_id": "tara", "base_prompt": "hi"},
+    }), headers={"Accept": "application/json, text/event-stream"})
+    assert r.status_code == 200
+    result_text = r.json()["result"]["content"][0]["text"]
+    assert f"{PUBLIC_BASE}/approvals/approval-1" in result_text
 
 
 def test_oauth_client_registration_survives_process_restart(tmp_path):

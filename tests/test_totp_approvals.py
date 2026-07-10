@@ -120,6 +120,45 @@ def test_prompt_edit_propose_and_approve_flow(auth_client, clock):
     assert again.status_code == 409
 
 
+def test_totp_only_principal_can_decide_via_admins_totp(auth_client, clock):
+    """A principal holding only approvals:totp_decide (e.g. the mcp bridge,
+    acting on a companion's behalf) can submit a decision — approving still
+    requires a live code, verified against the one TOTP-enrolled admin
+    rather than this principal's own (nonexistent) TOTP."""
+    client, access, admin_id = auth_client
+    totp = _enroll_and_confirm(access, admin_id, clock)
+
+    owner = access.create_principal("agent", "rita-owner")
+    access.create_credential(owner["id"], "k", "owner-secret")
+    access.grant(owner["id"], "manage_profile", profile_id="tara")
+    access.grant(owner["id"], "boot", profile_id="tara")
+
+    link_principal = access.create_principal("bridge", "mcp-link")
+    access.create_credential(link_principal["id"], "k", "link-secret")
+    access.grant(link_principal["id"], "approvals:totp_decide", profile_id=None)
+    assert not access.has_totp(link_principal["id"])  # this principal has no TOTP itself
+
+    r = client.post("/profiles/tara/prompt", headers=_bearer("owner-secret"),
+                    json={"role_prompt": "via link"})
+    approval_id = r.json()["id"]
+
+    # fetching via GET works for a totp_decide-only principal too
+    got = client.get(f"/approvals/{approval_id}", headers=_bearer("link-secret"))
+    assert got.status_code == 200
+
+    bad = client.post(f"/approvals/{approval_id}/decide", headers=_bearer("link-secret"),
+                      json={"approve": True, "totp_code": "000000"})
+    assert bad.status_code == 401
+
+    ok = client.post(f"/approvals/{approval_id}/decide", headers=_bearer("link-secret"),
+                     json={"approve": True, "totp_code": clock.next_code(totp)})
+    assert ok.status_code == 200, ok.text
+    assert ok.json()["status"] == "approved"
+
+    booted = client.post("/profiles/tara/boot", headers=_bearer("owner-secret"))
+    assert booted.json()["role_prompt"] == "via link"
+
+
 def test_prompt_edit_rejection_needs_no_code(auth_client, clock):
     client, access, admin_id = auth_client
     _enroll_and_confirm(access, admin_id, clock)

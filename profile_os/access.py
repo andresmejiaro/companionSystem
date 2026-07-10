@@ -105,7 +105,7 @@ OPERATIONS = {
     "stores:propose", "stores:approve",
     "create_profile", "delete_profile", "manage_profile",
     "manage_grants", "audit:read", "credentials:manage",
-    "identity:read", "approvals:decide",
+    "identity:read", "approvals:decide", "approvals:totp_decide",
 }
 
 ALL_PROFILES = "*"
@@ -355,6 +355,26 @@ class AccessControl:
             "SELECT confirmed_at FROM access_totp WHERE principal_id=?",
             (principal_id,)).fetchone()
         return row is not None and row["confirmed_at"] is not None
+
+    def find_totp_admin_principal_id(self) -> str | None:
+        """The (single) enabled principal holding global approvals:decide
+        with a confirmed TOTP secret. Used by convenience approval links
+        (e.g. the mcp service acting on a companion's proposed prompt edit)
+        that authenticate the decision with a TOTP code alone, not the
+        admin's shared secret — there is exactly one admin in this design,
+        so 'whose TOTP' is unambiguous."""
+        now = time.time()
+        rows = self.db.execute(
+            "SELECT DISTINCT principal_id FROM access_grants WHERE operation='approvals:decide'"
+            " AND profile_id IS NULL AND revoked_at IS NULL"
+            " AND (expires_at IS NULL OR expires_at > ?)", (now,)).fetchall()
+        for row in rows:
+            pid = row["principal_id"]
+            enabled = self.db.execute(
+                "SELECT disabled_at FROM access_principals WHERE id=?", (pid,)).fetchone()
+            if enabled and enabled["disabled_at"] is None and self.has_totp(pid):
+                return pid
+        return None
 
     # -- pending approvals ("edgy" actions needing a TOTP-approved decision) ------
 

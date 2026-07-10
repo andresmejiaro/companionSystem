@@ -58,11 +58,16 @@ def bootstrap(
                 if not access.allowed(principal["id"], op, profile_id):
                     access.grant(principal["id"], op, profile_id=profile_id)
                     granted.append({"profile_id": profile_id, "operation": op})
-        # identity:read is global (not profile-scoped): every bridge gets
-        # read access to the "who am I" drift-prevention file, if configured.
-        if not access.allowed(principal["id"], "identity:read", None):
-            access.grant(principal["id"], "identity:read", profile_id=None)
-            granted.append({"profile_id": None, "operation": "identity:read"})
+        # Global (not profile-scoped) grants:
+        # - identity:read: read access to the "who am I" drift-prevention file.
+        # - approvals:totp_decide: lets the mcp service's public approval
+        #   link submit a decision on a companion's behalf, gated by a live
+        #   TOTP code from the single enrolled admin (not this bearer) — see
+        #   ACCESS_CONTROL.md "TOTP-only approval links".
+        for op in ("identity:read", "approvals:totp_decide"):
+            if not access.allowed(principal["id"], op, None):
+                access.grant(principal["id"], op, profile_id=None)
+                granted.append({"profile_id": None, "operation": op})
         return {
             "principal_id": principal["id"],
             "credential_id": credential["id"],

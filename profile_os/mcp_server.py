@@ -27,6 +27,7 @@ from typing import Awaitable, Callable
 import httpx
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from starlette.concurrency import run_in_threadpool
 
 from .bridge import ToolBridge, ToolBridgeError
 
@@ -147,6 +148,39 @@ def _consent_page(params: dict[str, str], client_name: str,
 <input type="text" name="totp_code" inputmode="numeric" pattern="[0-9]*"
  autocomplete="off" required style="width:100%;padding:8px;margin:4px 0 16px"></label>
 <button type="submit" style="padding:10px 20px">Approve</button>
+</form>
+</body></html>"""
+
+
+def _approval_page(approval: dict, error: str | None = None) -> str:
+    """TOTP-only convenience page for a companion's proposed prompt edit —
+    deliberately lighter than the OAuth login (no admin secret): see
+    ACCESS_CONTROL.md 'TOTP-only approval links'."""
+    payload = approval.get("payload") or {}
+    fields = "".join(
+        f'<h4>{_html.escape(k)}</h4><pre style="white-space:pre-wrap;background:#f4f4f4;'
+        f'padding:12px;border-radius:6px">{_html.escape(str(v))}</pre>'
+        for k, v in payload.items() if v is not None
+    )
+    error_html = (f'<p style="color:#c00;font-weight:600">{_html.escape(error)}</p>'
+                 if error else "")
+    return f"""<!doctype html>
+<html><head><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Approve edit</title></head>
+<body style="font-family:system-ui,sans-serif;max-width:480px;margin:48px auto;padding:0 16px">
+<h2>Proposed {_html.escape(approval.get('kind', 'edit'))}</h2>
+<p>Profile: <strong>{_html.escape(str(approval.get('profile_id')))}</strong></p>
+{fields}
+{error_html}
+<form method="POST">
+<label>Authenticator code<br>
+<input type="text" name="totp_code" inputmode="numeric" pattern="[0-9]*"
+ autocomplete="off" autofocus required style="width:100%;padding:10px;margin:4px 0 16px;font-size:1.2em">
+</label>
+<button type="submit" name="decision" value="approve"
+ style="padding:10px 20px;margin-right:8px">Approve</button>
+<button type="submit" name="decision" value="reject"
+ style="padding:10px 20px">Reject</button>
 </form>
 </body></html>"""
 
@@ -772,6 +806,11 @@ def _handle_rpc(message: dict[str, Any], app: FastAPI) -> dict[str, Any]:
         profile_id = _safe_profile(arguments)
         try:
             value = app.state.runner.call(name, arguments)
+            if name == "propose_prompt_edit" and isinstance(value, dict) and value.get("id"):
+                settings: MCPSettings = app.state.settings
+                if settings.public_base_url:
+                    value = {**value, "approval_link":
+                            f"{_canonical_base(settings.public_base_url)}/approvals/{value['id']}"}
             elapsed_ms = int((time.time() - started) * 1000)
             LOGGER.info(
                 "mcp_tool_call name=%s profile_id=%s outcome=ok elapsed_ms=%s",
@@ -814,6 +853,7 @@ def create_mcp_app(
     app.state.runner = MCPToolRunner(bridge or ToolBridge())
     app.state.admin_verify = admin_verify or default_admin_verify
     _authorize_hits: dict[str, list[float]] = {}
+    _approval_hits: dict[str, list[float]] = {}
 
     @app.get("/health", name="health")
     async def health():
@@ -954,6 +994,49 @@ def create_mcp_app(
         separator = "&" if urllib.parse.urlparse(validated["redirect_uri"]).query else "?"
         location = validated["redirect_uri"] + separator + urllib.parse.urlencode(params)
         return RedirectResponse(location, status_code=303)
+
+    @app.get("/approvals/{approval_id}")
+    async def approval_page(approval_id: str):
+        """Public, TOTP-only link for a companion's proposed prompt edit —
+        see ACCESS_CONTROL.md 'TOTP-only approval links'. Deliberately
+        lighter than the OAuth login: no admin secret, just a live code,
+        since this is meant to be usable from a phone with only the
+        authenticator app open."""
+        try:
+            approval = await run_in_threadpool(
+                app.state.runner.bridge.get_approval, approval_id)
+        except ToolBridgeError as e:
+            return HTMLResponse(f"Approval not found: {e.detail}", status_code=e.status_code)
+        if approval.get("status") != "pending":
+            return HTMLResponse(f"Already {approval.get('status')}. Nothing to do.")
+        return HTMLResponse(_approval_page(approval))
+
+    @app.post("/approvals/{approval_id}")
+    async def approval_decide(approval_id: str, request: Request):
+        client_ip = request.client.host if request.client else "unknown"
+        now = time.time()
+        hits = [t for t in _approval_hits.get(client_ip, []) if t > now - 60]
+        if len(hits) >= 5:
+            return HTMLResponse("Too many attempts; try again in a minute.",
+                                status_code=429)
+        hits.append(now)
+        _approval_hits[client_ip] = hits
+
+        form = await request.form()
+        totp_code = str(form.get("totp_code") or "")
+        approve = str(form.get("decision") or "") == "approve"
+        try:
+            decided = await run_in_threadpool(
+                app.state.runner.bridge.decide_approval, approval_id, approve, totp_code)
+        except ToolBridgeError as e:
+            try:
+                approval = await run_in_threadpool(
+                    app.state.runner.bridge.get_approval, approval_id)
+            except ToolBridgeError:
+                return HTMLResponse(f"Error: {e.detail}", status_code=e.status_code)
+            return HTMLResponse(_approval_page(approval, error=e.detail),
+                                status_code=e.status_code)
+        return HTMLResponse(f"<p>Done — {_html.escape(decided['status'])}.</p>")
 
     @app.post("/oauth/token")
     async def oauth_token(request: Request):

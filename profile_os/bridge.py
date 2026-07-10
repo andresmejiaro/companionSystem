@@ -203,6 +203,17 @@ class ToolBridge:
         return self._request("POST", f"/profiles/{profile_id}/prompt",
                              json={"base_prompt": base_prompt, "role_prompt": role_prompt})
 
+    def get_approval(self, approval_id: str):
+        """Not an MCP tool: used by the mcp service's public /approvals/{id}
+        link page, authenticated with this bridge's own bearer (which holds
+        approvals:totp_decide) — the human never needs the bridge secret."""
+        return self._request("GET", f"/approvals/{approval_id}")
+
+    def decide_approval(self, approval_id: str, approve: bool,
+                        totp_code: str | None = None):
+        return self._request("POST", f"/approvals/{approval_id}/decide",
+                             json={"approve": approve, "totp_code": totp_code})
+
     def remember(self, profile_id: str, kind: str, content: str,
                  tags: list[str] | None = None):
         return self._request("POST", f"/profiles/{profile_id}/memories",
