@@ -21,6 +21,7 @@ Exposed MCP tools:
 - `whoami`
 - `start_session`
 - `propose_prompt_edit`
+- `update_own_description`
 - `list_profiles`
 - `boot_profile`
 - `remember`

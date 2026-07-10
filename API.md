@@ -65,6 +65,10 @@ subset of these operations over `POST /mcp` and `GET /mcp`; see
 - `POST /approvals/{id}/decide` `{"approve": true|false, "totp_code": "..."}`
   → the approval record. Approving requires a valid, unused TOTP code
   (401 without one); rejecting does not. 409 if already decided.
+- `PUT /profiles/{id}/description` `{description}` → 200, updated profile.
+  Requires `manage_profile`. Self-service, no approval — unlike prompt
+  edits this is discovery metadata (surfaced via `GET /profiles`), not
+  behavior, so it takes effect immediately.
 - ★ `POST /profiles/{id}/memories` — remember. Body:
   `{"kind": "note|fact|decision|failure_scar|preference|observation",
     "content": "non-empty", "tags": ["optional"]}` → 201 + stored event

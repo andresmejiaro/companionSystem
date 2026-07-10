@@ -256,6 +256,7 @@ def test_initialize_and_list_tools(tmp_path):
         "whoami",
         "start_session",
         "propose_prompt_edit",
+        "update_own_description",
         "list_profiles",
         "boot_profile",
         "remember",

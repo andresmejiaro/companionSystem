@@ -105,6 +105,7 @@ def test_no_tool_bypasses_api_authorization(tmp_path):
         "whoami": {},
         "start_session": {"profile_id": "tara"},
         "propose_prompt_edit": {"profile_id": "tara", "base_prompt": "x"},
+        "update_own_description": {"profile_id": "tara", "description": "x"},
         "boot": {"profile_id": "tara"},
         "remember": {"profile_id": "tara", "kind": "note", "content": "x"},
         "update_memory": {"profile_id": "tara", "event_id": "e1", "content": "y"},

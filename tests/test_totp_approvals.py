@@ -181,6 +181,33 @@ def test_prompt_edit_rejection_needs_no_code(auth_client, clock):
     assert booted.json()["role_prompt"] != "nope"
 
 
+def test_update_description_is_self_service_no_totp(auth_client):
+    """Unlike prompt edits, description updates take effect immediately —
+    no propose/approve, no TOTP. Discovery metadata, not behavior."""
+    client, access, admin_id = auth_client
+    owner = access.create_principal("agent", "tara-owner")
+    access.create_credential(owner["id"], "k", "owner-secret")
+    access.grant(owner["id"], "manage_profile", profile_id="tara")
+
+    r = client.put("/profiles/tara/description", headers=_bearer("owner-secret"),
+                   json={"description": "Food tracking and nutrition facts."})
+    assert r.status_code == 200, r.text
+    assert r.json()["description"] == "Food tracking and nutrition facts."
+
+    listed = client.get("/profiles", headers=_bearer("owner-secret")).json()
+    tara = next(p for p in listed if p["id"] == "tara")
+    assert tara["description"] == "Food tracking and nutrition facts."
+
+
+def test_update_description_requires_manage_profile_grant(auth_client):
+    client, access, admin_id = auth_client
+    p = access.create_principal("agent", "no-owner")
+    access.create_credential(p["id"], "k", "no-owner-secret")
+    r = client.put("/profiles/tara/description", headers=_bearer("no-owner-secret"),
+                   json={"description": "x"})
+    assert r.status_code == 403
+
+
 def test_prompt_edit_requires_manage_profile_grant(auth_client):
     client, access, admin_id = auth_client
     p = access.create_principal("agent", "no-owner")

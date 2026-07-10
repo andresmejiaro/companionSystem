@@ -205,6 +205,20 @@ class Store:
             (pdir / "role_prompt.md").write_text(role_prompt)
         return self.get_profile(profile_id)
 
+    def update_description(self, profile_id: str, description: str) -> dict:
+        """Self-service, no approval: a companion maintains its own one-line
+        'what I do', so other companions can discover who to ask via
+        list_profiles instead of a human hardcoding names into prompts.
+        Unlike base_prompt/role_prompt this isn't gated by TOTP — it's
+        discovery metadata, not identity/behavior."""
+        self._require_profile(profile_id)
+        if not isinstance(description, str):
+            raise MalformedRecord("description must be a string")
+        with self.db:
+            self.db.execute("UPDATE profiles SET description=? WHERE id=?",
+                            (description, profile_id))
+        return self.get_profile(profile_id)
+
     def recent_closeouts(self, profile_id: str, limit: int = 2) -> list[dict]:
         self._require_profile(profile_id)
         rows = self.db.execute(

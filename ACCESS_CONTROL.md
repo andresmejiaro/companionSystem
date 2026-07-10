@@ -65,6 +65,13 @@ the same grant a profile owner already holds). More action kinds can reuse
 the same `access_pending_approvals` table/`kind` field later (e.g. agent
 enrollment approval) without a schema change.
 
+**Not** gated this way: `PUT /profiles/{id}/description` — a companion's
+one-line "what do I do" is discovery metadata (surfaced via
+`list_profiles`, so other companions know who to message about what), not
+identity/behavior, so it updates immediately with no propose/approve step.
+This is the deliberate boundary: prompts shape *how a companion acts*;
+description just answers *what should another companion ask it about*.
+
 - Enroll the admin's authenticator app **locally, once**: `python -m
   profile_os.enroll_totp --data-dir data` prints an `otpauth://` URI to
   scan or paste manually, then `--confirm <code>` activates it. Unconfirmed
@@ -241,6 +248,7 @@ whatever a companion's memory says on conflict. Exposed as the MCP tool
 | `GET /profiles/{id}/inbox`, `POST /profiles/{id}/inbox/{message_id}/read` | `search` |
 | `PUT \| DELETE /profiles/{id}/files/{filename}` | `remember` (self-service, no admin approval) |
 | `GET /profiles/{id}/files`, `GET /profiles/{id}/files/{filename}` | `search` |
+| `PUT /profiles/{id}/description` | `manage_profile` (self-service, no TOTP — discovery metadata, not behavior) |
 | `GET /profiles/{id}/memories/search` | `search` |
 | `POST /profiles/{id}/closeout` | `closeout` |
 | `GET /profiles/{id}/domain`, `GET /profiles/{id}/domain/{store}` | `records:read` |

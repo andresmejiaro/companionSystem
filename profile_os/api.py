@@ -113,6 +113,10 @@ class PromptEditProposeIn(BaseModel):
     role_prompt: str | None = None
 
 
+class DescriptionIn(BaseModel):
+    description: str
+
+
 class ApprovalDecideIn(BaseModel):
     approve: bool
     totp_code: str | None = None
@@ -516,6 +520,15 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
             "prompt_edit", principal_id or "anonymous",
             {"base_prompt": body.base_prompt, "role_prompt": body.role_prompt},
             profile_id=profile_id)
+
+    @app.put("/profiles/{profile_id}/description")
+    def update_description(profile_id: str, body: DescriptionIn, request: Request):
+        """Self-service, no approval — unlike prompt edits, this is discovery
+        metadata ('what do I do'), not behavior. Lets other companions find
+        who to ask via list_profiles instead of a human hardcoding names
+        into prompts."""
+        _require("manage_profile", profile_id, request)
+        return _wrap(store.update_description, profile_id, body.description)
 
     _APPROVAL_OPS = ["approvals:decide", "approvals:totp_decide"]
 

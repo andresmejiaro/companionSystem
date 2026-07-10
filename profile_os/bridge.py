@@ -86,6 +86,12 @@ TOOLS = [
            "base_prompt": {"type": "string"},
            "role_prompt": {"type": "string"}},
           ["profile_id"]),
+    _tool("update_own_description", "Update your own one-line 'what do I do' description"
+                                   " — self-service, no approval. Other companions see it"
+                                   " via list_profiles to know who to ask about what,"
+                                   " instead of a human hardcoding names into prompts.",
+          {"profile_id": _PID, "description": {"type": "string"}},
+          ["profile_id", "description"]),
     _tool("remember", "Append a memory event to a profile.",
           {"profile_id": _PID,
            "kind": {"type": "string", "enum": MEMORY_KINDS,
@@ -249,6 +255,10 @@ class ToolBridge:
                             role_prompt: str | None = None):
         return self._request("POST", f"/profiles/{profile_id}/prompt",
                              json={"base_prompt": base_prompt, "role_prompt": role_prompt})
+
+    def update_own_description(self, profile_id: str, description: str):
+        return self._request("PUT", f"/profiles/{profile_id}/description",
+                             json={"description": description})
 
     def get_approval(self, approval_id: str):
         """Not an MCP tool: used by the mcp service's public /approvals/{id}

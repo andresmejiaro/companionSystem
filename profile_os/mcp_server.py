@@ -343,6 +343,15 @@ MCP_TOOLS = [
         ["profile_id"],
     ),
     _tool(
+        "update_own_description",
+        "Update Own Description",
+        "Update your own one-line 'what do I do' description — self-service, no"
+        " approval. Other companions see it via list_profiles to know who to ask"
+        " about what, instead of a human hardcoding names into prompts.",
+        {"profile_id": _PROFILE_ID, "description": {"type": "string"}},
+        ["profile_id", "description"],
+    ),
+    _tool(
         "remember",
         "Remember",
         "Append a durable memory event for a profile.",
@@ -686,6 +695,9 @@ class MCPToolRunner:
                 base_prompt=arguments.get("base_prompt"),
                 role_prompt=arguments.get("role_prompt"),
             )
+        if name == "update_own_description":
+            return self.bridge.update_own_description(
+                arguments["profile_id"], arguments["description"])
         if name == "remember":
             return self.bridge.remember(
                 arguments["profile_id"],
