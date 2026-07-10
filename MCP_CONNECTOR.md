@@ -26,6 +26,9 @@ Exposed MCP tools:
 - `remember`
 - `update_memory`
 - `forget`
+- `send_message`
+- `read_inbox`
+- `mark_message_read`
 - `search_memories`
 - `closeout`
 - `list_stores`

@@ -21,6 +21,17 @@ class MemoryEventNotFound(Exception):
         super().__init__(f"no memory event {event_id!r} for profile {profile_id!r}")
 
 
+class MalformedMessage(Exception):
+    def __init__(self, reason: str):
+        self.reason = reason
+        super().__init__(f"malformed message: {reason}")
+
+
+class MessageNotFound(Exception):
+    def __init__(self, profile_id: str, message_id: str):
+        super().__init__(f"no message {message_id!r} in {profile_id!r}'s inbox")
+
+
 class DynStoreNotFound(Exception):
     def __init__(self, profile_id: str, name: str):
         super().__init__(f"no dynamic store {name!r} for profile {profile_id!r}")

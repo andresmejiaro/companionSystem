@@ -224,6 +224,8 @@ whatever a companion's memory says on conflict. Exposed as the MCP tool
 | `GET /profiles/{id}`, `POST /profiles/{id}/boot` | `boot` |
 | `POST /profiles/{id}/memories` | `remember` |
 | `PATCH \| DELETE /profiles/{id}/memories/{event_id}` | `remember` (self-service edit/erase, no admin approval) |
+| `POST /profiles/{from_id}/messages` | `remember` on `from_id` (self-service, no admin approval) |
+| `GET /profiles/{id}/inbox`, `POST /profiles/{id}/inbox/{message_id}/read` | `search` |
 | `GET /profiles/{id}/memories/search` | `search` |
 | `POST /profiles/{id}/closeout` | `closeout` |
 | `GET /profiles/{id}/domain`, `GET /profiles/{id}/domain/{store}` | `records:read` |

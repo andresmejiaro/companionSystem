@@ -18,8 +18,8 @@ import time
 import uuid
 from pathlib import Path
 
-from .errors import (MalformedMemoryEvent, MalformedRecord, MemoryEventNotFound,
-                     ProfileNotFound)
+from .errors import (MalformedMemoryEvent, MalformedMessage, MalformedRecord,
+                     MemoryEventNotFound, MessageNotFound, ProfileNotFound)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS profiles (
@@ -60,6 +60,15 @@ CREATE TABLE IF NOT EXISTS closeouts (
     new_state TEXT NOT NULL,
     created_at REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS messages (
+    id TEXT PRIMARY KEY,
+    from_profile_id TEXT NOT NULL REFERENCES profiles(id),
+    to_profile_id TEXT NOT NULL REFERENCES profiles(id),
+    content TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    read_at REAL
+);
+CREATE INDEX IF NOT EXISTS idx_messages_inbox ON messages(to_profile_id, created_at);
 """
 
 MEMORY_KINDS = {"note", "fact", "decision", "failure_scar", "preference", "observation"}
@@ -171,6 +180,9 @@ class Store:
             self.db.execute("DELETE FROM memory_events WHERE profile_id=?", (profile_id,))
             self.db.execute("DELETE FROM closeouts WHERE profile_id=?", (profile_id,))
             self.db.execute("DELETE FROM compact_state WHERE profile_id=?", (profile_id,))
+            self.db.execute(
+                "DELETE FROM messages WHERE from_profile_id=? OR to_profile_id=?",
+                (profile_id, profile_id))
             self.db.execute("DELETE FROM profiles WHERE id=?", (profile_id,))
         shutil.rmtree(self.profiles_dir / profile_id, ignore_errors=True)
 
@@ -311,6 +323,58 @@ class Store:
             self.db.execute(
                 "DELETE FROM memory_events WHERE id=? AND profile_id=?",
                 (event_id, profile_id))
+
+    # -- inbox (companion-to-companion messages) --------------------------------
+
+    def send_message(self, from_profile_id: str, to_profile_id: str, content: str) -> dict:
+        """No approval, no backend action beyond the write itself — same
+        trust level as remember(). Lets a companion leave a message in
+        another profile's inbox instead of a human copy-pasting between
+        conversations."""
+        self._require_profile(from_profile_id)
+        self._require_profile(to_profile_id)
+        if not content or not isinstance(content, str) or not content.strip():
+            raise MalformedMessage("content must be a non-empty string")
+        mid = str(uuid.uuid4())
+        now = time.time()
+        with self.db:
+            self.db.execute(
+                "INSERT INTO messages (id, from_profile_id, to_profile_id, content,"
+                " created_at) VALUES (?,?,?,?,?)",
+                (mid, from_profile_id, to_profile_id, content, now))
+        return self._message_dict(self.db.execute(
+            "SELECT * FROM messages WHERE id=?", (mid,)).fetchone())
+
+    def list_inbox(self, profile_id: str, unread_only: bool = False,
+                   limit: int = 50) -> list[dict]:
+        self._require_profile(profile_id)
+        sql = "SELECT * FROM messages WHERE to_profile_id=?"
+        params: list = [profile_id]
+        if unread_only:
+            sql += " AND read_at IS NULL"
+        sql += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
+        rows = self.db.execute(sql, params).fetchall()
+        return [self._message_dict(r) for r in rows]
+
+    def mark_message_read(self, profile_id: str, message_id: str) -> dict:
+        self._require_profile(profile_id)
+        row = self.db.execute(
+            "SELECT * FROM messages WHERE id=? AND to_profile_id=?",
+            (message_id, profile_id)).fetchone()
+        if row is None:
+            raise MessageNotFound(profile_id, message_id)
+        with self.db:
+            self.db.execute("UPDATE messages SET read_at=? WHERE id=?",
+                            (time.time(), message_id))
+        return self._message_dict(self.db.execute(
+            "SELECT * FROM messages WHERE id=?", (message_id,)).fetchone())
+
+    @staticmethod
+    def _message_dict(row: sqlite3.Row) -> dict:
+        return {"id": row["id"], "from_profile_id": row["from_profile_id"],
+                "to_profile_id": row["to_profile_id"], "content": row["content"],
+                "created_at": row["created_at"], "read_at": row["read_at"]}
 
     def search(self, profile_id: str, query: str, limit: int = 20) -> list[dict]:
         """Case-insensitive substring search over content and tags. Boring on purpose."""

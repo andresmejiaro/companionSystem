@@ -347,6 +347,36 @@ MCP_TOOLS = [
         ["profile_id", "event_id"],
     ),
     _tool(
+        "send_message",
+        "Send Message",
+        "Send a message to another profile's inbox — for handing something off"
+        " to another companion without a human copy-pasting between conversations.",
+        {
+            "profile_id": _PROFILE_ID,
+            "to_profile_id": {"type": "string", "description": "recipient profile id"},
+            "content": {"type": "string"},
+        },
+        ["profile_id", "to_profile_id", "content"],
+    ),
+    _tool(
+        "read_inbox",
+        "Read Inbox",
+        "Read messages sent to you by other profiles.",
+        {
+            "profile_id": _PROFILE_ID,
+            "unread_only": {"type": "boolean", "default": True},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50},
+        },
+        ["profile_id"],
+    ),
+    _tool(
+        "mark_message_read",
+        "Mark Message Read",
+        "Mark one of your inbox messages as read.",
+        {"profile_id": _PROFILE_ID, "message_id": {"type": "string"}},
+        ["profile_id", "message_id"],
+    ),
+    _tool(
         "closeout",
         "Close Out",
         "End a session by logging notes and replacing the profile compact_state with the supplied new_state.",
@@ -595,6 +625,18 @@ class MCPToolRunner:
             )
         if name == "forget":
             return self.bridge.forget(arguments["profile_id"], arguments["event_id"])
+        if name == "send_message":
+            return self.bridge.send_message(
+                arguments["profile_id"], arguments["to_profile_id"], arguments["content"])
+        if name == "read_inbox":
+            return self.bridge.read_inbox(
+                arguments["profile_id"],
+                unread_only=arguments.get("unread_only", True),
+                limit=int(arguments.get("limit", 50)),
+            )
+        if name == "mark_message_read":
+            return self.bridge.mark_message_read(
+                arguments["profile_id"], arguments["message_id"])
         if name == "closeout":
             return self.bridge.closeout(
                 arguments["profile_id"],

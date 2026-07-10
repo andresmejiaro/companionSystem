@@ -24,7 +24,8 @@ from .access import AccessControl, AccessError
 from .dynstores import DynamicStores
 from .enroll import Enrollment, InviteConsumed, InviteInvalid
 from .errors import (DynStoreConflict, DynStoreNotFound, MalformedMemoryEvent,
-                     MalformedRecord, MemoryEventNotFound, ProfileNotFound, SchemaError)
+                     MalformedMessage, MalformedRecord, MemoryEventNotFound,
+                     MessageNotFound, ProfileNotFound, SchemaError)
 from .sign import signing_message
 from .storage import Store
 
@@ -55,6 +56,11 @@ class MemoryEventUpdateIn(BaseModel):
     kind: str | None = None
     content: str | None = None
     tags: list[str] | None = None
+
+
+class MessageIn(BaseModel):
+    to_profile_id: str
+    content: str
 
 
 class CloseoutIn(BaseModel):
@@ -240,11 +246,12 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
     def _wrap(fn, *args, **kwargs):
         try:
             return fn(*args, **kwargs)
-        except (ProfileNotFound, DynStoreNotFound, MemoryEventNotFound) as e:
+        except (ProfileNotFound, DynStoreNotFound, MemoryEventNotFound,
+                MessageNotFound) as e:
             raise HTTPException(404, str(e))
         except DynStoreConflict as e:
             raise HTTPException(409, str(e))
-        except (MalformedMemoryEvent, MalformedRecord, SchemaError) as e:
+        except (MalformedMemoryEvent, MalformedRecord, SchemaError, MalformedMessage) as e:
             raise HTTPException(422, str(e))
 
     @app.get("/health")
@@ -407,6 +414,24 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
     def search(profile_id: str, q: str, request: Request, limit: int = 20):
         _require("search", profile_id, request)
         return _wrap(store.search, profile_id, q, limit)
+
+    # -- inbox: companion-to-companion messages, no approval, no backend action ----
+
+    @app.post("/profiles/{from_profile_id}/messages", status_code=201)
+    def send_message(from_profile_id: str, body: MessageIn, request: Request):
+        _require("remember", from_profile_id, request)
+        return _wrap(store.send_message, from_profile_id, body.to_profile_id, body.content)
+
+    @app.get("/profiles/{profile_id}/inbox")
+    def get_inbox(profile_id: str, request: Request,
+                 unread_only: bool = False, limit: int = 50):
+        _require("search", profile_id, request)
+        return _wrap(store.list_inbox, profile_id, unread_only, limit)
+
+    @app.post("/profiles/{profile_id}/inbox/{message_id}/read")
+    def mark_message_read(profile_id: str, message_id: str, request: Request):
+        _require("search", profile_id, request)
+        return _wrap(store.mark_message_read, profile_id, message_id)
 
     @app.post("/profiles/{profile_id}/closeout", status_code=201)
     def closeout(profile_id: str, body: CloseoutIn, request: Request):

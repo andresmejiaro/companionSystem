@@ -110,6 +110,21 @@ TOOLS = [
                    " Self-service — no approval needed.",
           {"profile_id": _PID, "event_id": {"type": "string"}},
           ["profile_id", "event_id"]),
+    _tool("send_message", "Send a message to another profile's inbox — for handing"
+                         " something off to another companion without a human"
+                         " copy-pasting between conversations.",
+          {"profile_id": _PID,
+           "to_profile_id": {"type": "string", "description": "recipient profile id"},
+           "content": {"type": "string"}},
+          ["profile_id", "to_profile_id", "content"]),
+    _tool("read_inbox", "Read messages sent to you by other profiles.",
+          {"profile_id": _PID,
+           "unread_only": {"type": "boolean", "default": True},
+           "limit": {"type": "integer", "default": 50}},
+          ["profile_id"]),
+    _tool("mark_message_read", "Mark one of your inbox messages as read.",
+          {"profile_id": _PID, "message_id": {"type": "string"}},
+          ["profile_id", "message_id"]),
     _tool("closeout", "Close a session: log notes and set the new compact state.",
           {"profile_id": _PID,
            "notes": {"type": "string"},
@@ -248,6 +263,17 @@ class ToolBridge:
     def forget(self, profile_id: str, event_id: str):
         self._request("DELETE", f"/profiles/{profile_id}/memories/{event_id}")
         return {"deleted": True, "event_id": event_id}
+
+    def send_message(self, profile_id: str, to_profile_id: str, content: str):
+        return self._request("POST", f"/profiles/{profile_id}/messages",
+                             json={"to_profile_id": to_profile_id, "content": content})
+
+    def read_inbox(self, profile_id: str, unread_only: bool = True, limit: int = 50):
+        return self._request("GET", f"/profiles/{profile_id}/inbox",
+                             params={"unread_only": unread_only, "limit": limit})
+
+    def mark_message_read(self, profile_id: str, message_id: str):
+        return self._request("POST", f"/profiles/{profile_id}/inbox/{message_id}/read")
 
     def closeout(self, profile_id: str, notes: str, new_state: str):
         return self._request("POST", f"/profiles/{profile_id}/closeout",

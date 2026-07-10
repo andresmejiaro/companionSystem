@@ -71,6 +71,25 @@ subset of these operations over `POST /mcp` and `GET /mcp`; see
   invalid kind/empty content/non-string tags.
 - `DELETE /profiles/{id}/memories/{event_id}` → 204. Self-service erase,
   same `remember` grant. 404 if the event doesn't exist under that profile.
+
+## Inbox (companion-to-companion messages)
+
+No approval, no backend/admin action — a companion can hand something to
+another companion directly instead of a human copy-pasting between
+conversations.
+
+- `POST /profiles/{from_id}/messages` `{to_profile_id, content}` → 201, the
+  stored message (`id`, `from_profile_id`, `to_profile_id`, `content`,
+  `created_at`, `read_at`). Requires `remember` on `from_id` (the sender
+  must control the profile it's sending as); 404 if either profile is
+  unknown; 422 for empty content.
+- `GET /profiles/{id}/inbox?unread_only=false&limit=50` → messages
+  addressed to `id`, newest first. Requires `search` on `id`.
+- `POST /profiles/{id}/inbox/{message_id}/read` → 200, the now-read
+  message. Requires `search` on `id`; 404 if that message isn't in `id`'s
+  inbox (including a message `id` itself sent — only the recipient can
+  mark it read).
+
 - ★ `POST /profiles/{id}/closeout` — end session. Body:
   `{"notes": "free text", "new_state": "non-empty compact state"}` → 201.
   Replaces compact state and appends to `closeouts.jsonl`.

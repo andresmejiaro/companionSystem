@@ -73,6 +73,48 @@ def test_update_and_delete_memory_via_api(client):
     assert d_again.status_code == 404
 
 
+def test_inbox_flow_between_profiles(client):
+    r = client.post("/profiles/tara/messages",
+                    json={"to_profile_id": "sidra", "content": "hey, check this out"})
+    assert r.status_code == 201, r.text
+    msg = r.json()
+    assert msg["from_profile_id"] == "tara"
+    assert msg["to_profile_id"] == "sidra"
+    assert msg["read_at"] is None
+
+    # sender's own inbox is unaffected
+    assert client.get("/profiles/tara/inbox").json() == []
+
+    inbox = client.get("/profiles/sidra/inbox").json()
+    assert len(inbox) == 1
+    assert inbox[0]["content"] == "hey, check this out"
+
+    unread = client.get("/profiles/sidra/inbox", params={"unread_only": True}).json()
+    assert len(unread) == 1
+
+    marked = client.post(f"/profiles/sidra/inbox/{msg['id']}/read")
+    assert marked.status_code == 200
+    assert marked.json()["read_at"] is not None
+
+    still_all = client.get("/profiles/sidra/inbox").json()
+    assert len(still_all) == 1
+    now_unread = client.get("/profiles/sidra/inbox", params={"unread_only": True}).json()
+    assert now_unread == []
+
+    # sidra can't mark a message from its own inbox as read on another profile's behalf
+    assert client.post(f"/profiles/tara/inbox/{msg['id']}/read").status_code == 404
+
+
+def test_send_message_validation(client):
+    empty = client.post("/profiles/tara/messages",
+                        json={"to_profile_id": "sidra", "content": "   "})
+    assert empty.status_code == 422
+
+    unknown_recipient = client.post("/profiles/tara/messages",
+                                    json={"to_profile_id": "ghost", "content": "hi"})
+    assert unknown_recipient.status_code == 404
+
+
 def test_malformed_event_via_api(client):
     r = client.post("/profiles/tara/memories",
                     json={"kind": "bogus", "content": "x"})
