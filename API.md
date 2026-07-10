@@ -26,6 +26,13 @@ subset of these operations over `POST /mcp` and `GET /mcp`; see
   Permanently removes the profile row, compact state, memories, legacy
   domain records, dynamic stores/records/audit, prompt files, and revokes
   any grants scoped to that profile id. 404 if unknown.
+- `POST /profiles/totp-create` `{id, display_name, base_prompt?, role_prompt?,
+  totp_code}` → 201, profile object. Public at the transport layer — no
+  bearer header — authenticated by a live TOTP code alone (verified
+  against the single TOTP-enrolled admin), rate-limited (5/min per IP).
+  For creating/migrating a companion from mobile without the admin
+  secret. Same `id`/409/422 rules as `POST /profiles`. Also reachable as a
+  form at `GET /create-profile` on the mcp service.
 - `POST /enroll` `{invite_token, display_name, public_key}` → 201
   `{principal_id, key_id}`. Unauthenticated, single-use; consumes an invite
   minted locally via `python -m profile_os.mint_invite`. 410 if the invite

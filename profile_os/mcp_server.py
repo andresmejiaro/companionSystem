@@ -185,6 +185,55 @@ def _approval_page(approval: dict, error: str | None = None) -> str:
 </body></html>"""
 
 
+def _create_profile_page(values: dict[str, str] | None = None,
+                         error: str | None = None, created: dict | None = None) -> str:
+    """TOTP-only page for creating (or migrating) a companion from mobile,
+    without the admin secret or SSH — see ACCESS_CONTROL.md 'TOTP-only
+    profile creation'."""
+    v = values or {}
+    if created:
+        return f"""<!doctype html>
+<html><head><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Profile created</title></head>
+<body style="font-family:system-ui,sans-serif;max-width:480px;margin:48px auto;padding:0 16px">
+<h2>Created</h2>
+<p><strong>{_html.escape(created.get('id', ''))}</strong> ({_html.escape(created.get('display_name', ''))}) is ready.</p>
+<p><a href="/create-profile">Create another</a></p>
+</body></html>"""
+    error_html = (f'<p style="color:#c00;font-weight:600">{_html.escape(error)}</p>'
+                 if error else "")
+
+    def _f(name: str) -> str:
+        return _html.escape(v.get(name) or "")
+
+    return f"""<!doctype html>
+<html><head><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Create companion</title></head>
+<body style="font-family:system-ui,sans-serif;max-width:480px;margin:48px auto;padding:0 16px">
+<h2>Create a companion</h2>
+{error_html}
+<form method="POST">
+<label>Profile id (lowercase, - or _, no spaces)<br>
+<input type="text" name="id" value="{_f('id')}" pattern="[a-z0-9_-]{{1,64}}" required
+ style="width:100%;padding:8px;margin:4px 0 16px"></label>
+<label>Display name<br>
+<input type="text" name="display_name" value="{_f('display_name')}" required
+ style="width:100%;padding:8px;margin:4px 0 16px"></label>
+<label>Base prompt (optional — can self-define later)<br>
+<textarea name="base_prompt" rows="4"
+ style="width:100%;padding:8px;margin:4px 0 16px">{_f('base_prompt')}</textarea></label>
+<label>Role prompt (optional)<br>
+<textarea name="role_prompt" rows="4"
+ style="width:100%;padding:8px;margin:4px 0 16px">{_f('role_prompt')}</textarea></label>
+<label>Authenticator code<br>
+<input type="text" name="totp_code" inputmode="numeric" pattern="[0-9]*"
+ autocomplete="off" required style="width:100%;padding:10px;margin:4px 0 16px;font-size:1.2em">
+</label>
+<button type="submit" style="padding:10px 20px">Create</button>
+</form>
+</body></html>"""
+
+
 def _resource_url(settings: "MCPSettings", request: Request) -> str:
     if settings.public_base_url:
         return f"{_canonical_base(settings.public_base_url)}/mcp"
@@ -929,6 +978,7 @@ def create_mcp_app(
     app.state.admin_verify = admin_verify or default_admin_verify
     _authorize_hits: dict[str, list[float]] = {}
     _approval_hits: dict[str, list[float]] = {}
+    _create_profile_hits: dict[str, list[float]] = {}
 
     @app.get("/health", name="health")
     async def health():
@@ -1112,6 +1162,38 @@ def create_mcp_app(
             return HTMLResponse(_approval_page(approval, error=e.detail),
                                 status_code=e.status_code)
         return HTMLResponse(f"<p>Done — {_html.escape(decided['status'])}.</p>")
+
+    @app.get("/create-profile")
+    async def create_profile_page():
+        """Public, TOTP-only page for creating/migrating a companion from
+        mobile — no admin secret, no SSH. See ACCESS_CONTROL.md 'TOTP-only
+        profile creation'."""
+        return HTMLResponse(_create_profile_page())
+
+    @app.post("/create-profile")
+    async def create_profile_submit(request: Request):
+        client_ip = request.client.host if request.client else "unknown"
+        now = time.time()
+        hits = [t for t in _create_profile_hits.get(client_ip, []) if t > now - 60]
+        if len(hits) >= 5:
+            return HTMLResponse("Too many attempts; try again in a minute.",
+                                status_code=429)
+        hits.append(now)
+        _create_profile_hits[client_ip] = hits
+
+        form = await request.form()
+        values = {k: str(form.get(k) or "") for k in
+                 ("id", "display_name", "base_prompt", "role_prompt")}
+        totp_code = str(form.get("totp_code") or "")
+        try:
+            created = await run_in_threadpool(
+                app.state.runner.bridge.create_profile_totp,
+                values["id"], values["display_name"],
+                values["base_prompt"], values["role_prompt"], totp_code)
+        except ToolBridgeError as e:
+            return HTMLResponse(_create_profile_page(values, error=e.detail),
+                                status_code=e.status_code)
+        return HTMLResponse(_create_profile_page(created=created))
 
     @app.post("/oauth/token")
     async def oauth_token(request: Request):

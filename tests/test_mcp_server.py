@@ -176,6 +176,15 @@ class FakeBridge:
         approval["status"] = "approved" if approve else "rejected"
         return approval
 
+    def create_profile_totp(self, profile_id, display_name, base_prompt,
+                            role_prompt, totp_code):
+        if totp_code != "123456":
+            raise ToolBridgeError(401, "missing or invalid TOTP code")
+        if profile_id in {"sidra", "tara"}:
+            raise ToolBridgeError(409, f"profile {profile_id!r} already exists")
+        return {"id": profile_id, "display_name": display_name,
+                "base_prompt": base_prompt, "role_prompt": role_prompt}
+
 
 class RecordingHTTPClient:
     def __init__(self):
@@ -506,6 +515,37 @@ def test_approval_link_unknown_id_is_404():
     client = ThreadedASGIClient(create_mcp_app(bridge=bridge))
     r = client.get("/approvals/does-not-exist")
     assert r.status_code == 404
+
+
+def test_create_profile_page_totp_only_flow():
+    bridge = FakeBridge()
+    client = ThreadedASGIClient(create_mcp_app(bridge=bridge))
+
+    page = client.get("/create-profile")
+    assert page.status_code == 200
+    assert "totp_code" in page.text
+    assert "admin_secret" not in page.text  # TOTP-only, no shared secret
+
+    bad = client.post("/create-profile", data={
+        "id": "rumbo", "display_name": "Rumbo", "totp_code": "000000"})
+    assert bad.status_code == 401
+    assert "totp_code" in bad.text  # re-shows the form
+    assert 'value="rumbo"' in bad.text  # preserves what was typed
+
+    ok = client.post("/create-profile", data={
+        "id": "rumbo", "display_name": "Rumbo", "base_prompt": "b",
+        "totp_code": "123456"})
+    assert ok.status_code == 200
+    assert "Created" in ok.text
+    assert "rumbo" in ok.text
+
+
+def test_create_profile_page_duplicate_id():
+    bridge = FakeBridge()
+    client = ThreadedASGIClient(create_mcp_app(bridge=bridge))
+    r = client.post("/create-profile", data={
+        "id": "tara", "display_name": "Tara II", "totp_code": "123456"})
+    assert r.status_code == 409
 
 
 def test_propose_prompt_edit_tool_returns_approval_link():

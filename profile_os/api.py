@@ -63,6 +63,14 @@ class MessageIn(BaseModel):
     content: str
 
 
+class ProfileCreateTotpIn(BaseModel):
+    id: str
+    display_name: str
+    base_prompt: str = ""
+    role_prompt: str = ""
+    totp_code: str
+
+
 class CloseoutIn(BaseModel):
     notes: str = ""
     new_state: str
@@ -134,6 +142,7 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
     _nonce_cache: dict[tuple[str, str], float] = {}
     _enroll_hits: dict[str, list[float]] = {}
     _verify_hits: dict[str, list[float]] = {}
+    _profile_totp_hits: dict[str, list[float]] = {}
 
     def _rate_limited(bucket: dict[str, list[float]], key: str,
                       limit: int = 5, window: float = 60) -> bool:
@@ -307,6 +316,32 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
             for op in OWNER_OPS:
                 access.grant(principal_id, op, profile_id=body.id)
             access.record_audit(principal_id, "create_profile", body.id)
+        return profile
+
+    @app.post("/profiles/totp-create", status_code=201)
+    def create_profile_totp(body: ProfileCreateTotpIn, request: Request):
+        """Create a profile with a live TOTP code alone — no admin secret,
+        no SSH. For creating/migrating a companion from mobile, where the
+        admin secret deliberately isn't carried. Public at the transport
+        layer (no bearer header) — the credential being checked is the
+        totp_code itself, same principle as /admin/verify-totp. Owner
+        grants aren't needed here: the found admin already covers every
+        profile via its wildcard-scoped grants."""
+        client_ip = request.client.host if request.client else "unknown"
+        if _rate_limited(_profile_totp_hits, client_ip):
+            raise HTTPException(429, "too many attempts; try again later")
+        admin_id = access.find_totp_admin_principal_id()
+        if admin_id is None:
+            raise HTTPException(403, "no TOTP-enrolled admin found")
+        if not access.verify_totp(admin_id, body.totp_code):
+            raise HTTPException(401, "missing or invalid TOTP code")
+        if not PROFILE_ID_RE.match(body.id):
+            raise HTTPException(422, "id must match [a-z0-9_-]{1,64}")
+        if body.id in {p["id"] for p in store.list_profiles()}:
+            raise HTTPException(409, f"profile {body.id!r} already exists")
+        profile = store.create_profile(
+            body.id, body.display_name, body.base_prompt, body.role_prompt)
+        access.record_audit(admin_id, "create_profile_totp", body.id)
         return profile
 
     @app.post("/enroll", status_code=201)

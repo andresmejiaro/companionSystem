@@ -244,6 +244,17 @@ class ToolBridge:
         return self._request("POST", f"/approvals/{approval_id}/decide",
                              json={"approve": approve, "totp_code": totp_code})
 
+    def create_profile_totp(self, profile_id: str, display_name: str,
+                            base_prompt: str, role_prompt: str, totp_code: str):
+        """Not an MCP tool: used by the mcp service's public /create-profile
+        page — the backend route itself is TOTP-authenticated (public at
+        the transport layer), so this bridge's own bearer is incidental."""
+        return self._request("POST", "/profiles/totp-create", json={
+            "id": profile_id, "display_name": display_name,
+            "base_prompt": base_prompt, "role_prompt": role_prompt,
+            "totp_code": totp_code,
+        })
+
     def remember(self, profile_id: str, kind: str, content: str,
                  tags: list[str] | None = None):
         return self._request("POST", f"/profiles/{profile_id}/memories",

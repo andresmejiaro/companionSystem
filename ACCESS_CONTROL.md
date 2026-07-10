@@ -108,6 +108,19 @@ lighter path: a public link, TOTP code only, no admin secret.
 - `bootstrap_bridge.py` grants `approvals:totp_decide` to the bridge
   principal by default, alongside `identity:read`.
 
+## TOTP-only profile creation
+
+Creating a profile normally requires the global `create_profile` grant —
+fine at a desk with the admin secret, not something carried on a phone.
+`POST /profiles/totp-create` (backend) / `GET+POST /create-profile` (mcp
+service, public page) creates a profile with a live TOTP code alone, same
+principle as the approval links above: verified against
+`find_totp_admin_principal_id()`, rate-limited (5/min per IP), no owner
+grants needed (the admin already covers every profile via its
+wildcard-scoped grants, and the MCP bridge already covers every profile
+via `PROFILE_OS_MCP_BACKEND_PROFILES=*`). Intended for creating or
+migrating a companion away from a desktop.
+
 ## OAuth authorize consent screen
 
 `POST /oauth/register` (dynamic client registration) is open by design —

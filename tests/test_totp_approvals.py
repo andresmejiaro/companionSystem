@@ -240,6 +240,62 @@ def test_admin_verify_totp_rate_limited(auth_client, clock):
     assert r.status_code == 429
 
 
+def test_create_profile_totp_only(auth_client, clock):
+    client, access, admin_id = auth_client
+    totp = _enroll_and_confirm(access, admin_id, clock)
+
+    r = client.post("/profiles/totp-create", json={
+        "id": "rumbo", "display_name": "Rumbo", "base_prompt": "b", "role_prompt": "r",
+        "totp_code": clock.next_code(totp),
+    })
+    assert r.status_code == 201, r.text
+    assert r.json()["id"] == "rumbo"
+    assert r.json()["display_name"] == "Rumbo"
+    assert any(p["id"] == "rumbo" for p in client.get("/profiles",
+              headers=_bearer("root-secret")).json())
+
+
+def test_create_profile_totp_wrong_code(auth_client, clock):
+    client, access, admin_id = auth_client
+    _enroll_and_confirm(access, admin_id, clock)
+    r = client.post("/profiles/totp-create", json={
+        "id": "rumbo", "display_name": "Rumbo", "totp_code": "000000",
+    })
+    assert r.status_code == 401
+
+
+def test_create_profile_totp_no_admin_enrolled_is_403(auth_client):
+    client, access, admin_id = auth_client
+    r = client.post("/profiles/totp-create", json={
+        "id": "rumbo", "display_name": "Rumbo", "totp_code": "123456",
+    })
+    assert r.status_code == 403
+
+
+def test_create_profile_totp_duplicate_and_invalid_id(auth_client, clock):
+    client, access, admin_id = auth_client
+    totp = _enroll_and_confirm(access, admin_id, clock)
+
+    dup = client.post("/profiles/totp-create", json={
+        "id": "tara", "display_name": "Tara II", "totp_code": clock.next_code(totp),
+    })
+    assert dup.status_code == 409
+
+    bad_id = client.post("/profiles/totp-create", json={
+        "id": "Not Valid!", "display_name": "x", "totp_code": clock.next_code(totp),
+    })
+    assert bad_id.status_code == 422
+
+
+def test_create_profile_totp_rate_limited(auth_client):
+    client, access, admin_id = auth_client
+    for _ in range(6):
+        r = client.post("/profiles/totp-create", json={
+            "id": "rumbo", "display_name": "Rumbo", "totp_code": "000000",
+        })
+    assert r.status_code == 429
+
+
 def test_decide_without_totp_enrolled_is_403(auth_client):
     client, access, admin_id = auth_client
     owner = access.create_principal("agent", "rita-owner")
