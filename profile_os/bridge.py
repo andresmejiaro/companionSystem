@@ -37,6 +37,25 @@ import httpx
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from .sign import sign_request
+from .tool_schemas import (
+    APPROVAL,
+    AUDIT_EVENT,
+    BOOT,
+    CLOSEOUT,
+    DELETED_FILE,
+    DELETED_MEMORY,
+    DYNAMIC_RECORD,
+    DYNAMIC_STORE,
+    FILE_CONTENT,
+    FILE_META,
+    IDENTITY,
+    MEMORY_EVENT,
+    MEMORY_KINDS,
+    MESSAGE,
+    PROFILE,
+    START_SESSION,
+    array_of,
+)
 
 DEFAULT_BASE_URL = "http://127.0.0.1:8000"
 
@@ -57,13 +76,37 @@ class ToolBridgeError(Exception):
 def _tool(name, description, properties, required):
     return {"name": name, "description": description,
             "inputSchema": {"type": "object", "properties": properties,
-                            "required": required}}
+                            "required": required},
+            "outputSchema": BRIDGE_OUTPUT_SCHEMAS[name]}
 
 
 _PID = {"type": "string", "description": "assistant profile id, e.g. 'tara'"}
 
-MEMORY_KINDS = ["decision", "fact", "failure_scar", "note", "observation",
-                "preference"]
+BRIDGE_OUTPUT_SCHEMAS = {
+    "whoami": IDENTITY,
+    "boot": BOOT,
+    "start_session": START_SESSION,
+    "propose_prompt_edit": APPROVAL,
+    "update_own_description": PROFILE,
+    "remember": MEMORY_EVENT,
+    "search_memories": array_of(MEMORY_EVENT),
+    "update_memory": MEMORY_EVENT,
+    "forget": DELETED_MEMORY,
+    "send_message": MESSAGE,
+    "read_inbox": array_of(MESSAGE),
+    "mark_message_read": MESSAGE,
+    "write_file": FILE_META,
+    "list_files": array_of(FILE_META),
+    "read_file": FILE_CONTENT,
+    "delete_file": DELETED_FILE,
+    "closeout": CLOSEOUT,
+    "propose_store": DYNAMIC_STORE,
+    "list_stores": array_of(DYNAMIC_STORE),
+    "get_store": DYNAMIC_STORE,
+    "add_record": DYNAMIC_RECORD,
+    "query_records": array_of(DYNAMIC_RECORD),
+    "audit": array_of(AUDIT_EVENT),
+}
 
 TOOLS = [
     _tool("whoami", "Canonical 'who am I talking to' identity file. Overrides"

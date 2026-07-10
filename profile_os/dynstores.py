@@ -169,17 +169,33 @@ class DynamicStores:
 
     def approve(self, profile_id: str, name: str, actor: str = "admin") -> dict:
         row = self._require(profile_id, name)
+        return self._approve_row(row, actor)
+
+    def approve_id(self, store_id: str, actor: str = "admin") -> dict:
+        row = self._require_id(store_id)
+        return self._approve_row(row, actor)
+
+    def _approve_row(self, row, actor: str) -> dict:
         if row["status"] != "pending":
             raise DynStoreConflict(f"only pending stores can be approved (is {row['status']})")
         with self.db:
             self.db.execute(
                 "UPDATE dynamic_stores SET status='approved', approved_at=? WHERE id=?",
                 (time.time(), row["id"]))
-        self._audit(profile_id, name, "approved", actor, f"v{row['version']}")
-        return self.get(profile_id, name)
+        self._audit(row["profile_id"], row["name"], "approved", actor,
+                    f"v{row['version']}")
+        return self._to_dict(self.db.execute(
+            "SELECT * FROM dynamic_stores WHERE id=?", (row["id"],)).fetchone())
 
     def reject(self, profile_id: str, name: str, reason: str, actor: str = "admin") -> dict:
         row = self._require(profile_id, name)
+        return self._reject_row(row, reason, actor)
+
+    def reject_id(self, store_id: str, reason: str, actor: str = "admin") -> dict:
+        row = self._require_id(store_id)
+        return self._reject_row(row, reason, actor)
+
+    def _reject_row(self, row, reason: str, actor: str) -> dict:
         if row["status"] != "pending":
             raise DynStoreConflict(f"only pending stores can be rejected (is {row['status']})")
         if not reason or not reason.strip():
@@ -188,8 +204,10 @@ class DynamicStores:
             self.db.execute(
                 "UPDATE dynamic_stores SET status='rejected', rejected_at=?,"
                 " rejection_reason=? WHERE id=?", (time.time(), reason, row["id"]))
-        self._audit(profile_id, name, "rejected", actor, f"v{row['version']}: {reason}")
-        return self.get(profile_id, name)
+        self._audit(row["profile_id"], row["name"], "rejected", actor,
+                    f"v{row['version']}: {reason}")
+        return self._to_dict(self.db.execute(
+            "SELECT * FROM dynamic_stores WHERE id=?", (row["id"],)).fetchone())
 
     def archive(self, profile_id: str, name: str, actor: str = "admin") -> dict:
         row = self._require(profile_id, name)
@@ -298,6 +316,13 @@ class DynamicStores:
         row = self._latest(profile_id, name)
         if row is None:
             raise DynStoreNotFound(profile_id, name)
+        return row
+
+    def _require_id(self, store_id: str):
+        row = self.db.execute(
+            "SELECT * FROM dynamic_stores WHERE id=?", (store_id,)).fetchone()
+        if row is None:
+            raise DynStoreNotFound("-", store_id)
         return row
 
     def _audit(self, profile_id: str, name: str, action: str, actor: str, detail: str):

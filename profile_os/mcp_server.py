@@ -30,6 +30,24 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from starlette.concurrency import run_in_threadpool
 
 from .bridge import ToolBridge, ToolBridgeError
+from .tool_schemas import (
+    APPROVAL,
+    BOOT,
+    CLOSEOUT,
+    DELETED_FILE,
+    DELETED_MEMORY,
+    DYNAMIC_RECORD,
+    DYNAMIC_STORE,
+    FILE_CONTENT,
+    FILE_META,
+    IDENTITY,
+    MEMORY_EVENT,
+    MEMORY_KINDS,
+    MESSAGE,
+    PROFILE,
+    START_SESSION,
+    mcp_items,
+)
 
 AdminVerifyFn = Callable[[str, str], Awaitable[bool]]
 
@@ -277,6 +295,7 @@ def _tool(
             "required": required,
             "additionalProperties": False,
         },
+        "outputSchema": MCP_OUTPUT_SCHEMAS[name],
     }
 
 
@@ -285,14 +304,32 @@ _PROFILE_ID = {
     "description": "Profile id to operate on, such as a value returned by list_profiles.",
 }
 
-_MEMORY_KINDS = [
-    "decision",
-    "fact",
-    "failure_scar",
-    "note",
-    "observation",
-    "preference",
-]
+_MEMORY_KINDS = MEMORY_KINDS
+
+MCP_OUTPUT_SCHEMAS = {
+    "whoami": IDENTITY,
+    "list_profiles": mcp_items(PROFILE),
+    "boot_profile": BOOT,
+    "start_session": START_SESSION,
+    "propose_prompt_edit": APPROVAL,
+    "update_own_description": PROFILE,
+    "remember": MEMORY_EVENT,
+    "search_memories": mcp_items(MEMORY_EVENT),
+    "update_memory": MEMORY_EVENT,
+    "forget": DELETED_MEMORY,
+    "send_message": MESSAGE,
+    "read_inbox": mcp_items(MESSAGE),
+    "mark_message_read": MESSAGE,
+    "write_file": FILE_META,
+    "list_files": mcp_items(FILE_META),
+    "read_file": FILE_CONTENT,
+    "delete_file": DELETED_FILE,
+    "closeout": CLOSEOUT,
+    "list_stores": mcp_items(DYNAMIC_STORE),
+    "propose_store": DYNAMIC_STORE,
+    "query_records": mcp_items(DYNAMIC_RECORD),
+    "add_record": DYNAMIC_RECORD,
+}
 
 MCP_TOOLS = [
     _tool(
@@ -986,11 +1023,13 @@ def _handle_rpc(message: dict[str, Any], app: FastAPI) -> dict[str, Any]:
         profile_id = _safe_profile(arguments)
         try:
             value = app.state.runner.call(name, arguments)
-            if name == "propose_prompt_edit" and isinstance(value, dict) and value.get("id"):
+            if name in {"propose_prompt_edit", "propose_store"} and isinstance(value, dict):
                 settings: MCPSettings = app.state.settings
-                if settings.public_base_url:
+                approval_id = (value.get("id") if name == "propose_prompt_edit"
+                               else value.get("approval_id"))
+                if settings.public_base_url and approval_id:
                     value = {**value, "approval_link":
-                            f"{_canonical_base(settings.public_base_url)}/approvals/{value['id']}"}
+                            f"{_canonical_base(settings.public_base_url)}/approvals/{approval_id}"}
             elapsed_ms = int((time.time() - started) * 1000)
             LOGGER.info(
                 "mcp_tool_call name=%s profile_id=%s outcome=ok elapsed_ms=%s",

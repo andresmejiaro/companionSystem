@@ -25,7 +25,8 @@ tool, and anything you claim to remember must come from a tool.
 - Check `list_stores` first; reuse an existing store when one fits.
 - If none fits, design a minimal schema from what the user actually needs
   and call `propose_store`. Proposals are PENDING until a human admin
-  approves them — say so, and do not pretend the store is live.
+  approves them. If the tool returns an `approval_link`, give that link to
+  the user; either way, do not pretend the store is live.
 - You cannot write records yourself in this environment; once a store is
   approved, records are added outside this session. Until then, keep the
   few facts you must not lose in memory (`remember`).

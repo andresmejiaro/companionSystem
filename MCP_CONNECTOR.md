@@ -41,6 +41,10 @@ Exposed MCP tools:
 - `query_records`
 - `add_record`
 
+Each tool definition includes an `outputSchema` for successful
+`structuredContent`. List-returning tools expose structured content as
+`{"items": [...]}`.
+
 Not exposed as MCP tools: approve, reject, archive, audit, profile
 management, grant management, or credential management.
 
@@ -130,7 +134,9 @@ This matters for OAuth audience validation: issued access tokens are scoped to
 After boot, Claude can call `remember`, `search_memories`, `closeout`,
 `list_stores`, `propose_store`, `query_records`, and `add_record`. Record
 writes still require a backend-approved dynamic store; pending/rejected/
-archived stores are rejected by the backend.
+archived stores are rejected by the backend. Pending schema proposals include
+an `approval_link` when `MCP_PUBLIC_BASE_URL` is set, so the companion can
+hand the human a TOTP-only approval page directly.
 
 ## Local MCP smoke
 

@@ -134,8 +134,21 @@ class FakeBridge:
 
     def propose_store(self, profile_id, name, purpose, schema):
         store = {"name": name, "purpose": purpose, "schema": schema,
-                 "status": "pending", "profile_id": profile_id}
+                 "status": "pending", "profile_id": profile_id,
+                 "id": "store-1", "approval_id": "store-approval-1"}
         self.stores[name] = store
+        self.approvals[store["approval_id"]] = {
+            "id": store["approval_id"],
+            "kind": "store_schema",
+            "profile_id": profile_id,
+            "status": "pending",
+            "payload": {
+                "store_id": store["id"],
+                "store_name": name,
+                "purpose": purpose,
+                "schema": schema,
+            },
+        }
         self.store_approved = False
         return store
 
@@ -174,6 +187,8 @@ class FakeBridge:
         if approve and totp_code != "123456":
             raise ToolBridgeError(401, "missing or invalid TOTP code")
         approval["status"] = "approved" if approve else "rejected"
+        if approval["kind"] == "store_schema" and approve:
+            self.store_approved = True
         return approval
 
     def create_profile_totp(self, profile_id, display_name, base_prompt,
@@ -251,7 +266,8 @@ def test_initialize_and_list_tools(tmp_path):
 
     r = client.post("/mcp", json=_rpc("tools/list"), headers=_bearer())
     assert r.status_code == 200
-    names = {tool["name"] for tool in r.json()["result"]["tools"]}
+    tools = r.json()["result"]["tools"]
+    names = {tool["name"] for tool in tools}
     assert names == {
         "whoami",
         "start_session",
@@ -278,6 +294,11 @@ def test_initialize_and_list_tools(tmp_path):
     }
     assert not names & {"approve_store", "reject_store", "archive_store", "audit"}
     assert names == {tool["name"] for tool in MCP_TOOLS}
+    for tool in tools:
+        assert set(tool) == {"name", "title", "description", "inputSchema", "outputSchema"}
+        assert tool["outputSchema"]["type"] == "object"
+    list_profiles = next(tool for tool in tools if tool["name"] == "list_profiles")
+    assert list_profiles["outputSchema"]["properties"]["items"]["type"] == "array"
 
 
 def test_mcp_tool_flow_and_logging(tmp_path, caplog):
@@ -321,6 +342,7 @@ def test_mcp_tool_flow_and_logging(tmp_path, caplog):
         "schema": {"fields": {"hotel_name": {"type": "string"}}},
     }).json()["result"]["structuredContent"]
     assert proposed["status"] == "pending"
+    assert proposed["approval_link"] == f"{PUBLIC_BASE}/approvals/store-approval-1"
 
     blocked = _call_tool(client, "add_record", {
         "profile_id": "tara",

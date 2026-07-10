@@ -77,6 +77,21 @@ def test_rejected_store_rejects_writes(dyn):
         dyn.add_record("tara", "hotel_reservations", HOTEL_RECORD)
 
 
+def test_store_lifecycle_can_target_exact_proposal_id(dyn):
+    st = dyn.propose("tara", "hotel_reservations", "p", "tara", HOTEL_SCHEMA)
+    approved = dyn.approve_id(st["id"], actor="approval:admin")
+    assert approved["id"] == st["id"]
+    assert approved["status"] == "approved"
+    assert dyn.audit_events("tara", "hotel_reservations")[0]["actor"] == "approval:admin"
+
+    dyn.archive("tara", "hotel_reservations")
+    v2 = dyn.propose("tara", "hotel_reservations", "p2", "tara", HOTEL_SCHEMA)
+    rejected = dyn.reject_id(v2["id"], "not needed", actor="approval:admin")
+    assert rejected["id"] == v2["id"]
+    assert rejected["status"] == "rejected"
+    assert rejected["rejection_reason"] == "not needed"
+
+
 def test_archived_store_readonly_but_queryable(dyn):
     _approved(dyn)
     dyn.add_record("tara", "hotel_reservations", HOTEL_RECORD)

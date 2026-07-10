@@ -90,18 +90,21 @@ description just answers *what should another companion ask it about*.
 
 The curl-based flow above requires the admin secret, which is deliberately
 not something you'd carry on your phone. For approving a companion's
-proposed prompt edit specifically — lower stakes than an OAuth login, and
-something you might need to do away from a desktop — there's a second,
-lighter path: a public link, TOTP code only, no admin secret.
+proposed prompt edit or dynamic-store schema — lower stakes than an OAuth
+login, and something you might need to do away from a desktop — there's a
+second, lighter path: a public link, TOTP code only, no admin secret.
 
 - `propose_prompt_edit` (MCP tool / `POST /profiles/{id}/prompt`) returns
   an `approval_link` when `MCP_PUBLIC_BASE_URL` is set:
   `https://<host>/approvals/<id>`. A companion can hand this straight to
   the human.
+- `propose_store` (MCP tool / `POST /profiles/{id}/stores`) returns an
+  `approval_id` for pending schema proposals; the MCP tool response also
+  includes `approval_link` when `MCP_PUBLIC_BASE_URL` is set. The link
+  targets that exact schema proposal row, not just the store name.
 - `GET /approvals/{id}` on the **mcp** service (public, no auth at the
   HTTP layer — same principle as the OAuth consent screen) renders the
-  proposed `base_prompt`/`role_prompt` text and a form asking only for a
-  6-digit code.
+  proposed prompt edit or schema and a form asking only for a 6-digit code.
 - `POST /approvals/{id}` submits the decision. The mcp service calls the
   backend using its own bridge credential (holds `approvals:totp_decide`,
   a narrower operation than full `approvals:decide` — it can submit a

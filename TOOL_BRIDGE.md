@@ -15,8 +15,8 @@ for deployment and connector setup.
 
 The original bridge shape is still useful:
 
-- `bridge.TOOLS` — a list of `{name, description, inputSchema}` dicts,
-  which local runners use as hosted-assistant tool definitions.
+- `bridge.TOOLS` — a list of `{name, description, inputSchema, outputSchema}`
+  dicts, which local runners use as hosted-assistant tool definitions.
 - `ToolBridge.call(name, arguments)` — generic dispatch for the older local
   harness and smoke runners.
 

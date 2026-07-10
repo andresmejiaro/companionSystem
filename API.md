@@ -148,7 +148,9 @@ contain unknown fields.
 
 - `POST /profiles/{id}/stores` — propose. Body:
   `{"name": "hotel_reservations", "purpose": "...", "proposed_by": "tara",
-    "schema": {"fields": {...}}}` → 201, `status: "pending"`.
+    "schema": {"fields": {...}}}` → 201. Pending proposals return
+  `status: "pending"` plus `approval_id`; auto-approved owner proposals
+  return `status: "approved"`.
 - `GET /profiles/{id}/stores` → latest version of each store definition
 - `GET /profiles/{id}/stores/{name}` → definition (id, name, version, purpose,
   proposed_by, schema, status, timestamps, rejection_reason)

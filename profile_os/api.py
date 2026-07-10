@@ -573,6 +573,16 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
                         403, "no TOTP enrolled; run python -m profile_os.enroll_totp")
                 if not access.verify_totp(totp_principal, body.totp_code or ""):
                     raise HTTPException(401, "missing or invalid TOTP code")
+        if row["kind"] == "store_schema":
+            payload = row["payload"]
+            store_id = payload.get("store_id")
+            if not store_id:
+                raise HTTPException(422, "store approval payload missing store_id")
+            actor = f"approval:{principal_id or 'anonymous'}"
+            if body.approve:
+                _wrap(dyn.approve_id, store_id, actor=actor)
+            else:
+                _wrap(dyn.reject_id, store_id, "rejected via approval link", actor=actor)
         try:
             decided = access.decide_approval(approval_id, body.approve,
                                             principal_id or "anonymous")
@@ -608,9 +618,25 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
     @app.post("/profiles/{profile_id}/stores", status_code=201)
     def propose_store(profile_id: str, body: StoreProposalIn, request: Request):
         principal_id = _require("stores:propose", profile_id, request)
-        result = _wrap(dyn.propose, profile_id, body.name, body.purpose,
-                       body.proposed_by, body.schema_def)
-        return _maybe_auto_approve(profile_id, body.name, principal_id, result)
+        proposed = _wrap(dyn.propose, profile_id, body.name, body.purpose,
+                         body.proposed_by, body.schema_def)
+        result = _maybe_auto_approve(profile_id, body.name, principal_id, proposed)
+        if result["status"] != "pending":
+            return result
+        approval = access.propose_approval(
+            "store_schema",
+            principal_id or body.proposed_by,
+            {
+                "store_id": result["id"],
+                "profile_id": profile_id,
+                "store_name": result["name"],
+                "version": result["version"],
+                "purpose": result["purpose"],
+                "schema": result["schema"],
+            },
+            profile_id=profile_id,
+        )
+        return {**result, "approval_id": approval["id"]}
 
     @app.get("/profiles/{profile_id}/stores")
     def list_stores(profile_id: str, request: Request):

@@ -153,9 +153,15 @@ def test_env_configuration(tmp_path, monkeypatch):
 
 def test_tool_specs_are_mcp_shaped():
     for t in TOOLS:
-        assert set(t) == {"name", "description", "inputSchema"}
+        assert set(t) == {"name", "description", "inputSchema", "outputSchema"}
         assert t["inputSchema"]["type"] == "object"
         assert set(t["inputSchema"]["required"]) <= set(
             t["inputSchema"]["properties"])
+        assert t["outputSchema"]["type"] in {"array", "object"}
+        if t["outputSchema"]["type"] == "object":
+            assert set(t["outputSchema"].get("required", [])) <= set(
+                t["outputSchema"].get("properties", {}))
+        else:
+            assert "items" in t["outputSchema"]
     names = {t["name"] for t in TOOLS}
     assert not names & {"approve_store", "reject_store", "archive_store"}
