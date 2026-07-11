@@ -101,9 +101,12 @@ BRIDGE_OUTPUT_SCHEMAS = {
     "delete_file": DELETED_FILE,
     "closeout": CLOSEOUT,
     "propose_store": DYNAMIC_STORE,
+    "update_pending_store": DYNAMIC_STORE,
+    "withdraw_pending_store": DYNAMIC_STORE,
     "list_stores": array_of(DYNAMIC_STORE),
     "get_store": DYNAMIC_STORE,
     "add_record": DYNAMIC_RECORD,
+    "bulk_add_records": array_of(DYNAMIC_RECORD),
     "query_records": array_of(DYNAMIC_RECORD),
     "audit": array_of(AUDIT_EVENT),
 }
@@ -203,6 +206,11 @@ TOOLS = [
            "schema": {"type": "object",
                       "description": "{'fields': {name: {'type': ..., 'required': ...}}}"}},
           ["profile_id", "name", "purpose", "schema"]),
+    _tool("update_pending_store", "Modify your own pending store proposal; it issues a fresh approval.",
+          {"profile_id": _PID, "name": {"type": "string"}, "purpose": {"type": "string"}, "schema": {"type": "object"}},
+          ["profile_id", "name", "purpose", "schema"]),
+    _tool("withdraw_pending_store", "Withdraw your own pending store proposal.",
+          {"profile_id": _PID, "name": {"type": "string"}}, ["profile_id", "name"]),
     _tool("list_stores", "List a profile's dynamic store definitions.",
           {"profile_id": _PID}, ["profile_id"]),
     _tool("get_store", "Get one dynamic store definition (schema, status, version).",
@@ -213,6 +221,9 @@ TOOLS = [
            "store_name": {"type": "string"},
            "data": {"type": "object"}},
           ["profile_id", "store_name", "data"]),
+    _tool("bulk_add_records", "Atomically import 1–200 validated records into an approved store for a migration.",
+          {"profile_id": _PID, "store_name": {"type": "string"}, "records": {"type": "array", "items": {"type": "object"}}},
+          ["profile_id", "store_name", "records"]),
     _tool("query_records", "Query records of a dynamic store.",
           {"profile_id": _PID,
            "store_name": {"type": "string"},
@@ -384,6 +395,13 @@ class ToolBridge:
     def list_stores(self, profile_id: str):
         return self._request("GET", f"/profiles/{profile_id}/stores")
 
+    def update_pending_store(self, profile_id: str, name: str, purpose: str, schema: dict):
+        return self._request("PATCH", f"/profiles/{profile_id}/stores/{name}",
+                             json={"purpose": purpose, "schema": schema})
+
+    def withdraw_pending_store(self, profile_id: str, name: str):
+        return self._request("DELETE", f"/profiles/{profile_id}/stores/{name}")
+
     def get_store(self, profile_id: str, name: str):
         return self._request("GET", f"/profiles/{profile_id}/stores/{name}")
 
@@ -391,6 +409,10 @@ class ToolBridge:
         return self._request(
             "POST", f"/profiles/{profile_id}/stores/{store_name}/records",
             json={"data": data})
+
+    def bulk_add_records(self, profile_id: str, store_name: str, records: list[dict]):
+        return self._request("POST", f"/profiles/{profile_id}/stores/{store_name}/records/bulk",
+                             json={"records": records})
 
     def query_records(self, profile_id: str, store_name: str,
                       contains: str | None = None, limit: int = 50):

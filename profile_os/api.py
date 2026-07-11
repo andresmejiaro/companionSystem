@@ -87,6 +87,15 @@ class DomainRecordIn(BaseModel):
     data: dict
 
 
+class BulkRecordsIn(BaseModel):
+    records: list[dict]
+
+
+class PendingStoreUpdateIn(BaseModel):
+    purpose: str
+    schema_def: dict = Field(alias="schema")
+
+
 class StoreProposalIn(BaseModel):
     name: str
     purpose: str
@@ -293,6 +302,16 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
             raise HTTPException(409, str(e))
         except (MalformedMemoryEvent, MalformedRecord, SchemaError, MalformedMessage) as e:
             raise HTTPException(422, str(e))
+
+    def _expire_approvals() -> None:
+        for approval in access.expire_pending_approvals():
+            if approval["kind"] == "store_schema":
+                store_id = approval["payload"].get("store_id")
+                if store_id:
+                    try:
+                        dyn.reject_id(store_id, "approval expired after 24 hours", actor="system")
+                    except (DynStoreConflict, DynStoreNotFound):
+                        pass
 
     @app.get("/health")
     def health():
@@ -588,6 +607,21 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
             {"base_prompt": body.base_prompt, "role_prompt": body.role_prompt},
             profile_id=profile_id)
 
+    @app.post("/approvals/{approval_id}/retract")
+    def retract_approval(approval_id: str, request: Request):
+        """A companion may retract only its own still-pending proposal."""
+        _expire_approvals()
+        principal_id = _authenticate(request)
+        try:
+            approval = access.retract_approval(approval_id, principal_id)
+        except AccessError as e:
+            raise HTTPException(409, str(e))
+        if approval["kind"] == "store_schema":
+            store_id = approval["payload"].get("store_id")
+            if store_id:
+                _wrap(dyn.reject_id, store_id, "withdrawn by proposer", actor=principal_id or "anonymous")
+        return approval
+
     @app.put("/profiles/{profile_id}/description")
     def update_description(profile_id: str, body: DescriptionIn, request: Request):
         """Self-service, no approval — unlike prompt edits, this is discovery
@@ -601,11 +635,13 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
 
     @app.get("/approvals")
     def list_approvals(request: Request, profile_id: str | None = None):
+        _expire_approvals()
         _require_global_any(_APPROVAL_OPS, request)
         return access.list_pending_approvals(profile_id)
 
     @app.get("/approvals/{approval_id}")
     def get_approval_route(approval_id: str, request: Request):
+        _expire_approvals()
         _require_global_any(_APPROVAL_OPS, request)
         try:
             return access.get_approval(approval_id)
@@ -614,6 +650,7 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
 
     @app.post("/approvals/{approval_id}/decide")
     def decide_approval(approval_id: str, body: ApprovalDecideIn, request: Request):
+        _expire_approvals()
         principal_id = _require_global_any(_APPROVAL_OPS, request)
         try:
             row = access.get_approval(approval_id)
@@ -684,6 +721,7 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
 
     @app.post("/profiles/{profile_id}/stores", status_code=201)
     def propose_store(profile_id: str, body: StoreProposalIn, request: Request):
+        _expire_approvals()
         principal_id = _require("stores:propose", profile_id, request)
         proposed = _wrap(dyn.propose, profile_id, body.name, body.purpose,
                          body.proposed_by, body.schema_def)
@@ -715,6 +753,41 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
         _require("records:read", profile_id, request)
         return _wrap(dyn.get, profile_id, name)
 
+    @app.patch("/profiles/{profile_id}/stores/{name}")
+    def update_pending_store(profile_id: str, name: str, body: PendingStoreUpdateIn,
+                             request: Request):
+        principal_id = _require("stores:propose", profile_id, request)
+        current = _wrap(dyn.get, profile_id, name)
+        pending = next((a for a in access.list_pending_approvals(profile_id)
+                        if a["kind"] == "store_schema" and a["payload"].get("store_id") == current["id"]), None)
+        if pending is None or (principal_id is not None and pending["proposed_by_principal"] != principal_id):
+            raise HTTPException(403, "only the proposing companion may modify this pending store")
+        updated = _wrap(dyn.update_pending, profile_id, name, body.purpose,
+                        body.schema_def, principal_id or "anonymous")
+        # Retire the superseded approval and issue a fresh 24-hour decision link.
+        for approval in access.list_pending_approvals(profile_id):
+            if approval["kind"] == "store_schema" and approval["payload"].get("store_id") == updated["id"]:
+                access.retract_approval(approval["id"], principal_id)
+        approval = access.propose_approval("store_schema", principal_id or updated["proposed_by"],
+            {"store_id": updated["id"], "profile_id": profile_id, "store_name": updated["name"],
+             "version": updated["version"], "purpose": updated["purpose"], "schema": updated["schema"]},
+            profile_id=profile_id)
+        return {**updated, "approval_id": approval["id"]}
+
+    @app.delete("/profiles/{profile_id}/stores/{name}")
+    def withdraw_pending_store(profile_id: str, name: str, request: Request):
+        principal_id = _require("stores:propose", profile_id, request)
+        current = _wrap(dyn.get, profile_id, name)
+        pending = next((a for a in access.list_pending_approvals(profile_id)
+                        if a["kind"] == "store_schema" and a["payload"].get("store_id") == current["id"]), None)
+        if pending is None or (principal_id is not None and pending["proposed_by_principal"] != principal_id):
+            raise HTTPException(403, "only the proposing companion may withdraw this pending store")
+        withdrawn = _wrap(dyn.withdraw, profile_id, name, principal_id or "anonymous")
+        for approval in access.list_pending_approvals(profile_id):
+            if approval["kind"] == "store_schema" and approval["payload"].get("store_id") == withdrawn["id"]:
+                access.retract_approval(approval["id"], principal_id)
+        return withdrawn
+
     @app.post("/profiles/{profile_id}/stores/{name}/approve")
     def approve_store(profile_id: str, name: str, request: Request):
         _require("stores:approve", profile_id, request)
@@ -735,6 +808,12 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
                          request: Request):
         _require("records:write", profile_id, request)
         return _wrap(dyn.add_record, profile_id, name, body.data)
+
+    @app.post("/profiles/{profile_id}/stores/{name}/records/bulk", status_code=201)
+    def bulk_add_store_records(profile_id: str, name: str, body: BulkRecordsIn,
+                               request: Request):
+        _require("records:write", profile_id, request)
+        return _wrap(dyn.add_records, profile_id, name, body.records)
 
     @app.get("/profiles/{profile_id}/stores/{name}/records")
     def query_store_records(profile_id: str, name: str, request: Request,

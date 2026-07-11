@@ -327,8 +327,11 @@ MCP_OUTPUT_SCHEMAS = {
     "closeout": CLOSEOUT,
     "list_stores": mcp_items(DYNAMIC_STORE),
     "propose_store": DYNAMIC_STORE,
+    "update_pending_store": DYNAMIC_STORE,
+    "withdraw_pending_store": DYNAMIC_STORE,
     "query_records": mcp_items(DYNAMIC_RECORD),
     "add_record": DYNAMIC_RECORD,
+    "bulk_add_records": mcp_items(DYNAMIC_RECORD),
 }
 
 MCP_TOOLS = [
@@ -543,6 +546,17 @@ MCP_TOOLS = [
         ["profile_id", "name", "purpose", "schema"],
     ),
     _tool(
+        "update_pending_store", "Modify Pending Store",
+        "Modify a pending store proposal you made. The old approval is retracted and a fresh 24-hour approval is created.",
+        {"profile_id": _PROFILE_ID, "name": {"type": "string"}, "purpose": {"type": "string"}, "schema": {"type": "object"}},
+        ["profile_id", "name", "purpose", "schema"],
+    ),
+    _tool(
+        "withdraw_pending_store", "Withdraw Pending Store",
+        "Withdraw a pending store proposal you made; approved stores cannot be removed this way.",
+        {"profile_id": _PROFILE_ID, "name": {"type": "string"}}, ["profile_id", "name"],
+    ),
+    _tool(
         "query_records",
         "Query Records",
         "Query records in an approved or archived dynamic store.",
@@ -564,6 +578,12 @@ MCP_TOOLS = [
             "data": {"type": "object"},
         },
         ["profile_id", "store_name", "data"],
+    ),
+    _tool(
+        "bulk_add_records", "Bulk Add Records",
+        "Atomically import 1–200 schema-validated records into an approved store for a migration.",
+        {"profile_id": _PROFILE_ID, "store_name": {"type": "string"}, "records": {"type": "array", "items": {"type": "object"}}},
+        ["profile_id", "store_name", "records"],
     ),
 ]
 
@@ -794,6 +814,10 @@ class MCPToolRunner:
                 arguments["purpose"],
                 arguments["schema"],
             )
+        if name == "update_pending_store":
+            return self.bridge.update_pending_store(arguments["profile_id"], arguments["name"], arguments["purpose"], arguments["schema"])
+        if name == "withdraw_pending_store":
+            return self.bridge.withdraw_pending_store(arguments["profile_id"], arguments["name"])
         if name == "query_records":
             contains = arguments.get("contains")
             return self.bridge.query_records(
@@ -808,6 +832,8 @@ class MCPToolRunner:
                 arguments["store_name"],
                 arguments["data"],
             )
+        if name == "bulk_add_records":
+            return self.bridge.bulk_add_records(arguments["profile_id"], arguments["store_name"], arguments["records"])
         raise ValueError(f"unknown tool {name!r}")
 
 

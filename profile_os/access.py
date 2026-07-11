@@ -92,6 +92,7 @@ CREATE TABLE IF NOT EXISTS access_pending_approvals (
     payload TEXT NOT NULL,                 -- JSON
     status TEXT NOT NULL DEFAULT 'pending',-- pending|approved|rejected
     created_at REAL NOT NULL,
+    expires_at REAL,
     decided_at REAL,
     decided_by_principal TEXT
 );
@@ -144,12 +145,18 @@ class AccessControl:
         """Idempotently add columns needed by older databases."""
         cols = {row["name"] for row in
                 self.db.execute("PRAGMA table_info(access_credentials)").fetchall()}
+        approval_cols = {row["name"] for row in
+                         self.db.execute("PRAGMA table_info(access_pending_approvals)").fetchall()}
         with self.db:
             if "kind" not in cols:
                 self.db.execute(
                     "ALTER TABLE access_credentials ADD COLUMN kind TEXT NOT NULL DEFAULT 'secret'")
             if "public_key" not in cols:
                 self.db.execute("ALTER TABLE access_credentials ADD COLUMN public_key TEXT")
+            if "expires_at" not in approval_cols:
+                self.db.execute("ALTER TABLE access_pending_approvals ADD COLUMN expires_at REAL")
+                self.db.execute("UPDATE access_pending_approvals SET expires_at=created_at+86400"
+                                " WHERE expires_at IS NULL")
 
     @property
     def db(self):
@@ -379,14 +386,15 @@ class AccessControl:
     # -- pending approvals ("edgy" actions needing a TOTP-approved decision) ------
 
     def propose_approval(self, kind: str, proposed_by_principal: str,
-                         payload: dict, profile_id: str | None = None) -> dict:
+                 payload: dict, profile_id: str | None = None,
+                 ttl_seconds: int = 24 * 60 * 60) -> dict:
         aid = str(uuid.uuid4())
         with self.db:
             self.db.execute(
                 "INSERT INTO access_pending_approvals (id, kind, profile_id,"
-                " proposed_by_principal, payload, created_at) VALUES (?,?,?,?,?,?)",
+                " proposed_by_principal, payload, created_at, expires_at) VALUES (?,?,?,?,?,?,?)",
                 (aid, kind, profile_id, proposed_by_principal, json.dumps(payload),
-                 time.time()))
+                 time.time(), time.time() + ttl_seconds))
         return self.get_approval(aid)
 
     def get_approval(self, approval_id: str) -> dict:
@@ -399,6 +407,7 @@ class AccessControl:
         return d
 
     def list_pending_approvals(self, profile_id: str | None = None) -> list[dict]:
+        self.expire_pending_approvals()
         sql = "SELECT * FROM access_pending_approvals WHERE status='pending'"
         params: list = []
         if profile_id is not None:
@@ -415,6 +424,7 @@ class AccessControl:
 
     def decide_approval(self, approval_id: str, approve: bool,
                         decided_by_principal: str) -> dict:
+        self.expire_pending_approvals()
         row = self.get_approval(approval_id)
         if row["status"] != "pending":
             raise AccessError(f"approval {approval_id!r} already {row['status']}")
@@ -424,6 +434,33 @@ class AccessControl:
                 " decided_by_principal=? WHERE id=?",
                 ("approved" if approve else "rejected", time.time(),
                  decided_by_principal, approval_id))
+        return self.get_approval(approval_id)
+
+    def expire_pending_approvals(self) -> list[dict]:
+        """Mark overdue pending approvals expired; returns those transitions."""
+        now = time.time()
+        rows = self.db.execute(
+            "SELECT * FROM access_pending_approvals WHERE status='pending'"
+            " AND expires_at IS NOT NULL AND expires_at<=?", (now,)).fetchall()
+        if rows:
+            with self.db:
+                self.db.execute(
+                    "UPDATE access_pending_approvals SET status='expired', decided_at=?"
+                    " WHERE status='pending' AND expires_at IS NOT NULL AND expires_at<=?",
+                    (now, now))
+        return [self.get_approval(row["id"]) for row in rows]
+
+    def retract_approval(self, approval_id: str, principal_id: str | None) -> dict:
+        self.expire_pending_approvals()
+        row = self.get_approval(approval_id)
+        if row["status"] != "pending":
+            raise AccessError(f"approval {approval_id!r} already {row['status']}")
+        if principal_id is not None and row["proposed_by_principal"] != principal_id:
+            raise AccessError("only the proposing companion may retract this approval")
+        with self.db:
+            self.db.execute(
+                "UPDATE access_pending_approvals SET status='retracted', decided_at=?,"
+                " decided_by_principal=? WHERE id=?", (time.time(), principal_id or "anonymous", approval_id))
         return self.get_approval(approval_id)
 
     # -- audit ----------------------------------------------------------------------

@@ -219,6 +219,25 @@ class DynamicStores:
         self._audit(profile_id, name, "archived", actor, f"v{row['version']}")
         return self.get(profile_id, name)
 
+    def withdraw(self, profile_id: str, name: str, actor: str) -> dict:
+        """A proposer may withdraw a pending store before an admin decides."""
+        row = self._require(profile_id, name)
+        return self._reject_row(row, "withdrawn by proposer", actor)
+
+    def update_pending(self, profile_id: str, name: str, purpose: str,
+                       schema: dict, actor: str) -> dict:
+        row = self._require(profile_id, name)
+        if row["status"] != "pending":
+            raise DynStoreConflict("only pending stores can be modified; archive and re-propose approved stores")
+        if not purpose or not purpose.strip():
+            raise SchemaError("purpose is required")
+        validate_schema(schema)
+        with self.db:
+            self.db.execute("UPDATE dynamic_stores SET purpose=?, schema=? WHERE id=?",
+                            (purpose, json.dumps(schema), row["id"]))
+        self._audit(profile_id, name, "modified", actor, f"v{row['version']}: {purpose}")
+        return self.get(profile_id, name)
+
     # -- records ---------------------------------------------------------------
 
     def add_record(self, profile_id: str, name: str, data: dict) -> dict:
@@ -240,6 +259,25 @@ class DynamicStores:
                 (rid, profile_id, name, row["version"], json.dumps(data), now))
         return {"id": rid, "store": name, "schema_version": row["version"],
                 "data": data, "created_at": now}
+
+    def add_records(self, profile_id: str, name: str, records: list[dict]) -> list[dict]:
+        if not records or len(records) > 200:
+            raise SchemaError("records must contain between 1 and 200 items")
+        row = self._latest_with_status(profile_id, name, ("approved",))
+        if row is None:
+            raise DynStoreConflict(f"store {name!r} has no approved version; bulk import rejected")
+        schema = json.loads(row["schema"])
+        for data in records:
+            validate_record(schema, data)
+        now = time.time()
+        out = [{"id": str(uuid.uuid4()), "store": name, "schema_version": row["version"],
+                "data": data, "created_at": now} for data in records]
+        with self.db:
+            self.db.executemany(
+                "INSERT INTO dynamic_records (id, profile_id, store_name, schema_version, data, created_at)"
+                " VALUES (?,?,?,?,?,?)", [(r["id"], profile_id, name, r["schema_version"],
+                                             json.dumps(r["data"]), now) for r in out])
+        return out
 
     def query_records(self, profile_id: str, name: str,
                       contains: str | None = None, limit: int = 50) -> list[dict]:
