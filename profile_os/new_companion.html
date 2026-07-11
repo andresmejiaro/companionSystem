@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>New companion</title>
+<style>
+  body { max-width: 42rem; margin: 2rem auto; padding: 0 1rem;
+         font: 17px/1.45 system-ui, sans-serif; color: #17221b; }
+  label, input, textarea { display: block; width: 100%; box-sizing: border-box; }
+  label { margin-top: 1rem; font-weight: 600; } input, textarea { margin-top: .3rem; padding: .65rem; font: inherit; }
+  button { margin-top: 1.25rem; padding: .7rem 1rem; font: inherit; }
+  #result { white-space: pre-wrap; } .error { color: #9b1c1c; }
+</style>
+<main>
+  <p><a href="/directory">← Companion directory</a></p>
+  <h1>New companion</h1>
+  <p>Create a companion using the current code from your administrator authenticator app. No bearer credential is stored in this page.</p>
+  <form id="new-companion">
+    <label>Companion ID <input name="id" required pattern="[a-z0-9_-]{1,64}" autocomplete="off" placeholder="e.g. travel_planner"></label>
+    <label>Display name <input name="display_name" required placeholder="e.g. Travel Planner"></label>
+    <label>Identity prompt <textarea name="base_prompt" rows="5" placeholder="Stable identity and operating mode"></textarea></label>
+    <label>Role prompt <textarea name="role_prompt" rows="5" placeholder="Current role or lane"></textarea></label>
+    <label>Authenticator code <input name="totp_code" required inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6,8}" placeholder="6-digit code"></label>
+    <button type="submit">Create companion</button>
+  </form>
+  <p id="result" role="status"></p>
+</main>
+<script>
+const form = document.querySelector('#new-companion');
+const result = document.querySelector('#result');
+form.addEventListener('submit', async event => {
+  event.preventDefault();
+  result.className = '';
+  result.textContent = 'Creating companion…';
+  const data = Object.fromEntries(new FormData(form));
+  data.id = data.id.trim().toLowerCase();
+  try {
+    const response = await fetch('/profiles/totp-create', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(data),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body.detail || `Request failed (${response.status})`);
+    result.textContent = `Created ${body.display_name} (${body.id}).`;
+    form.reset();
+  } catch (error) {
+    result.className = 'error';
+    result.textContent = error.message;
+  }
+});
+</script>

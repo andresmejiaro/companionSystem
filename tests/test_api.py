@@ -29,9 +29,10 @@ def test_root_directory_and_admin_shortcuts(client):
     assert 'href="/companions/new"' in directory.text
     assert 'href="/settings"' in directory.text
 
-    new = client.get("/companions/new", follow_redirects=False)
-    assert new.status_code == 307
-    assert new.headers["location"].startswith("/docs#")
+    new = client.get("/companions/new")
+    assert new.status_code == 200
+    assert "New companion" in new.text
+    assert "/profiles/totp-create" in new.text
     settings = client.get("/settings", follow_redirects=False)
     assert settings.status_code == 307
     assert settings.headers["location"] == "/demo"

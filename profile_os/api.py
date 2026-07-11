@@ -288,9 +288,9 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
 
     @app.get("/companions/new", include_in_schema=False)
     def new_companion():
-        """Shortcut to the documented companion-creation operation."""
-        return RedirectResponse(
-            url="/docs#/default/create_profile_profiles_post", status_code=307)
+        """Phone-friendly companion creation, protected by an admin TOTP."""
+        return HTMLResponse(
+            (Path(__file__).parent / "new_companion.html").read_text())
 
     @app.get("/settings", include_in_schema=False)
     def settings():
