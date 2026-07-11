@@ -76,11 +76,10 @@ docker compose up --build
 See [MCP_CONNECTOR.md](MCP_CONNECTOR.md) for OAuth, tunnel/deployment notes,
 and the Claude.ai custom connector setup flow.
 
-For a real-model local test (not hosted, not public, not production auth),
-`python -m profile_os.openai_assistant --profile tara` runs an interactive
-assistant REPL over the bridge, and `python -m profile_os.openai_smoke`
-runs a one-shot version; both need `OPENAI_API_KEY` (and the bridge bearer
-if auth is enabled) in env. Details in TOOL_BRIDGE.md.
+For an optional real-model provider-validation experiment (not hosted,
+public, or part of the product runtime), run
+`python -m profile_os.openai_smoke`. It requires `OPENAI_API_KEY` and, when
+backend auth is enabled, a bridge bearer. Details are in TOOL_BRIDGE.md.
 
 ## Demo console
 

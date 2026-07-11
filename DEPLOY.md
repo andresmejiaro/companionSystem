@@ -89,10 +89,10 @@ separate migration step.
 
 | Secret | Used by | Never goes into |
 |---|---|---|
-| `PROFILE_OS_MCP_BACKEND_BEARER` | `mcp` container → `backend` container, internal only | Any chat UI, any connector setup screen |
+| `PROFILE_OS_MCP_BACKEND_BEARER` | `mcp` container → `backend` container, internal only | Connector setup screens or other public clients |
 | `MCP_CONNECTOR_TOKEN` | Fallback bearer auth if a connector UI can't do OAuth | Prefer OAuth; only paste this if forced |
 | `MCP_OAUTH_SIGNING_KEY` | Signs OAuth tokens the mcp service issues | Never leaves the server |
-| Admin bootstrap secret | `/demo` console + admin API, via SSH tunnel only | Public internet, chat UIs |
+| Admin bootstrap secret | `/demo` console + admin API, via SSH tunnel only | Public internet and connector clients |
 
 All four live only in `/opt/profile-os/.env` on the VPS (`chmod 600`) and
 were generated with `secrets.token_urlsafe(48)`.

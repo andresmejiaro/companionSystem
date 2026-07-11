@@ -1,13 +1,9 @@
-"""Profile prompt files, kept as inspectable markdown next to this module.
+"""Inspectable prompt seeds for companion profiles.
 
-Layers (assembled in `profile_os.openai_assistant.build_system_prompt`):
-  tool_contract.md      shared tool-use contract, same for every profile
-  <profile>_base.md     identity prompt, seeded into the backend store
-  <profile>_role.md     role/lane prompt, seeded into the backend store
-
-The base/role files are only *seeds*: at runtime the backend store is the
-source of truth and serves them back through the boot payload. The tool
-contract is not per-profile and is read directly from this package.
+``<profile>_base.md`` and ``<profile>_role.md`` seed the backend store;
+the backend's boot payload is the runtime source of truth. The shared tool
+contract is retained for optional provider-validation experiments, but is not
+part of the product runtime.
 """
 
 from pathlib import Path

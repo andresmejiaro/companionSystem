@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
 from . import seed
@@ -274,6 +274,28 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
     @app.get("/health")
     def health():
         return {"ok": True}
+
+    @app.get("/", include_in_schema=False)
+    def root_directory():
+        """Keep the root useful without restoring a conversation surface."""
+        return RedirectResponse(url="/directory", status_code=307)
+
+    @app.get("/directory", response_class=HTMLResponse,
+             include_in_schema=False)
+    def directory():
+        """Small human-facing index of administrative entry points."""
+        return (Path(__file__).parent / "directory.html").read_text()
+
+    @app.get("/companions/new", include_in_schema=False)
+    def new_companion():
+        """Shortcut to the documented companion-creation operation."""
+        return RedirectResponse(
+            url="/docs#/default/create_profile_profiles_post", status_code=307)
+
+    @app.get("/settings", include_in_schema=False)
+    def settings():
+        """Shortcut to the existing local administration console."""
+        return RedirectResponse(url="/demo", status_code=307)
 
     @app.get("/identity")
     def identity(request: Request):

@@ -18,6 +18,25 @@ def test_list_and_get_profiles(client):
     assert client.get("/profiles/ghost").status_code == 404
 
 
+def test_root_directory_and_admin_shortcuts(client):
+    root = client.get("/", follow_redirects=False)
+    assert root.status_code == 307
+    assert root.headers["location"] == "/directory"
+
+    directory = client.get("/directory")
+    assert directory.status_code == 200
+    assert "Companion directory" in directory.text
+    assert 'href="/companions/new"' in directory.text
+    assert 'href="/settings"' in directory.text
+
+    new = client.get("/companions/new", follow_redirects=False)
+    assert new.status_code == 307
+    assert new.headers["location"].startswith("/docs#")
+    settings = client.get("/settings", follow_redirects=False)
+    assert settings.status_code == 307
+    assert settings.headers["location"] == "/demo"
+
+
 def test_boot_endpoint(client):
     r = client.post("/profiles/sidra/boot")
     assert r.status_code == 200
