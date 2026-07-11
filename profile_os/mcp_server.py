@@ -312,6 +312,7 @@ MCP_OUTPUT_SCHEMAS = {
     "boot_profile": BOOT,
     "start_session": START_SESSION,
     "propose_prompt_edit": APPROVAL,
+    "retract_approval": APPROVAL,
     "update_own_description": PROFILE,
     "remember": MEMORY_EVENT,
     "search_memories": mcp_items(MEMORY_EVENT),
@@ -381,6 +382,13 @@ MCP_TOOLS = [
             "role_prompt": {"type": "string"},
         },
         ["profile_id"],
+    ),
+    _tool(
+        "retract_approval",
+        "Retract Pending Approval",
+        "Retract a pending prompt or store approval that you proposed.",
+        {"approval_id": {"type": "string"}},
+        ["approval_id"],
     ),
     _tool(
         "update_own_description",
@@ -752,6 +760,8 @@ class MCPToolRunner:
                 base_prompt=arguments.get("base_prompt"),
                 role_prompt=arguments.get("role_prompt"),
             )
+        if name == "retract_approval":
+            return self.bridge.retract_approval(arguments["approval_id"])
         if name == "update_own_description":
             return self.bridge.update_own_description(
                 arguments["profile_id"], arguments["description"])

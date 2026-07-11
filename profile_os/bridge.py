@@ -87,6 +87,7 @@ BRIDGE_OUTPUT_SCHEMAS = {
     "boot": BOOT,
     "start_session": START_SESSION,
     "propose_prompt_edit": APPROVAL,
+    "retract_approval": APPROVAL,
     "update_own_description": PROFILE,
     "remember": MEMORY_EVENT,
     "search_memories": array_of(MEMORY_EVENT),
@@ -132,6 +133,8 @@ TOOLS = [
            "base_prompt": {"type": "string"},
            "role_prompt": {"type": "string"}},
           ["profile_id"]),
+    _tool("retract_approval", "Retract your own pending approval proposal.",
+          {"approval_id": {"type": "string"}}, ["approval_id"]),
     _tool("update_own_description", "Update your own one-line 'what do I do' description"
                                    " — self-service, no approval. Other companions see it"
                                    " via list_profiles to know who to ask about what,"
@@ -309,6 +312,9 @@ class ToolBridge:
                             role_prompt: str | None = None):
         return self._request("POST", f"/profiles/{profile_id}/prompt",
                              json={"base_prompt": base_prompt, "role_prompt": role_prompt})
+
+    def retract_approval(self, approval_id: str):
+        return self._request("POST", f"/approvals/{approval_id}/retract")
 
     def update_own_description(self, profile_id: str, description: str):
         return self._request("PUT", f"/profiles/{profile_id}/description",
