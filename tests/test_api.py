@@ -33,9 +33,12 @@ def test_root_directory_and_admin_shortcuts(client):
     assert new.status_code == 200
     assert "New companion" in new.text
     assert "/profiles/totp-create" in new.text
-    settings = client.get("/settings", follow_redirects=False)
-    assert settings.status_code == 307
-    assert settings.headers["location"] == "/demo"
+    settings = client.get("/settings")
+    assert settings.status_code == 200
+    assert "Unlock settings" in settings.text
+    legacy_demo = client.get("/demo", follow_redirects=False)
+    assert legacy_demo.status_code == 307
+    assert legacy_demo.headers["location"] == "/settings"
 
 
 def test_boot_endpoint(client):

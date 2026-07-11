@@ -8,8 +8,11 @@ same service calls later (see ARCHITECTURE.md).
 from __future__ import annotations
 
 import base64
+import hashlib
+import hmac
 import os
 import re
+import secrets
 import time
 
 from datetime import datetime, timezone
@@ -151,6 +154,9 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
     _enroll_hits: dict[str, list[float]] = {}
     _verify_hits: dict[str, list[float]] = {}
     _profile_totp_hits: dict[str, list[float]] = {}
+    _settings_hits: dict[str, list[float]] = {}
+    _settings_session_key = secrets.token_bytes(32)
+    _settings_session_seconds = 15 * 60
 
     def _rate_limited(bucket: dict[str, list[float]], key: str,
                       limit: int = 5, window: float = 60) -> bool:
@@ -159,6 +165,23 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
         hits.append(now)
         bucket[key] = hits
         return len(hits) > limit
+
+    def _settings_session_token() -> str:
+        expires_at = str(int(time.time()) + _settings_session_seconds)
+        signature = hmac.new(_settings_session_key, expires_at.encode(),
+                             hashlib.sha256).hexdigest()
+        return f"{expires_at}.{signature}"
+
+    def _has_settings_session(request: Request) -> bool:
+        token = request.cookies.get("profile_os_settings", "")
+        try:
+            expires_at, signature = token.split(".", 1)
+            expected = hmac.new(_settings_session_key, expires_at.encode(),
+                                hashlib.sha256).hexdigest()
+            return int(expires_at) >= time.time() and hmac.compare_digest(
+                signature, expected)
+        except (TypeError, ValueError):
+            return False
 
     @app.middleware("http")
     async def _buffer_body(request: Request, call_next):
@@ -292,10 +315,32 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
         return HTMLResponse(
             (Path(__file__).parent / "new_companion.html").read_text())
 
-    @app.get("/settings", include_in_schema=False)
-    def settings():
-        """Shortcut to the existing local administration console."""
-        return RedirectResponse(url="/demo", status_code=307)
+    @app.get("/settings", response_class=HTMLResponse,
+             include_in_schema=False)
+    def settings(request: Request):
+        """TOTP-gated entry point for the local administration console."""
+        page = "demo.html" if _has_settings_session(request) else "settings_login.html"
+        return (Path(__file__).parent / page).read_text()
+
+    @app.post("/settings/unlock", include_in_schema=False)
+    async def unlock_settings(request: Request):
+        """Verify a live admin TOTP code and issue a brief secure session."""
+        client_ip = request.client.host if request.client else "unknown"
+        if _rate_limited(_settings_hits, client_ip):
+            raise HTTPException(429, "too many attempts; try again later")
+        form = await request.form()
+        admin_id = access.find_totp_admin_principal_id()
+        if admin_id is None or not access.verify_totp(
+                admin_id, str(form.get("totp_code") or "")):
+            return HTMLResponse(
+                (Path(__file__).parent / "settings_login.html").read_text()
+                .replace("<!-- ERROR -->", "<p class=\"error\">Invalid or expired authenticator code.</p>"),
+                status_code=401)
+        response = RedirectResponse(url="/settings", status_code=303)
+        response.set_cookie("profile_os_settings", _settings_session_token(),
+                            max_age=_settings_session_seconds, httponly=True,
+                            secure=True, samesite="strict", path="/settings")
+        return response
 
     @app.get("/identity")
     def identity(request: Request):
@@ -309,8 +354,8 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
 
     @app.get("/demo", response_class=HTMLResponse)
     def demo():
-        """Human-readable demo console (static page, no build step, no LLM)."""
-        return (Path(__file__).parent / "demo.html").read_text()
+        """Legacy settings URL; the TOTP gate lives at /settings."""
+        return RedirectResponse(url="/settings", status_code=307)
 
     @app.get("/profiles")
     def list_profiles(request: Request):
