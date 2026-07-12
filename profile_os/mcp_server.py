@@ -683,6 +683,15 @@ MCP_TOOLS = [
 MCP_TOOL_NAMES = {tool["name"] for tool in MCP_TOOLS}
 
 
+def _advertised_tools() -> list[dict[str, Any]]:
+    # ChatGPT's connector setup rejects tool lists it cannot validate;
+    # MCP_OMIT_OUTPUT_SCHEMAS=1 serves the same tools without outputSchema.
+    if os.environ.get("MCP_OMIT_OUTPUT_SCHEMAS") != "1":
+        return MCP_TOOLS
+    return [{k: v for k, v in tool.items() if k != "outputSchema"}
+            for tool in MCP_TOOLS]
+
+
 @dataclass
 class MCPSettings:
     auth_required: bool = True
@@ -1113,9 +1122,10 @@ def _handle_rpc(message: dict[str, Any], app: FastAPI) -> dict[str, Any]:
         protocol = requested if requested in SUPPORTED_PROTOCOL_VERSIONS else MCP_PROTOCOL_VERSION
         return _rpc_result(request_id, {
             "protocolVersion": protocol,
-            # Tool schemas evolve with companion operations. Advertising this
-            # honestly prevents hosts from pinning a stale tool definition.
-            "capabilities": {"tools": {"listChanged": True}},
+            # The server has no live notification stream (GET /mcp closes
+            # immediately), so it can never deliver tools/list_changed —
+            # advertising it would be dishonest and confuses strict hosts.
+            "capabilities": {"tools": {"listChanged": False}},
             "serverInfo": {
                 "name": "profile-os-mcp",
                 "title": "Profile OS Remote MCP",
@@ -1132,7 +1142,7 @@ def _handle_rpc(message: dict[str, Any], app: FastAPI) -> dict[str, Any]:
         return _rpc_result(request_id, {})
 
     if method == "tools/list":
-        return _rpc_result(request_id, {"tools": MCP_TOOLS})
+        return _rpc_result(request_id, {"tools": _advertised_tools()})
 
     if method == "tools/call":
         if not isinstance(params, dict):

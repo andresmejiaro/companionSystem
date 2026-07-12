@@ -231,7 +231,7 @@ def test_initialize_and_list_tools(tmp_path):
     assert r.status_code == 200
     body = r.json()["result"]
     assert body["protocolVersion"] == "2025-06-18"
-    assert body["capabilities"] == {"tools": {"listChanged": True}}
+    assert body["capabilities"] == {"tools": {"listChanged": False}}
     assert "boot_profile" in body["instructions"]
 
     r = client.post("/mcp", json=_rpc("tools/list"), headers=_bearer())
@@ -253,6 +253,17 @@ def test_initialize_and_list_tools(tmp_path):
     assert closeout["inputSchema"]["required"] == [
         "profile_id", "facts", "texture", "exchange",
     ]
+
+
+def test_list_tools_can_omit_output_schemas(tmp_path, monkeypatch):
+    monkeypatch.setenv("MCP_OMIT_OUTPUT_SCHEMAS", "1")
+    client = _mcp_client()
+    r = client.post("/mcp", json=_rpc("tools/list"), headers=_bearer())
+    assert r.status_code == 200
+    tools = r.json()["result"]["tools"]
+    assert {tool["name"] for tool in tools} == {tool["name"] for tool in MCP_TOOLS}
+    for tool in tools:
+        assert set(tool) == {"name", "title", "description", "inputSchema"}
 
 
 def test_mcp_tool_flow_and_logging(tmp_path, caplog):
