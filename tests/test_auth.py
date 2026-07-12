@@ -132,7 +132,7 @@ def test_all_protected_endpoints_401_without_credential(auth_client):
         ("POST", "/profiles/tara/boot", None),
         ("POST", "/profiles/tara/memories", {"kind": "note", "content": "x"}),
         ("GET", "/profiles/tara/memories/search?q=x", None),
-        ("POST", "/profiles/tara/closeout", {"notes": "", "new_state": "s"}),
+        ("POST", "/profiles/tara/closeout", {"facts": "s", "texture": "t", "exchange": "User: s."}),
         ("GET", "/profiles/tara/domain", None),
         ("GET", "/profiles/tara/domain/notes", None),
         ("POST", "/profiles/tara/domain/notes", {"data": {}}),
@@ -180,7 +180,7 @@ def test_each_operation_grant_gates_its_endpoint(auth_client):
 
     access.grant(p["id"], "closeout", profile_id="tara")
     assert client.post("/profiles/tara/closeout", headers=h,
-                       json={"notes": "", "new_state": "resting"}).status_code == 201
+                       json={"facts": "resting", "texture": "quiet", "exchange": "User: rest."}).status_code == 201
 
     assert client.post("/profiles/tara/stores", headers=h,
                        json={"name": "hotel_reservations", "purpose": "p",

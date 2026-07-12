@@ -359,11 +359,11 @@ def test_start_session_bundles_identity_and_semantic_boot_memories(tmp_path, mon
             client.post("/profiles/tara/memories", headers=h,
                        json={"kind": "note", "content": f"memory {i}"})
         client.post("/profiles/tara/closeout", headers=h,
-                   json={"notes": "n1", "new_state": "state1"})
+                   json={"notes": "n1", "facts": "state1", "texture": "t1", "exchange": "User: one."})
         client.post("/profiles/tara/closeout", headers=h,
-                   json={"notes": "n2", "new_state": "state2"})
+                   json={"notes": "n2", "facts": "state2", "texture": "t2", "exchange": "User: two."})
         client.post("/profiles/tara/closeout", headers=h,
-                   json={"notes": "n3", "new_state": "state3"})
+                   json={"notes": "n3", "facts": "state3", "texture": "t3", "exchange": "User: three."})
 
         r = client.post("/profiles/tara/session", headers=h)
         assert r.status_code == 200, r.text

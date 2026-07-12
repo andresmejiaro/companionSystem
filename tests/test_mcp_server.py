@@ -1,11 +1,10 @@
 import base64
-import concurrent.futures
 import hashlib
 import logging
 import urllib.parse
 
-import anyio
 import httpx
+from fastapi.testclient import TestClient
 
 from profile_os.bootstrap_bridge import BRIDGE_OPS, bootstrap
 from profile_os.access import AccessControl
@@ -20,47 +19,7 @@ ORIGIN = "https://claude.ai"
 PUBLIC_BASE = "https://profiles.example"
 
 
-class ThreadedASGIClient:
-    """Tiny sync client for tests that avoids Starlette TestClient.
-
-    The current local venv has a FastAPI/Starlette TestClient compatibility
-    issue on Python 3.14. This client still exercises the ASGI app through
-    httpx.ASGITransport, and the thread boundary lets the sync ToolBridge call
-    the backend while the MCP app is already running in an event loop.
-    """
-
-    def __init__(self, app, base_url: str = "http://testserver"):
-        self.app = app
-        self.base_url = base_url
-
-    def request(self, method: str, url: str, **kwargs):
-        def run_request():
-            async def send():
-                transport = httpx.ASGITransport(app=self.app)
-                async with httpx.AsyncClient(
-                    transport=transport,
-                    base_url=self.base_url,
-                ) as client:
-                    response = await client.request(method, url, **kwargs)
-                    await response.aread()
-                    return response
-
-            return anyio.run(send)
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            return pool.submit(run_request).result()
-
-    def get(self, url: str, **kwargs):
-        return self.request("GET", url, **kwargs)
-
-    def post(self, url: str, **kwargs):
-        return self.request("POST", url, **kwargs)
-
-    def options(self, url: str, **kwargs):
-        return self.request("OPTIONS", url, **kwargs)
-
-    def close(self):
-        return None
+ThreadedASGIClient = TestClient
 
 
 def _b64url(data: bytes) -> str:
@@ -544,6 +503,10 @@ def test_approval_link_page_totp_only_flow():
     assert "totp_code" in page.text
     assert "admin_secret" not in page.text  # TOTP-only, no shared secret field
     assert "New text" in page.text
+    assert "base_prompt" in page.text
+    assert "role_prompt" in page.text
+    assert "Proposed replacement." in page.text
+    assert "No change proposed — the current value remains." in page.text
 
     bad = client.post(f"/approvals/{approval_id}", data={
         "totp_code": "000000", "decision": "approve"})

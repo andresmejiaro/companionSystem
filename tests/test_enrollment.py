@@ -63,7 +63,7 @@ def test_enroll_happy_path_and_signed_profile_creation(auth_client):
         ("POST", "/profiles/rumbo/boot", None),
         ("POST", "/profiles/rumbo/memories", {"kind": "note", "content": "hi"}),
         ("GET", "/profiles/rumbo/memories/search?q=hi", None),
-        ("POST", "/profiles/rumbo/closeout", {"notes": "", "new_state": "s"}),
+        ("POST", "/profiles/rumbo/closeout", {"facts": "s", "texture": "t", "exchange": "User: s."}),
     ]:
         r = _signed(client, private_key, key_id, method, path, body)
         assert r.status_code in (200, 201), f"{method} {path} -> {r.status_code}: {r.text}"
