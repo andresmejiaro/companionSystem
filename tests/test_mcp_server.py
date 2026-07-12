@@ -279,30 +279,7 @@ def test_initialize_and_list_tools(tmp_path):
     assert r.status_code == 200
     tools = r.json()["result"]["tools"]
     names = {tool["name"] for tool in tools}
-    assert names == {
-        "whoami",
-        "start_session",
-        "propose_prompt_edit",
-        "update_own_description",
-        "list_profiles",
-        "boot_profile",
-        "remember",
-        "update_memory",
-        "forget",
-        "send_message",
-        "read_inbox",
-        "mark_message_read",
-        "write_file",
-        "list_files",
-        "read_file",
-        "delete_file",
-        "search_memories",
-        "closeout",
-        "list_stores",
-        "propose_store",
-        "query_records",
-        "add_record",
-    }
+    assert names == {tool["name"] for tool in MCP_TOOLS}
     assert not names & {"approve_store", "reject_store", "archive_store", "audit"}
     assert names == {tool["name"] for tool in MCP_TOOLS}
     for tool in tools:
@@ -310,6 +287,13 @@ def test_initialize_and_list_tools(tmp_path):
         assert tool["outputSchema"]["type"] == "object"
     list_profiles = next(tool for tool in tools if tool["name"] == "list_profiles")
     assert list_profiles["outputSchema"]["properties"]["items"]["type"] == "array"
+    closeout = next(tool for tool in tools if tool["name"] == "closeout")
+    assert set(closeout["inputSchema"]["properties"]) == {
+        "profile_id", "facts", "texture", "exchange", "notes",
+    }
+    assert closeout["inputSchema"]["required"] == [
+        "profile_id", "facts", "texture", "exchange",
+    ]
 
 
 def test_mcp_tool_flow_and_logging(tmp_path, caplog):
@@ -477,6 +461,9 @@ def test_oauth_metadata_dcr_pkce_and_bearer_use(tmp_path):
     authz = client.get("/.well-known/oauth-authorization-server").json()
     assert authz["registration_endpoint"] == f"{PUBLIC_BASE}/oauth/register"
     assert authz["code_challenge_methods_supported"] == ["S256"]
+    # ChatGPT probes OpenID discovery after OAuth token exchange. It needs
+    # the same authorization-server metadata rather than a 404.
+    assert client.get("/.well-known/openid-configuration").json() == authz
 
     reg = client.post("/oauth/register", json={
         "client_name": "Claude",
