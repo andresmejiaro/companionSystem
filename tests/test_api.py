@@ -48,6 +48,14 @@ def test_boot_endpoint(client):
     assert body["base_prompt"] and body["compact_state"]
 
 
+def test_session_inspect_matches_start_session_shape_when_auth_is_disabled(client):
+    inspected = client.post("/profiles/sidra/session-inspect", json={"totp_code": "123456"})
+    assert inspected.status_code == 200
+    body = inspected.json()
+    assert {"profile", "base_prompt", "role_prompt", "compact_state", "identity",
+            "last_closeouts", "memories", "server_time"} <= set(body)
+
+
 def test_remember_search_closeout_flow(client):
     r = client.post("/profiles/tara/memories",
                     json={"kind": "observation", "content": "ate paella at lunch",

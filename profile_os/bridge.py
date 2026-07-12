@@ -308,6 +308,11 @@ class ToolBridge:
     def start_session(self, profile_id: str):
         return self._request("POST", f"/profiles/{profile_id}/session")
 
+    def inspect_session(self, profile_id: str, totp_code: str):
+        """TOTP-gated, read-only copy of ``start_session`` for the web inspector."""
+        return self._request("POST", f"/profiles/{profile_id}/session-inspect",
+                             json={"totp_code": totp_code})
+
     def propose_prompt_edit(self, profile_id: str, base_prompt: str | None = None,
                             role_prompt: str | None = None):
         return self._request("POST", f"/profiles/{profile_id}/prompt",

@@ -139,6 +139,11 @@ class AdminVerifyIn(BaseModel):
     totp_code: str
 
 
+class SessionInspectIn(BaseModel):
+    """A live TOTP gate for the read-only companion session inspector."""
+    totp_code: str
+
+
 def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
                auth_enabled: bool | None = None,
                identity_file: str | None = None) -> FastAPI:
@@ -516,6 +521,30 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
                 "iso": datetime.fromtimestamp(now, tz=timezone.utc).isoformat(),
             },
         }
+
+    @app.post("/profiles/{profile_id}/session-inspect")
+    def inspect_session(profile_id: str, body: SessionInspectIn, request: Request):
+        """Return a session payload only after a live administrator TOTP check.
+
+        This is intentionally separate from the normal companion-facing
+        ``start_session`` endpoint: the public MCP inspection page uses the
+        bridge's global ``approvals:totp_decide`` grant plus a one-time code,
+        and never receives a reusable admin credential.
+        """
+        principal_id = _require_global_any(["approvals:decide", "approvals:totp_decide"], request)
+        if principal_id is not None:
+            totp_principal = (
+                principal_id if access.allowed(principal_id, "approvals:decide", None)
+                else access.find_totp_admin_principal_id()
+            )
+            if totp_principal is None or not access.has_totp(totp_principal):
+                raise HTTPException(403, "no TOTP enrolled; run python -m profile_os.enroll_totp")
+            if not access.verify_totp(totp_principal, body.totp_code):
+                raise HTTPException(401, "missing or invalid TOTP code")
+
+        # Keep the returned shape exactly equal to start_session, so the raw
+        # inspector view is the payload an MCP client actually receives.
+        return start_session(profile_id, request)
 
     @app.post("/profiles/{profile_id}/memories", status_code=201)
     def remember(profile_id: str, event: MemoryEventIn, request: Request):

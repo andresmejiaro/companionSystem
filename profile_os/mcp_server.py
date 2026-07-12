@@ -252,6 +252,56 @@ def _create_profile_page(values: dict[str, str] | None = None,
 </body></html>"""
 
 
+def _session_inspector_page(profiles: list[dict], *, selected_id: str = "",
+                            mode: str = "human", result: dict | None = None,
+                            error: str | None = None) -> str:
+    """Read-only view of the exact start_session result, gated by TOTP."""
+    options = "".join(
+        f'<option value="{_html.escape(str(p.get("id", "")))}"'
+        f'{" selected" if p.get("id") == selected_id else ""}>'
+        f'{_html.escape(str(p.get("display_name") or p.get("id") or ""))}'
+        f' ({_html.escape(str(p.get("id", "")))})</option>'
+        for p in profiles
+    )
+    error_html = f'<p class="error">{_html.escape(error)}</p>' if error else ""
+    checked_human = "checked" if mode != "raw" else ""
+    checked_raw = "checked" if mode == "raw" else ""
+    output = ""
+    if result is not None:
+        if mode == "raw":
+            output = ("<section><h2>Delivered payload</h2><p>This is the pretty-printed JSON "
+                      "returned by <code>start_session</code>.</p><pre>" +
+                      _html.escape(_json_text(result)) + "</pre></section>")
+        else:
+            def block(title: str, source: str, value: Any) -> str:
+                text = _html.escape(_json_text(value) if isinstance(value, (dict, list)) else str(value or ""))
+                return (f'<section><h2>{_html.escape(title)}</h2><p class="source">'
+                        f'{_html.escape(source)}</p><pre>{text}</pre></section>')
+            output = "<section><h2>How this session is assembled</h2><p>These sections are the same data as the raw payload, grouped by source.</p></section>"
+            output += block("Profile metadata", "Profile registry: name, description, allowed tools, memory policy, and closeout rules.", result.get("profile") or {})
+            output += block("Base prompt", "Durable identity / operating constitution: profile base_prompt.", result.get("base_prompt"))
+            output += block("Role prompt", "Role or lane overlay: profile role_prompt.", result.get("role_prompt"))
+            output += block("Compact state", "Current handoff state written at closeout.", result.get("compact_state"))
+            output += block("Global identity (whoami)", "Canonical external identity file, when the bridge has identity:read.", result.get("identity"))
+            output += block("Last closeouts", "The two most recent full closeout records.", result.get("last_closeouts", []))
+            output += block("Memories", "All profile memory events, newest first. Memories are mutable context, not the prompt.", result.get("memories", []))
+            output += block("Server time", "Timestamp inserted by the server when this session payload was created.", result.get("server_time"))
+    return f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Companion session inspector</title><style>
+body {{ font:16px/1.45 system-ui,sans-serif; max-width:1000px; margin:32px auto; padding:0 18px; color:#18212b; background:#fafbfc; }}
+h1 {{ margin-bottom:.15em; }} .hint,.source {{ color:#52616f; }} .source {{ margin-top:-.6em; font-size:.92em; }}
+form,section {{ background:#fff; border:1px solid #d9e0e6; border-radius:10px; padding:18px; margin:18px 0; }}
+label {{ display:block; font-weight:600; margin:.6em 0; }} select,input,button {{ font:inherit; padding:.55em; }} select,input {{ min-width:18rem; }}
+fieldset {{ border:0; padding:0; margin:1em 0; }} fieldset label {{ display:inline; margin-right:1.2em; font-weight:400; }}
+button {{ background:#1769aa; color:white; border:0; border-radius:6px; cursor:pointer; }} .error {{ color:#a11; font-weight:600; }}
+pre {{ white-space:pre-wrap; overflow-wrap:anywhere; background:#f3f6f8; padding:14px; border-radius:7px; max-height:34rem; overflow:auto; }} code {{ background:#eef2f5; padding:.1em .25em; }}
+</style></head><body><main><h1>Companion session inspector</h1><p class="hint">Read-only. Enter a live authenticator code to view exactly what a companion receives from <code>start_session</code>.</p>
+{error_html}<form method="post"><label>Companion<br><select name="profile_id" required><option value="">Choose a companion…</option>{options}</select></label>
+<label>Authenticator code<br><input name="totp_code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{{6,8}}" required></label>
+<fieldset><legend>Display</legend><label><input type="radio" name="mode" value="human" {checked_human}> Human-readable, grouped by source</label><label><input type="radio" name="mode" value="raw" {checked_raw}> Raw delivered JSON</label></fieldset><button type="submit">View session</button></form>{output}</main></body></html>"""
+
+
 def _resource_url(settings: "MCPSettings", request: Request) -> str:
     if settings.public_base_url:
         return f"{_canonical_base(settings.public_base_url)}/mcp"
@@ -1110,6 +1160,7 @@ def create_mcp_app(
     _authorize_hits: dict[str, list[float]] = {}
     _approval_hits: dict[str, list[float]] = {}
     _create_profile_hits: dict[str, list[float]] = {}
+    _session_inspector_hits: dict[str, list[float]] = {}
 
     @app.get("/health", name="health")
     async def health():
@@ -1266,6 +1317,33 @@ def create_mcp_app(
         if approval.get("status") != "pending":
             return HTMLResponse(f"Already {approval.get('status')}. Nothing to do.")
         return HTMLResponse(_approval_page(approval))
+
+    @app.get("/session-inspector")
+    async def session_inspector_page():
+        profiles = await run_in_threadpool(app.state.runner.bridge.list_profiles)
+        return HTMLResponse(_session_inspector_page(profiles))
+
+    @app.post("/session-inspector")
+    async def session_inspector_submit(request: Request):
+        client_ip = request.client.host if request.client else "unknown"
+        if _rate_limited(_session_inspector_hits, client_ip):
+            return HTMLResponse("Too many attempts; try again in a minute.", status_code=429)
+        form = await request.form()
+        profile_id = str(form.get("profile_id") or "")
+        totp_code = str(form.get("totp_code") or "")
+        mode = "raw" if str(form.get("mode")) == "raw" else "human"
+        profiles = await run_in_threadpool(app.state.runner.bridge.list_profiles)
+        if profile_id not in {str(p.get("id")) for p in profiles}:
+            return HTMLResponse(_session_inspector_page(profiles, selected_id=profile_id,
+                                                        mode=mode, error="Choose a valid companion."), status_code=422)
+        try:
+            result = await run_in_threadpool(app.state.runner.bridge.inspect_session,
+                                              profile_id, totp_code)
+        except ToolBridgeError as e:
+            return HTMLResponse(_session_inspector_page(profiles, selected_id=profile_id,
+                                                        mode=mode, error=e.detail), status_code=e.status_code)
+        return HTMLResponse(_session_inspector_page(profiles, selected_id=profile_id,
+                                                    mode=mode, result=result))
 
     @app.post("/approvals/{approval_id}")
     async def approval_decide(approval_id: str, request: Request):

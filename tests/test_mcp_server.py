@@ -111,6 +111,17 @@ class FakeBridge:
             "recent_memories": list(self.memories),
         }
 
+    def inspect_session(self, profile_id, totp_code):
+        if totp_code != "123456":
+            raise ToolBridgeError(401, "missing or invalid TOTP code")
+        return {
+            **self.boot_profile(profile_id),
+            "identity": "Canonical identity.",
+            "last_closeouts": [{"id": "closeout-1", "new_state": "Earlier state."}],
+            "memories": [{"id": "memory-1", "kind": "note", "content": "A memory."}],
+            "server_time": {"unix": 1, "iso": "1970-01-01T00:00:01+00:00"},
+        }
+
     def remember(self, profile_id, kind, content, tags=None):
         event = {
             "id": "mem-1",
@@ -364,6 +375,36 @@ def test_mcp_tool_flow_and_logging(tmp_path, caplog):
         "contains": "Inn",
     }).json()["result"]["structuredContent"]["items"]
     assert records[0]["data"]["hotel_name"] == "Inn"
+
+
+def test_session_inspector_renders_source_aware_and_raw_views():
+    client = ThreadedASGIClient(create_mcp_app(bridge=FakeBridge()))
+
+    page = client.get("/session-inspector")
+    assert page.status_code == 200
+    assert "Companion session inspector" in page.text
+    assert "sidra" in page.text
+
+    bad = client.post("/session-inspector", data={
+        "profile_id": "sidra", "totp_code": "000000", "mode": "human",
+    })
+    assert bad.status_code == 401
+    assert "invalid TOTP" in bad.text
+
+    human = client.post("/session-inspector", data={
+        "profile_id": "sidra", "totp_code": "123456", "mode": "human",
+    })
+    assert human.status_code == 200
+    assert "Base prompt" in human.text
+    assert "Memories" in human.text
+    assert "Canonical external identity file" in human.text
+
+    raw = client.post("/session-inspector", data={
+        "profile_id": "sidra", "totp_code": "123456", "mode": "raw",
+    })
+    assert raw.status_code == 200
+    assert "Delivered payload" in raw.text
+    assert "&quot;base_prompt&quot;" in raw.text
 
 
 def test_mcp_auth_origin_get_and_token_separation(tmp_path):
