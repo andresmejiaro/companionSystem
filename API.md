@@ -47,14 +47,14 @@ subset of these operations over `POST /mcp` and `GET /mcp`; see
    "compact_state": "No meals logged today.", "state_updated_at": 1751640000.0,
    "recent_memories": [ {memory event}, ... ]}
   ```
-- `POST /profiles/{id}/session` — one-call bundle for a companion's first
-  turn (MCP tool `start_session`): everything `boot` returns, minus
-  `recent_memories`, plus `identity` (the `whoami` file content, or `null`
-  without `identity:read`), `last_closeouts` (last 2 full closeout records:
-  `notes`/`new_state`/`created_at`, not just the current compact state),
-  `memories` (the full memory history, uncapped), and `server_time`
-  (`{"unix": 1751640000.0, "iso": "2026-07-10T12:00:00+00:00"}`). Requires
-  the same `boot` grant.
+- `POST /profiles/{id}/session` — one-call **hydration packet** for a
+  companion's first turn (MCP tool `start_session`): prompts, current compact
+  state, `identity` (the `whoami` file content, or `null` without
+  `identity:read`), a bounded boot-memory slice reduced to `kind` and
+  `content`, and `server_time` (`{"unix": 1751640000.0,
+  "iso": "2026-07-10T12:00:00+00:00"}`). It deliberately omits memory IDs,
+  tags, timestamps, full history, and closeout archives. Requires the same
+  `boot` grant.
 - `POST /profiles/{id}/prompt` `{base_prompt?, role_prompt?}` → 201, a
   pending approval record. Requires `manage_profile` on that profile.
   Companions can propose an edit to their own prompts; it only takes effect

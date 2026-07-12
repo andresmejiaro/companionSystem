@@ -117,8 +117,7 @@ class FakeBridge:
         return {
             **self.boot_profile(profile_id),
             "identity": "Canonical identity.",
-            "last_closeouts": [{"id": "closeout-1", "new_state": "Earlier state."}],
-            "memories": [{"id": "memory-1", "kind": "note", "content": "A memory."}],
+            "memories": [{"id": "memory-1", "kind": "note", "content": "A memory.", "tags": ["lookup-only"]}],
             "server_time": {"unix": 1, "iso": "1970-01-01T00:00:01+00:00"},
         }
 
@@ -398,6 +397,7 @@ def test_session_inspector_renders_source_aware_and_raw_views():
     assert "Base prompt" in human.text
     assert "Memories" in human.text
     assert "Canonical external identity file" in human.text
+    assert "lookup-only" not in human.text
 
     raw = client.post("/session-inspector", data={
         "profile_id": "sidra", "totp_code": "123456", "mode": "raw",

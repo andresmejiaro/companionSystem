@@ -498,12 +498,26 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
 
     @app.post("/profiles/{profile_id}/session")
     def start_session(profile_id: str, request: Request):
-        """One-call bundle for a companion's first turn: identity file (if
-        granted), prompts/compact_state, the last 2 closeouts (not just the
-        current compact_state), and the full memory history (no cap)."""
+        """One-call model hydration packet for a companion's first turn.
+
+        It carries semantic context, not database records: the current
+        handoff and bounded boot-memory slice, with each memory reduced to
+        kind/content. Full history, IDs, tags, timestamps, and closeout
+        archives stay on their dedicated tools.
+        """
         principal_id = _require("boot", profile_id, request)
         booted = _wrap(store.boot, profile_id)
-        booted.pop("recent_memories", None)  # superseded by "memories" below
+        profile = booted["profile"]
+        booted["profile"] = {
+            key: profile[key] for key in
+            ("id", "display_name", "description", "allowed_tools", "memory_policy", "closeout_rules")
+            if key in profile
+        }
+        booted.pop("state_updated_at", None)
+        hydrated_memories = [
+            {"kind": event["kind"], "content": event["content"]}
+            for event in booted.pop("recent_memories", [])
+        ]
         identity_content = None
         if principal_id is None or access.allowed(principal_id, "identity:read", None):
             if identity_file:
@@ -514,8 +528,7 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
         return {
             **booted,
             "identity": identity_content,
-            "last_closeouts": store.recent_closeouts(profile_id, limit=2),
-            "memories": store.all_memories(profile_id),
+            "memories": hydrated_memories,
             "server_time": {
                 "unix": now,
                 "iso": datetime.fromtimestamp(now, tz=timezone.utc).isoformat(),

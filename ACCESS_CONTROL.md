@@ -38,17 +38,16 @@ operation map below.
 
 ## `start_session`: one-call bootstrap for a companion's first turn
 
-`POST /profiles/{id}/session` (MCP tool `start_session`) bundles what a
-connector-side system prompt would otherwise have to assemble: the
-`whoami` identity content (if the caller has `identity:read`), current
-prompts and `compact_state`, the **last 2 closeouts** (full records —
-`notes`, `new_state`, `created_at` — not just the current compact state),
-the **full memory history** (no `max_boot_events` cap), and `server_time`
-(`unix` epoch seconds + `iso` UTC timestamp — a companion has no other way
-to know the real current date/time). Gated by the same `boot` grant as the
-plain `boot`/`boot_profile` tool — it's a richer read, not a new privilege.
-Intended so a connector's provider-side system prompt can shrink to "on
-your first response, call `start_session`."
+`POST /profiles/{id}/session` (MCP tool `start_session`) is the agent's
+hydration packet: `whoami` identity content (if the caller has
+`identity:read`), current prompts and `compact_state`, a bounded boot-memory
+slice reduced to semantic `kind`/`content`, and `server_time` (`unix` epoch
+seconds + `iso` UTC timestamp). It does not inject storage IDs, tags,
+timestamps, full memory history, or closeout archives. Those are retrieved
+through the appropriate lookup tools only when useful. It is gated by the
+same `boot` grant as the plain `boot`/`boot_profile` tool. Intended so a
+connector's provider-side system prompt can shrink to "on your first
+response, call `start_session`."
 
 ## TOTP-gated approvals ("edgy" actions)
 

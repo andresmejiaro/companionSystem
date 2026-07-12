@@ -53,7 +53,8 @@ def test_session_inspect_matches_start_session_shape_when_auth_is_disabled(clien
     assert inspected.status_code == 200
     body = inspected.json()
     assert {"profile", "base_prompt", "role_prompt", "compact_state", "identity",
-            "last_closeouts", "memories", "server_time"} <= set(body)
+            "memories", "server_time"} <= set(body)
+    assert "last_closeouts" not in body
 
 
 def test_remember_search_closeout_flow(client):

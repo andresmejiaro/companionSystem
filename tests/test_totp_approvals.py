@@ -337,7 +337,7 @@ def test_decide_without_totp_enrolled_is_403(auth_client):
     assert decide.status_code == 403
 
 
-def test_start_session_bundles_identity_closeouts_and_all_memories(tmp_path, monkeypatch):
+def test_start_session_bundles_identity_and_semantic_boot_memories(tmp_path, monkeypatch):
     identity_path = tmp_path / "quien_soy.md"
     identity_path.write_text("canonical facts")
     monkeypatch.setenv("PROFILE_OS_IDENTITY_FILE", str(identity_path))
@@ -369,9 +369,9 @@ def test_start_session_bundles_identity_closeouts_and_all_memories(tmp_path, mon
         assert r.status_code == 200, r.text
         body = r.json()
         assert body["identity"] == "canonical facts"
-        assert len(body["memories"]) == 15  # not capped at DEFAULT_BOOT_EVENTS
-        assert len(body["last_closeouts"]) == 2
-        assert [c["new_state"] for c in body["last_closeouts"]] == ["state3", "state2"]
+        assert len(body["memories"]) == 10  # profile boot policy/default cap
+        assert set(body["memories"][0]) == {"kind", "content"}
+        assert "last_closeouts" not in body
         assert "recent_memories" not in body
         assert isinstance(body["server_time"]["unix"], (int, float))
         assert body["server_time"]["iso"].startswith(

@@ -73,6 +73,17 @@ MEMORY_EVENT = {
     "required": ["id", "profile_id", "kind", "content", "tags"],
 }
 
+# Session hydration is model context, not a storage export. IDs, tags,
+# timestamps, and profile ids stay on memory lookup/mutation tools.
+HYDRATION_MEMORY = {
+    "type": "object",
+    "properties": {
+        "kind": {"type": "string", "enum": MEMORY_KINDS},
+        "content": {"type": "string"},
+    },
+    "required": ["kind", "content"],
+}
+
 CLOSEOUT = {
     "type": "object",
     "properties": {
@@ -101,10 +112,12 @@ BOOT = {
 START_SESSION = {
     "type": "object",
     "properties": {
-        **BOOT["properties"],
+        "profile": PROFILE,
+        "base_prompt": {"type": "string"},
+        "role_prompt": {"type": "string"},
+        "compact_state": {"type": "string"},
         "identity": STRING_OR_NULL,
-        "last_closeouts": array_of(CLOSEOUT),
-        "memories": array_of(MEMORY_EVENT),
+        "memories": array_of(HYDRATION_MEMORY),
         "server_time": {
             "type": "object",
             "properties": {
@@ -120,7 +133,6 @@ START_SESSION = {
         "role_prompt",
         "compact_state",
         "identity",
-        "last_closeouts",
         "memories",
         "server_time",
     ],

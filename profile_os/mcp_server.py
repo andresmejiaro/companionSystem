@@ -287,15 +287,23 @@ def _session_inspector_page(profiles: list[dict], *, selected_id: str = "",
                 text = _html.escape(_json_text(value) if isinstance(value, (dict, list)) else str(value or ""))
                 return (f'<section><h2>{_html.escape(title)}</h2><p class="source">'
                         f'{_html.escape(source)}</p><pre>{text}</pre></section>')
-            output = "<section><h2>How this session is assembled</h2><p>These sections are the same data as the raw payload, grouped by source.</p></section>"
-            output += block("Profile metadata", "Profile registry: name, description, allowed tools, memory policy, and closeout rules.", result.get("profile") or {})
+            profile = result.get("profile") or {}
+            profile_context = {
+                key: profile[key] for key in ("display_name", "description", "allowed_tools", "closeout_rules")
+                if profile.get(key) not in (None, "", [])
+            }
+            current_state = result.get("compact_state") or ""
+            memory_context = [
+                {key: item.get(key) for key in ("kind", "content", "created_at") if item.get(key) is not None}
+                for item in result.get("memories", [])
+            ]
+            output = "<section><h2>Hydration packet</h2><p>This is the context delivered to the agent. Lookup IDs, tags, full history, and closeout archives are not hydrated.</p></section>"
+            output += block("Profile context", "Profile registry fields that affect how this companion operates.", profile_context)
             output += block("Base prompt", "Durable identity / operating constitution: profile base_prompt.", result.get("base_prompt"))
             output += block("Role prompt", "Role or lane overlay: profile role_prompt.", result.get("role_prompt"))
-            output += block("Compact state", "Current handoff state written at closeout.", result.get("compact_state"))
+            output += block("Current handoff", "Current compact state, written at closeout. This is the latest session handoff.", current_state)
             output += block("Global identity (whoami)", "Canonical external identity file, when the bridge has identity:read.", result.get("identity"))
-            output += block("Last closeouts", "The two most recent full closeout records.", result.get("last_closeouts", []))
-            output += block("Memories", "All profile memory events, newest first. Memories are mutable context, not the prompt.", result.get("memories", []))
-            output += block("Server time", "Timestamp inserted by the server when this session payload was created.", result.get("server_time"))
+            output += block("Memories", "Mutable context, newest first. Tags and database IDs are intentionally hidden here; use the raw payload for lookup fields.", memory_context)
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Companion session inspector</title><style>
@@ -424,9 +432,9 @@ MCP_TOOLS = [
         "start_session",
         "Start Session",
         "Call this on your first response in a conversation instead of boot_profile:"
-        " returns whoami identity, prompts, compact_state, the last 2 closeouts"
-        " (not just the current state), your full memory history, and the current"
-        " server date/time (server_time) in one call.",
+        " returns whoami identity, prompts, compact_state, a bounded semantic"
+        " memory slice (no IDs, tags, or full history), and the current server"
+        " date/time (server_time) in one call.",
         {"profile_id": _PROFILE_ID},
         ["profile_id"],
     ),
