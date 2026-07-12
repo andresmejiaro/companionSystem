@@ -1113,7 +1113,9 @@ def _handle_rpc(message: dict[str, Any], app: FastAPI) -> dict[str, Any]:
         protocol = requested if requested in SUPPORTED_PROTOCOL_VERSIONS else MCP_PROTOCOL_VERSION
         return _rpc_result(request_id, {
             "protocolVersion": protocol,
-            "capabilities": {"tools": {"listChanged": False}},
+            # Tool schemas evolve with companion operations. Advertising this
+            # honestly prevents hosts from pinning a stale tool definition.
+            "capabilities": {"tools": {"listChanged": True}},
             "serverInfo": {
                 "name": "profile-os-mcp",
                 "title": "Profile OS Remote MCP",

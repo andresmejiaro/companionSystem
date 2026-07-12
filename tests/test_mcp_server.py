@@ -272,7 +272,7 @@ def test_initialize_and_list_tools(tmp_path):
     assert r.status_code == 200
     body = r.json()["result"]
     assert body["protocolVersion"] == "2025-06-18"
-    assert body["capabilities"] == {"tools": {"listChanged": False}}
+    assert body["capabilities"] == {"tools": {"listChanged": True}}
     assert "boot_profile" in body["instructions"]
 
     r = client.post("/mcp", json=_rpc("tools/list"), headers=_bearer())
