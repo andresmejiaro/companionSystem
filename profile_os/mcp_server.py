@@ -72,6 +72,16 @@ def _split_csv(value: str | None) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
+def _rate_limited(bucket: dict[str, list[float]], key: str,
+                  limit: int = 5, window: float = 60) -> bool:
+    """Fixed-window-ish in-memory limiter for public, TOTP-gated forms."""
+    now = time.time()
+    hits = [seen for seen in bucket.get(key, []) if seen > now - window]
+    hits.append(now)
+    bucket[key] = hits
+    return len(hits) > limit
+
+
 def _b64url(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
 
