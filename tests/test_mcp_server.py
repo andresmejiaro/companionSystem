@@ -135,9 +135,10 @@ class FakeBridge:
     def search_memories(self, profile_id, query, limit=20):
         return [m for m in self.memories if query.lower() in m["content"].lower()][:limit]
 
-    def closeout(self, profile_id, notes, new_state):
+    def closeout(self, profile_id, facts, texture, exchange, notes=""):
         return {"id": "closeout-1", "profile_id": profile_id,
-                "notes": notes, "new_state": new_state}
+                "facts": facts, "texture": texture, "exchange": exchange,
+                "notes": notes, "new_state": facts}
 
     def list_stores(self, profile_id):
         return list(self.stores.values())
@@ -341,8 +342,10 @@ def test_mcp_tool_flow_and_logging(tmp_path, caplog):
 
     assert _call_tool(client, "closeout", {
         "profile_id": "tara",
+        "facts": "MCP state stored.",
+        "texture": "Routine test.",
+        "exchange": "User: done.\nAssistant: recorded.",
         "notes": "done",
-        "new_state": "MCP state stored.",
     }).json()["result"]["isError"] is False
 
     proposed = _call_tool(client, "propose_store", {

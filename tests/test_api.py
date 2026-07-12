@@ -66,9 +66,10 @@ def test_remember_search_closeout_flow(client):
     assert len(hits) == 1
 
     r = client.post("/profiles/tara/closeout",
-                    json={"notes": "done", "new_state": "Paella day logged."})
+                    json={"facts": "Paella day logged.", "texture": "Ordinary meal logging.",
+                          "exchange": "User: logged paella.\nTara: Recorded.", "notes": "done"})
     assert r.status_code == 201
-    assert client.post("/profiles/tara/boot").json()["compact_state"] == "Paella day logged."
+    assert "Paella day logged." in client.post("/profiles/tara/boot").json()["compact_state"]
 
 
 def test_update_and_delete_memory_via_api(client):

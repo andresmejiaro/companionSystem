@@ -79,8 +79,10 @@ class FileWriteIn(BaseModel):
 
 
 class CloseoutIn(BaseModel):
+    facts: str
+    texture: str
+    exchange: str
     notes: str = ""
-    new_state: str
 
 
 class DomainRecordIn(BaseModel):
@@ -629,7 +631,8 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
     @app.post("/profiles/{profile_id}/closeout", status_code=201)
     def closeout(profile_id: str, body: CloseoutIn, request: Request):
         _require("closeout", profile_id, request)
-        return _wrap(store.closeout, profile_id, body.notes, body.new_state)
+        return _wrap(store.closeout, profile_id, body.facts, body.texture,
+                     body.exchange, body.notes)
 
     # -- TOTP-gated approvals ("edgy" actions) --------------------------------
     # Routine writes (remember, closeout, records) never need a code. Only

@@ -197,11 +197,14 @@ TOOLS = [
     _tool("delete_file", "Delete a file from your scratch file store.",
           {"profile_id": _PID, "filename": {"type": "string"}},
           ["profile_id", "filename"]),
-    _tool("closeout", "Close a session: log notes and set the new compact state.",
+    _tool("closeout", "Close a session with facts, texture, and a short verbatim meaningful exchange; notes are optional.",
           {"profile_id": _PID,
+           "facts": {"type": "string", "maxLength": 1200},
+           "texture": {"type": "string", "maxLength": 700},
+           "exchange": {"type": "string", "maxLength": 800},
            "notes": {"type": "string"},
-           "new_state": {"type": "string"}},
-          ["profile_id", "notes", "new_state"]),
+          },
+          ["profile_id", "facts", "texture", "exchange"]),
     _tool("propose_store", "Propose a dynamic store (needs admin approval before writes).",
           {"profile_id": _PID,
            "name": {"type": "string"},
@@ -392,9 +395,11 @@ class ToolBridge:
         self._request("DELETE", f"/profiles/{profile_id}/files/{filename}")
         return {"deleted": True, "filename": filename}
 
-    def closeout(self, profile_id: str, notes: str, new_state: str):
+    def closeout(self, profile_id: str, facts: str, texture: str, exchange: str,
+                 notes: str = ""):
         return self._request("POST", f"/profiles/{profile_id}/closeout",
-                             json={"notes": notes, "new_state": new_state})
+                             json={"facts": facts, "texture": texture,
+                                   "exchange": exchange, "notes": notes})
 
     def propose_store(self, profile_id: str, name: str, purpose: str,
                       schema: dict):

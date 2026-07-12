@@ -59,9 +59,10 @@ def test_malformed_memory_events_fail_clearly(store):
 
 
 def test_closeout_updates_compact_state(store):
-    store.closeout("tara", notes="day done", new_state="Logged 3 meals, 1800 kcal.")
+    store.closeout("tara", facts="Logged 3 meals, 1800 kcal.", texture="Calm.", exchange="User: done.\nTara: Logged.", notes="day done")
     b = store.boot("tara")
-    assert b["compact_state"] == "Logged 3 meals, 1800 kcal."
+    assert "## Facts\nLogged 3 meals, 1800 kcal." in b["compact_state"]
+    assert "## Meaningful exchange\nUser: done." in b["compact_state"]
     # closeout also written to inspectable jsonl
     jl = store.profiles_dir / "tara" / "closeouts.jsonl"
     assert "1800 kcal" in jl.read_text()
@@ -69,7 +70,7 @@ def test_closeout_updates_compact_state(store):
 
 def test_closeout_requires_new_state(store):
     with pytest.raises(MalformedRecord):
-        store.closeout("tara", notes="x", new_state="  ")
+        store.closeout("tara", facts="  ", texture="x", exchange="x")
 
 
 def test_tara_domain_data_queryable(store):

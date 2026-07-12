@@ -588,13 +588,16 @@ MCP_TOOLS = [
     _tool(
         "closeout",
         "Close Out",
-        "End a session by logging notes and replacing the profile compact_state with the supplied new_state.",
+        "End with facts, texture, and one short verbatim meaningful exchange; notes are optional.",
         {
             "profile_id": _PROFILE_ID,
+            "facts": {"type": "string", "maxLength": 1200},
+            "texture": {"type": "string", "maxLength": 700},
+            "exchange": {"type": "string", "maxLength": 800,
+                         "description": "Verbatim 1–3-turn excerpt; never paraphrase or paste a transcript."},
             "notes": {"type": "string", "default": ""},
-            "new_state": {"type": "string", "description": "Non-empty compact state."},
         },
-        ["profile_id", "new_state"],
+        ["profile_id", "facts", "texture", "exchange"],
     ),
     _tool(
         "list_stores",
@@ -880,8 +883,10 @@ class MCPToolRunner:
         if name == "closeout":
             return self.bridge.closeout(
                 arguments["profile_id"],
+                arguments["facts"],
+                arguments["texture"],
+                arguments["exchange"],
                 arguments.get("notes", ""),
-                arguments["new_state"],
             )
         if name == "list_stores":
             return self.bridge.list_stores(arguments["profile_id"])

@@ -61,6 +61,9 @@ CREATE TABLE IF NOT EXISTS closeouts (
     id TEXT PRIMARY KEY,
     profile_id TEXT NOT NULL REFERENCES profiles(id),
     notes TEXT NOT NULL,
+    facts TEXT NOT NULL DEFAULT '',
+    texture TEXT NOT NULL DEFAULT '',
+    exchange TEXT NOT NULL DEFAULT '',
     new_state TEXT NOT NULL,
     created_at REAL NOT NULL
 );
@@ -91,6 +94,11 @@ class Store:
         # and SQLite connections are not safe to share across threads.
         self._local = threading.local()
         self.db.executescript(SCHEMA)
+        columns = {row["name"] for row in self.db.execute("PRAGMA table_info(closeouts)")}
+        with self.db:
+            for name in ("facts", "texture", "exchange"):
+                if name not in columns:
+                    self.db.execute(f"ALTER TABLE closeouts ADD COLUMN {name} TEXT NOT NULL DEFAULT ''")
 
     @property
     def db(self) -> sqlite3.Connection:
@@ -462,25 +470,36 @@ class Store:
         ).fetchall()
         return [self._event_dict(r) for r in rows]
 
-    def closeout(self, profile_id: str, notes: str, new_state: str) -> dict:
-        """End a session: log the closeout and replace compact state."""
+    def closeout(self, profile_id: str, facts: str, texture: str, exchange: str,
+                 notes: str = "") -> dict:
+        """End a session with a compact, voice-preserving handoff."""
         self._require_profile(profile_id)
-        if not new_state or not new_state.strip():
-            raise MalformedRecord("closeout requires a non-empty new_state")
+        fields = {"facts": facts, "texture": texture, "exchange": exchange}
+        limits = {"facts": 1200, "texture": 700, "exchange": 800, "notes": 700}
+        for name, value in {**fields, "notes": notes}.items():
+            if not isinstance(value, str) or (name != "notes" and not value.strip()):
+                raise MalformedRecord(f"closeout requires non-empty {name}")
+            if len(value) > limits[name]:
+                raise MalformedRecord(f"closeout {name} exceeds {limits[name]} characters")
+        new_state = "\n\n".join(
+            [f"## Facts\n{facts.strip()}", f"## Texture\n{texture.strip()}",
+             f"## Meaningful exchange\n{exchange.strip()}"] +
+            ([f"## Notes\n{notes.strip()}"] if notes.strip() else []))
         cid = str(uuid.uuid4())
         now = time.time()
         with self.db:
             self.db.execute(
-                "INSERT INTO closeouts (id, profile_id, notes, new_state, created_at)"
-                " VALUES (?,?,?,?,?)", (cid, profile_id, notes, new_state, now))
+                "INSERT INTO closeouts (id, profile_id, notes, facts, texture, exchange, new_state, created_at)"
+                " VALUES (?,?,?,?,?,?,?,?)", (cid, profile_id, notes, facts, texture, exchange, new_state, now))
             self.db.execute(
                 "UPDATE compact_state SET state=?, updated_at=? WHERE profile_id=?",
                 (new_state, now, profile_id))
-        line = json.dumps({"id": cid, "notes": notes, "new_state": new_state, "at": now})
+        line = json.dumps({"id": cid, "facts": facts, "texture": texture,
+                           "exchange": exchange, "notes": notes, "new_state": new_state, "at": now})
         with open(self.profiles_dir / profile_id / "closeouts.jsonl", "a") as f:
             f.write(line + "\n")
-        return {"id": cid, "profile_id": profile_id, "notes": notes,
-                "new_state": new_state, "created_at": now}
+        return {"id": cid, "profile_id": profile_id, "facts": facts, "texture": texture,
+                "exchange": exchange, "notes": notes, "new_state": new_state, "created_at": now}
 
     # -- domain stores ---------------------------------------------------------
 
