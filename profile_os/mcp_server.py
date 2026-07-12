@@ -185,11 +185,25 @@ def _approval_page(approval: dict, error: str | None = None) -> str:
     deliberately lighter than the OAuth login (no admin secret): see
     ACCESS_CONTROL.md 'TOTP-only approval links'."""
     payload = approval.get("payload") or {}
-    fields = "".join(
-        f'<h4>{_html.escape(k)}</h4><pre style="white-space:pre-wrap;background:#f4f4f4;'
-        f'padding:12px;border-radius:6px">{_html.escape(str(v))}</pre>'
-        for k, v in payload.items() if v is not None
-    )
+    if approval.get("kind") == "prompt_edit":
+        def prompt_field(name: str) -> str:
+            value = payload.get(name)
+            if value is None:
+                body = '<p style="color:#555"><em>No change proposed — the current value remains.</em></p>'
+            elif value == "":
+                body = '<p style="color:#8a3b00"><strong>Proposed replacement: empty prompt.</strong></p>'
+            else:
+                body = (f'<p style="color:#176b3a"><strong>Proposed replacement.</strong></p>'
+                        f'<pre style="white-space:pre-wrap;background:#f4f4f4;padding:12px;border-radius:6px">'
+                        f'{_html.escape(str(value))}</pre>')
+            return f'<h4>{_html.escape(name)}</h4>{body}'
+        fields = prompt_field("base_prompt") + prompt_field("role_prompt")
+    else:
+        fields = "".join(
+            f'<h4>{_html.escape(k)}</h4><pre style="white-space:pre-wrap;background:#f4f4f4;'
+            f'padding:12px;border-radius:6px">{_html.escape(str(v))}</pre>'
+            for k, v in payload.items() if v is not None
+        )
     error_html = (f'<p style="color:#c00;font-weight:600">{_html.escape(error)}</p>'
                  if error else "")
     return f"""<!doctype html>
