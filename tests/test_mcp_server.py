@@ -420,9 +420,14 @@ def test_oauth_metadata_dcr_pkce_and_bearer_use(tmp_path):
     authz = client.get("/.well-known/oauth-authorization-server").json()
     assert authz["registration_endpoint"] == f"{PUBLIC_BASE}/oauth/register"
     assert authz["code_challenge_methods_supported"] == ["S256"]
-    # ChatGPT probes OpenID discovery after OAuth token exchange. It needs
-    # the same authorization-server metadata rather than a 404.
-    assert client.get("/.well-known/openid-configuration").json() == authz
+    # ChatGPT probes OpenID discovery after OAuth token exchange. It needs a
+    # valid OIDC document, not a 404 or a bare RFC 8414 document.
+    openid = client.get("/.well-known/openid-configuration").json()
+    assert openid["issuer"] == authz["issuer"]
+    assert openid["authorization_endpoint"] == authz["authorization_endpoint"]
+    assert openid["token_endpoint"] == authz["token_endpoint"]
+    assert openid["subject_types_supported"] == ["public"]
+    assert openid["id_token_signing_alg_values_supported"] == ["HS256"]
 
     reg = client.post("/oauth/register", json={
         "client_name": "Claude",

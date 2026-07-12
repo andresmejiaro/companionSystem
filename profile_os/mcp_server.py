@@ -1227,7 +1227,7 @@ def create_mcp_app(
     @app.get("/.well-known/openid-configuration")
     async def oauth_authorization_server_metadata(request: Request):
         issuer = _issuer_url(settings, request)
-        return {
+        metadata = {
             "issuer": issuer,
             "authorization_endpoint": f"{issuer}/oauth/authorize",
             "token_endpoint": f"{issuer}/oauth/token",
@@ -1239,6 +1239,16 @@ def create_mcp_app(
             "scopes_supported": [SCOPE],
             "resource_indicators_supported": True,
         }
+        # ChatGPT probes OpenID discovery too.  Returning only RFC 8414
+        # authorization-server metadata at this URL is not a valid OpenID
+        # discovery document: these two fields are required by OIDC Discovery
+        # even when the client is using plain OAuth (as this MCP flow does).
+        if request.url.path.endswith("/openid-configuration"):
+            metadata.update({
+                "subject_types_supported": ["public"],
+                "id_token_signing_alg_values_supported": ["HS256"],
+            })
+        return metadata
 
     @app.post("/oauth/register", status_code=201)
     async def oauth_register(request: Request):
