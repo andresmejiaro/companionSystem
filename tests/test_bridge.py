@@ -121,11 +121,16 @@ def test_no_tool_bypasses_api_authorization(tmp_path):
         "closeout": {"profile_id": "tara", "facts": "s", "texture": "t", "exchange": "User: s."},
         "propose_store": {"profile_id": "tara", "name": "n1", "purpose": "p",
                           "schema": SCHEMA},
+        "update_pending_store": {"profile_id": "tara", "name": "n1", "purpose": "p",
+                                 "schema": SCHEMA},
+        "withdraw_pending_store": {"profile_id": "tara", "name": "n1"},
         "list_stores": {"profile_id": "tara"},
         "get_store": {"profile_id": "tara", "name": "n1"},
         "add_record": {"profile_id": "tara", "store_name": "n1", "data": {}},
+        "bulk_add_records": {"profile_id": "tara", "store_name": "n1", "records": []},
         "query_records": {"profile_id": "tara", "store_name": "n1"},
         "audit": {"profile_id": "tara"},
+        "retract_approval": {"approval_id": "a1"},
     }
     assert set(calls) == {t["name"] for t in TOOLS}
     for name, args in calls.items():

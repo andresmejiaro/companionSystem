@@ -122,9 +122,11 @@ def run_harness(bridge: ToolBridge, profile_id: str = "tara",
     call("list_stores", "list_stores", {"profile_id": profile_id})
     call("audit", "audit", {"profile_id": profile_id})
     call("closeout", "closeout",
-         {"profile_id": profile_id, "notes": "harness rehearsal complete",
-          "new_state": f"Rehearsed bridge tool flow; store {store_name} "
-                       "left pending for admin review."})
+         {"profile_id": profile_id,
+          "facts": f"Rehearsed bridge tool flow; store {store_name} left pending for admin review.",
+          "texture": "Routine integration rehearsal; no approval was attempted.",
+          "exchange": "User: Run the harness.\nAssistant: Rehearsal completed.",
+          "notes": "harness rehearsal complete"})
 
     summary = (f"Harness OK for profile {profile_id!r}: "
                f"{len([c for c in log if c['status'] == 'ok'])} tool calls "

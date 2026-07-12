@@ -274,8 +274,8 @@ def test_demo_page_loads(client):
     r = client.get("/demo")
     assert r.status_code == 200
     assert "text/html" in r.headers["content-type"]
-    assert "Assistant Profile OS" in r.text
-    assert "NOT SECURE" in r.text  # admin actions visibly labeled
+    assert "Unlock settings" in r.text
+    assert "Authenticator code" in r.text
 
 
 def test_delete_profile_removes_everything(client):
