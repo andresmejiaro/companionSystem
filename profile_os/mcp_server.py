@@ -1076,6 +1076,8 @@ def _authenticated(settings: MCPSettings, request: Request) -> JSONResponse | No
         return None
     header = request.headers.get("authorization") or ""
     if not header.startswith("Bearer "):
+        LOGGER.warning("mcp 401: no bearer header (%s %s)",
+                       request.method, request.url.path)
         return _unauthorized(settings, request)
     token = header[len("Bearer "):]
     for expected in settings.connector_tokens:
@@ -1083,6 +1085,8 @@ def _authenticated(settings: MCPSettings, request: Request) -> JSONResponse | No
             return None
     if _validate_oauth_token(settings, request, token):
         return None
+    LOGGER.warning("mcp 401: bearer token rejected (%s %s)",
+                   request.method, request.url.path)
     return _unauthorized(settings, request, "invalid_token")
 
 
@@ -1558,6 +1562,18 @@ def create_mcp_app(
             return Response(status_code=202, headers=headers)
 
         response = _handle_rpc(message, app)
+        accept = request.headers.get("accept", "")
+        if "text/event-stream" in accept:
+            # ChatGPT's Streamable HTTP client is tested against the reference
+            # servers, which frame POST responses as a single SSE message when
+            # the client accepts text/event-stream; plain JSON bodies have
+            # produced intermittent client-side stream errors.
+            body = f"event: message\ndata: {json.dumps(response)}\n\n"
+            return Response(
+                content=body,
+                media_type="text/event-stream",
+                headers=headers,
+            )
         return JSONResponse(response, headers=headers)
 
     return app

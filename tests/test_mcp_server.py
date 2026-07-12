@@ -30,8 +30,18 @@ def _bearer(token: str = CONNECTOR_TOKEN) -> dict:
     return {
         "Authorization": f"Bearer {token}",
         "Origin": ORIGIN,
-        "Accept": "application/json, text/event-stream",
+        # Plain-JSON accept keeps r.json() usable across these tests; the
+        # SSE framing real hosts negotiate is covered by
+        # test_post_responses_use_sse_when_accepted.
+        "Accept": "application/json",
     }
+
+
+def _sse_json(r) -> dict:
+    import json as _json
+    assert r.headers["content-type"].startswith("text/event-stream")
+    line = next(l for l in r.text.splitlines() if l.startswith("data: "))
+    return _json.loads(line[len("data: "):])
 
 
 def _rpc(method: str, params: dict | None = None, request_id: int = 1) -> dict:
@@ -264,6 +274,19 @@ def test_list_tools_can_omit_output_schemas(tmp_path, monkeypatch):
     assert {tool["name"] for tool in tools} == {tool["name"] for tool in MCP_TOOLS}
     for tool in tools:
         assert set(tool) == {"name", "title", "description", "inputSchema"}
+
+
+def test_post_responses_use_sse_when_accepted(tmp_path):
+    import json as _json
+    client = _mcp_client()
+    headers = _bearer() | {"Accept": "application/json, text/event-stream"}
+    r = client.post("/mcp", json=_rpc("ping"), headers=headers)
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/event-stream")
+    data_lines = [l for l in r.text.splitlines() if l.startswith("data: ")]
+    assert len(data_lines) == 1
+    body = _json.loads(data_lines[0][len("data: "):])
+    assert body == {"jsonrpc": "2.0", "id": 1, "result": {}}
 
 
 def test_mcp_tool_flow_and_logging(tmp_path, caplog):
@@ -504,7 +527,7 @@ def test_oauth_metadata_dcr_pkce_and_bearer_use(tmp_path):
         },
     )
     assert r.status_code == 200
-    assert r.json()["result"]["serverInfo"]["name"] == "profile-os-mcp"
+    assert _sse_json(r)["result"]["serverInfo"]["name"] == "profile-os-mcp"
 
 
 def test_approval_link_page_totp_only_flow():
@@ -595,7 +618,7 @@ def test_propose_prompt_edit_tool_returns_approval_link():
         "arguments": {"profile_id": "tara", "base_prompt": "hi"},
     }), headers={"Accept": "application/json, text/event-stream"})
     assert r.status_code == 200
-    result_text = r.json()["result"]["content"][0]["text"]
+    result_text = _sse_json(r)["result"]["content"][0]["text"]
     assert f"{PUBLIC_BASE}/approvals/approval-1" in result_text
 
 
