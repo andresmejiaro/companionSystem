@@ -1224,6 +1224,7 @@ def create_mcp_app(
         }
 
     @app.get("/.well-known/oauth-authorization-server")
+    @app.get("/.well-known/openid-configuration")
     async def oauth_authorization_server_metadata(request: Request):
         issuer = _issuer_url(settings, request)
         return {
