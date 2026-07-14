@@ -3,6 +3,7 @@ starlette<1.0
 uvicorn>=0.30
 pytest>=8
 httpx>=0.27,<0.28
+jsonschema>=4
 cryptography>=42
 pyotp>=2.9
 python-multipart>=0.0.9

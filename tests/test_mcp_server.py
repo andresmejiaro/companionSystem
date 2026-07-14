@@ -4,6 +4,7 @@ import logging
 import urllib.parse
 
 import httpx
+from jsonschema import Draft202012Validator
 from fastapi.testclient import TestClient
 
 from profile_os.bootstrap_bridge import BRIDGE_OPS, bootstrap
@@ -61,23 +62,23 @@ class FakeBridge:
 
     def list_profiles(self):
         return [
-            {"id": "sidra", "display_name": "Sidra"},
-            {"id": "tara", "display_name": "Tara"},
+            self._profile("sidra"), self._profile("tara"),
         ]
+
+    @staticmethod
+    def _profile(profile_id):
+        return {"id": profile_id, "display_name": profile_id.title(),
+                "description": "", "allowed_tools": ["remember", "search_memories"],
+                "memory_policy": {"max_boot_events": 10},
+                "closeout_rules": "Write compact state.", "created_at": 1}
 
     def boot_profile(self, profile_id: str):
         return {
-            "profile": {
-                "id": profile_id,
-                "display_name": profile_id.title(),
-                "allowed_tools": ["remember", "search_memories"],
-                "memory_policy": {"max_boot_events": 10},
-                "closeout_rules": "Write compact state.",
-            },
+            "profile": self._profile(profile_id),
             "base_prompt": "Base prompt.",
             "role_prompt": "Role prompt.",
             "compact_state": "No active task.",
-            "recent_memories": list(self.memories),
+            "state_updated_at": None, "recent_memories": list(self.memories),
         }
 
     def inspect_session(self, profile_id, totp_code):
@@ -93,7 +94,7 @@ class FakeBridge:
 
     def remember(self, profile_id, kind, content, tags=None):
         event = {
-            "id": "mem-1",
+            "id": "mem-1", "created_at": 1,
             "profile_id": profile_id,
             "kind": kind,
             "content": content,
@@ -108,15 +109,17 @@ class FakeBridge:
     def closeout(self, profile_id, facts, texture, exchange, notes=""):
         return {"id": "closeout-1", "profile_id": profile_id,
                 "facts": facts, "texture": texture, "exchange": exchange,
-                "notes": notes, "new_state": facts}
+                "notes": notes, "new_state": facts, "created_at": 1}
 
     def list_stores(self, profile_id):
         return list(self.stores.values())
 
     def propose_store(self, profile_id, name, purpose, schema):
         store = {"name": name, "purpose": purpose, "schema": schema,
-                 "status": "pending", "profile_id": profile_id,
-                 "id": "store-1", "approval_id": "store-approval-1"}
+                "status": "pending", "profile_id": profile_id,
+                 "id": "store-1", "version": 1, "proposed_by": profile_id,
+                 "rejection_reason": None, "created_at": 1, "approved_at": None,
+                 "rejected_at": None, "approval_id": "store-approval-1"}
         self.stores[name] = store
         self.approvals[store["approval_id"]] = {
             "id": store["approval_id"],
@@ -142,7 +145,8 @@ class FakeBridge:
     def add_record(self, profile_id, store_name, data):
         if not self.store_approved:
             raise ToolBridgeError(409, "store has no approved version")
-        record = {"id": "rec-1", "store": store_name, "data": data}
+        record = {"id": "rec-1", "store": store_name, "schema_version": 1,
+                  "data": data, "created_at": 1, "updated_at": None}
         self.records.append(record)
         return record
 
@@ -253,8 +257,9 @@ def test_initialize_and_list_tools(tmp_path):
     assert not names & {"approve_store", "reject_store", "archive_store", "audit"}
     assert names == {tool["name"] for tool in MCP_TOOLS}
     for tool in tools:
-        assert set(tool) == {"name", "title", "description", "inputSchema", "outputSchema"}
+        assert set(tool) == {"name", "title", "description", "inputSchema", "outputSchema", "annotations"}
         assert tool["outputSchema"]["type"] == "object"
+        assert set(tool["annotations"]) == {"readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint"}
     list_profiles = next(tool for tool in tools if tool["name"] == "list_profiles")
     assert list_profiles["outputSchema"]["properties"]["items"]["type"] == "array"
     closeout = next(tool for tool in tools if tool["name"] == "closeout")
@@ -264,6 +269,14 @@ def test_initialize_and_list_tools(tmp_path):
     assert closeout["inputSchema"]["required"] == [
         "profile_id", "facts", "texture", "exchange",
     ]
+    assert closeout["inputSchema"]["properties"]["notes"]["maxLength"] == 700
+    annotations = {tool["name"]: tool["annotations"] for tool in tools}
+    assert annotations["forget"]["destructiveHint"] is True
+    assert annotations["delete_file"]["destructiveHint"] is True
+    assert annotations["delete_record"]["destructiveHint"] is True
+    assert annotations["boot_profile"]["readOnlyHint"] is True
+    assert annotations["leave_project"] == {"readOnlyHint": False, "destructiveHint": False,
+                                             "idempotentHint": True, "openWorldHint": True}
 
 
 def test_list_tools_can_omit_output_schemas(tmp_path, monkeypatch):
@@ -274,7 +287,7 @@ def test_list_tools_can_omit_output_schemas(tmp_path, monkeypatch):
     tools = r.json()["result"]["tools"]
     assert {tool["name"] for tool in tools} == {tool["name"] for tool in MCP_TOOLS}
     for tool in tools:
-        assert set(tool) == {"name", "title", "description", "inputSchema"}
+        assert set(tool) == {"name", "title", "description", "inputSchema", "annotations"}
 
 
 def test_post_responses_use_sse_when_accepted(tmp_path):
@@ -355,6 +368,30 @@ def test_mcp_tool_flow_and_logging(tmp_path, caplog):
         "contains": "Inn",
     }).json()["result"]["structuredContent"]["items"]
     assert records[0]["data"]["hotel_name"] == "Inn"
+
+
+def test_successful_structured_content_matches_declared_output_schema():
+    """Exercise representative real calls across each changed output family."""
+    bridge = FakeBridge()
+    client = _mcp_client(bridge)
+    tools = {tool["name"]: tool for tool in MCP_TOOLS}
+
+    def call_and_validate(name, arguments):
+        result = _call_tool(client, name, arguments).json()["result"]
+        assert result["isError"] is False
+        Draft202012Validator(tools[name]["outputSchema"]).validate(result["structuredContent"])
+        return result["structuredContent"]
+
+    call_and_validate("list_profiles", {})
+    call_and_validate("boot_profile", {"profile_id": "sidra"})
+    call_and_validate("remember", {"profile_id": "tara", "kind": "note", "content": "x"})
+    call_and_validate("search_memories", {"profile_id": "tara", "query": "x"})
+    call_and_validate("closeout", {"profile_id": "tara", "facts": "f", "texture": "t", "exchange": "u"})
+    call_and_validate("propose_store", {"profile_id": "tara", "name": "items", "purpose": "p",
+                                         "schema": {"fields": {"name": {"type": "string"}}}})
+    bridge.store_approved = True
+    call_and_validate("add_record", {"profile_id": "tara", "store_name": "items", "data": {"name": "x"}})
+    call_and_validate("query_records", {"profile_id": "tara", "store_name": "items"})
 
 
 def test_session_inspector_renders_source_aware_and_raw_views():

@@ -36,7 +36,9 @@ from .tool_schemas import (
     CLOSEOUT,
     DELETED_FILE,
     DELETED_MEMORY,
+    DELETED_RECORD,
     DYNAMIC_RECORD,
+    DYNAMIC_SCHEMA,
     DYNAMIC_STORE,
     FILE_CONTENT,
     FILE_META,
@@ -45,6 +47,11 @@ from .tool_schemas import (
     MEMORY_KINDS,
     MESSAGE,
     PROFILE,
+    PROJECT,
+    PROJECT_WITH_APPROVAL,
+    PROJECT_RECORD,
+    LEFT_PROJECT,
+    SHARED_DEFS,
     START_SESSION,
     mcp_items,
 )
@@ -76,6 +83,9 @@ def _rate_limited(bucket: dict[str, list[float]], key: str,
                   limit: int = 5, window: float = 60) -> bool:
     """Fixed-window-ish in-memory limiter for public, TOTP-gated forms."""
     now = time.time()
+    for old_key, old_hits in list(bucket.items()):
+        if not any(seen > now - window for seen in old_hits):
+            del bucket[old_key]
     hits = [seen for seen in bucket.get(key, []) if seen > now - window]
     hits.append(now)
     bucket[key] = hits
@@ -283,8 +293,7 @@ def _session_inspector_page(profiles: list[dict], *, selected_id: str = "",
     options = "".join(
         f'<option value="{_html.escape(str(p.get("id", "")))}"'
         f'{" selected" if p.get("id") == selected_id else ""}>'
-        f'{_html.escape(str(p.get("display_name") or p.get("id") or ""))}'
-        f' ({_html.escape(str(p.get("id", "")))})</option>'
+        f'{_html.escape(str(p.get("id", "")))}</option>'
         for p in profiles
     )
     error_html = f'<p class="error">{_html.escape(error)}</p>' if error else ""
@@ -366,6 +375,7 @@ def _tool(
     description: str,
     properties: dict[str, Any],
     required: list[str],
+    annotations: dict[str, bool] | None = None,
 ) -> dict[str, Any]:
     return {
         "name": name,
@@ -376,8 +386,10 @@ def _tool(
             "properties": properties,
             "required": required,
             "additionalProperties": False,
+            "$defs": SHARED_DEFS,
         },
-        "outputSchema": MCP_OUTPUT_SCHEMAS[name],
+        "outputSchema": {**MCP_OUTPUT_SCHEMAS[name], "$defs": SHARED_DEFS},
+        "annotations": annotations or TOOL_ANNOTATIONS[name],
     }
 
 
@@ -416,15 +428,35 @@ MCP_OUTPUT_SCHEMAS = {
     "filter_records": mcp_items(DYNAMIC_RECORD),
     "get_record": DYNAMIC_RECORD,
     "update_record": DYNAMIC_RECORD,
-    "delete_record": {"type": "object"},
+    "delete_record": DELETED_RECORD,
     "add_record": DYNAMIC_RECORD,
     "bulk_add_records": mcp_items(DYNAMIC_RECORD),
-    "create_project": {"type": "object"},
-    "list_projects": {"type": "object", "properties": {"items": {"type": "array"}}},
-    "join_project": {"type": "object"},
-    "leave_project": {"type": "object"},
-    "add_project_record": {"type": "object"},
-    "query_project_records": {"type": "object", "properties": {"items": {"type": "array"}}},
+    "create_project": PROJECT_WITH_APPROVAL,
+    "list_projects": mcp_items(PROJECT),
+    "join_project": PROJECT_WITH_APPROVAL,
+    "leave_project": LEFT_PROJECT,
+    "add_project_record": PROJECT_RECORD,
+    "query_project_records": mcp_items(PROJECT_RECORD),
+}
+
+
+_READ_ONLY_TOOLS = {
+    "whoami", "list_profiles", "boot_profile", "start_session", "search_memories",
+    "read_inbox", "list_files", "read_file", "list_stores", "query_records",
+    "filter_records", "get_record", "list_projects", "query_project_records",
+}
+_OPEN_WORLD_TOOLS = {"send_message", "join_project", "leave_project",
+                     "add_project_record", "query_project_records"}
+_DESTRUCTIVE_TOOLS = {"forget", "delete_file", "delete_record"}
+_IDEMPOTENT_TOOLS = {"mark_message_read", "leave_project"}
+TOOL_ANNOTATIONS = {
+    name: {
+        "readOnlyHint": name in _READ_ONLY_TOOLS,
+        "destructiveHint": name in _DESTRUCTIVE_TOOLS,
+        "idempotentHint": name in _IDEMPOTENT_TOOLS,
+        "openWorldHint": name in _OPEN_WORLD_TOOLS,
+    }
+    for name in MCP_OUTPUT_SCHEMAS
 }
 
 MCP_TOOLS = [
@@ -448,7 +480,7 @@ MCP_TOOLS = [
     _tool(
         "boot_profile",
         "Boot Profile",
-        "Boot a profile by id. Returns base_prompt, role_prompt, compact_state, profile metadata, recent memories, and profile tool rules. Call this before answering as a profile.",
+        "Low-level raw hydration for a profile, including memory-event IDs and tags. Prefer start_session unless those raw lookup fields or full profile fields are needed.",
         {"profile_id": _PROFILE_ID},
         ["profile_id"],
     ),
@@ -619,7 +651,7 @@ MCP_TOOLS = [
             "texture": {"type": "string", "maxLength": 700},
             "exchange": {"type": "string", "maxLength": 800,
                          "description": "Verbatim 1–3-turn excerpt; never paraphrase or paste a transcript."},
-            "notes": {"type": "string", "default": ""},
+            "notes": {"type": "string", "maxLength": 700, "default": ""},
         },
         ["profile_id", "facts", "texture", "exchange"],
     ),
@@ -642,7 +674,7 @@ MCP_TOOLS = [
             },
             "purpose": {"type": "string"},
             "schema": {
-                "type": "object",
+                "$ref": "#/$defs/DynamicSchema",
                 "description": "Dynamic-store schema: {'fields': {name: {'type': 'string|number|integer|boolean|date', 'required': true|false}}}.",
             },
         },
@@ -651,7 +683,7 @@ MCP_TOOLS = [
     _tool(
         "update_pending_store", "Modify Pending Store",
         "Modify a pending store proposal you made. The old approval is retracted and a fresh 24-hour approval is created.",
-        {"profile_id": _PROFILE_ID, "name": {"type": "string"}, "purpose": {"type": "string"}, "schema": {"type": "object"}},
+        {"profile_id": _PROFILE_ID, "name": {"type": "string"}, "purpose": {"type": "string"}, "schema": {"$ref": "#/$defs/DynamicSchema"}},
         ["profile_id", "name", "purpose", "schema"],
     ),
     _tool(
@@ -662,7 +694,7 @@ MCP_TOOLS = [
     _tool(
         "query_records",
         "Query Records",
-        "Query records in an approved or archived dynamic store.",
+        "Free-text substring search across records in an approved or archived dynamic store.",
         {
             "profile_id": _PROFILE_ID,
             "store_name": {"type": "string"},
@@ -673,9 +705,15 @@ MCP_TOOLS = [
     ),
     _tool(
         "filter_records", "Filter Records",
-        "Filter records by structured fields, sort them, and return only selected fields. Conditions may be direct equality or use eq, ne, gt, gte, lt, lte, contains, or in.",
+        "Structured field filter: sort records and return only selected fields. Conditions may be direct equality or use eq, ne, gt, gte, lt, lte, contains, or in.",
         {"profile_id": _PROFILE_ID, "store_name": {"type": "string"},
-         "where": {"type": "object", "default": {}},
+         "where": {"type": "object", "default": {}, "additionalProperties": {
+             "anyOf": [
+                 {"not": {"type": "object"}}, {"type": "object", "properties": {
+                     "eq": {}, "ne": {}, "gt": {}, "gte": {}, "lt": {}, "lte": {},
+                     "contains": {}, "in": {"type": "array"},
+                 }, "additionalProperties": False, "minProperties": 1, "maxProperties": 1}
+             ]}},
          "fields": {"type": "array", "items": {"type": "string"}},
          "order_by": {"type": "string"}, "descending": {"type": "boolean", "default": True},
          "limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50}},
@@ -716,14 +754,14 @@ MCP_TOOLS = [
     _tool(
         "bulk_add_records", "Bulk Add Records",
         "Atomically import 1–200 schema-validated records into an approved store for a migration.",
-        {"profile_id": _PROFILE_ID, "store_name": {"type": "string"}, "records": {"type": "array", "items": {"type": "object"}}},
+        {"profile_id": _PROFILE_ID, "store_name": {"type": "string"}, "records": {"type": "array", "items": {"type": "object"}, "minItems": 1, "maxItems": 200}},
         ["profile_id", "store_name", "records"],
     ),
     _tool(
         "create_project", "Create Shared Project",
         "Propose a shared schema-enforced project. Human TOTP approval is required; return the approval link.",
         {"profile_id": _PROFILE_ID, "name": {"type": "string"},
-         "purpose": {"type": "string"}, "schema": {"type": "object"}},
+         "purpose": {"type": "string"}, "schema": {"$ref": "#/$defs/DynamicSchema"}},
         ["profile_id", "name", "purpose", "schema"],
     ),
     _tool(
@@ -1085,6 +1123,9 @@ def _tool_error(message: str) -> dict[str, Any]:
     return {
         "content": [{"type": "text", "text": message}],
         "isError": True,
+        # Error results deliberately do not conform to a tool's successful
+        # outputSchema; clients can rely on this common envelope instead.
+        "structuredContent": {"error": {"message": message, "status": None}},
     }
 
 
@@ -1250,8 +1291,10 @@ def _handle_rpc(message: dict[str, Any], app: FastAPI) -> dict[str, Any]:
             },
             "instructions": (
                 "Use list_profiles to discover available profiles. When asked to act as "
-                "a companion, call boot_profile first and use the returned prompts, "
-                "compact_state, memory policy, closeout rules, and allowed_tools."
+                "a companion, start with start_session; use boot_profile only when raw "
+                "memory-event IDs/tags or full profile fields are needed. The returned "
+                "allowed_tools is guidance for which tools this profile should use; it is "
+                "not enforced server-side."
             ),
         })
 
@@ -1275,8 +1318,8 @@ def _handle_rpc(message: dict[str, Any], app: FastAPI) -> dict[str, Any]:
         profile_id = _safe_profile(arguments)
         try:
             value = app.state.runner.call(name, arguments)
-            if name in {"propose_prompt_edit", "propose_store", "create_project",
-                        "join_project"} and isinstance(value, dict):
+            if name in {"propose_prompt_edit", "propose_store", "update_pending_store",
+                        "create_project", "join_project"} and isinstance(value, dict):
                 settings: MCPSettings = app.state.settings
                 approval_id = (value.get("id") if name == "propose_prompt_edit"
                                else value.get("approval_id"))
@@ -1297,7 +1340,9 @@ def _handle_rpc(message: dict[str, Any], app: FastAPI) -> dict[str, Any]:
             )
             return _rpc_result(
                 request_id,
-                _tool_error(f"backend returned {e.status_code}: {e.detail}"),
+                {**_tool_error(f"backend returned {e.status_code}: {e.detail}"),
+                 "structuredContent": {"error": {"message": f"backend returned {e.status_code}: {e.detail}",
+                                                   "status": e.status_code}}},
             )
         except (KeyError, TypeError, ValueError) as e:
             elapsed_ms = int((time.time() - started) * 1000)
@@ -1328,6 +1373,7 @@ def create_mcp_app(
     _approval_hits: dict[str, list[float]] = {}
     _create_profile_hits: dict[str, list[float]] = {}
     _session_inspector_hits: dict[str, list[float]] = {}
+    _oauth_register_hits: dict[str, list[float]] = {}
 
     @app.get("/health", name="health")
     async def health():
@@ -1380,6 +1426,9 @@ def create_mcp_app(
 
     @app.post("/oauth/register", status_code=201)
     async def oauth_register(request: Request):
+        client_ip = request.client.host if request.client else "unknown"
+        if _rate_limited(_oauth_register_hits, client_ip):
+            return JSONResponse({"error": "rate_limited"}, status_code=429)
         try:
             data = await _request_data(request)
         except (ValueError, json.JSONDecodeError):
@@ -1450,13 +1499,9 @@ def create_mcp_app(
     @app.post("/oauth/authorize")
     async def oauth_authorize_decide(request: Request):
         client_ip = request.client.host if request.client else "unknown"
-        now = time.time()
-        hits = [t for t in _authorize_hits.get(client_ip, []) if t > now - 60]
-        if len(hits) >= 5:
+        if _rate_limited(_authorize_hits, client_ip):
             return HTMLResponse("Too many attempts; try again in a minute.",
                                 status_code=429)
-        hits.append(now)
-        _authorize_hits[client_ip] = hits
 
         form = await request.form()
         error, validated = _validate_authorize_params(form, request)
@@ -1491,10 +1536,13 @@ def create_mcp_app(
             approval = await run_in_threadpool(
                 app.state.runner.bridge.get_approval, approval_id)
         except ToolBridgeError as e:
-            return HTMLResponse(f"Approval not found: {e.detail}", status_code=e.status_code)
+            return HTMLResponse(f"Approval not found: {e.detail}", status_code=e.status_code,
+                                headers={"Cache-Control": "no-store", "X-Robots-Tag": "noindex"})
         if approval.get("status") != "pending":
-            return HTMLResponse(f"Already {approval.get('status')}. Nothing to do.")
-        return HTMLResponse(_approval_page(approval))
+            return HTMLResponse(f"Already {approval.get('status')}. Nothing to do.",
+                                headers={"Cache-Control": "no-store", "X-Robots-Tag": "noindex"})
+        return HTMLResponse(_approval_page(approval),
+                            headers={"Cache-Control": "no-store", "X-Robots-Tag": "noindex"})
 
     @app.get("/session-inspector")
     async def session_inspector_page():
@@ -1526,13 +1574,9 @@ def create_mcp_app(
     @app.post("/approvals/{approval_id}")
     async def approval_decide(approval_id: str, request: Request):
         client_ip = request.client.host if request.client else "unknown"
-        now = time.time()
-        hits = [t for t in _approval_hits.get(client_ip, []) if t > now - 60]
-        if len(hits) >= 5:
+        if _rate_limited(_approval_hits, client_ip):
             return HTMLResponse("Too many attempts; try again in a minute.",
                                 status_code=429)
-        hits.append(now)
-        _approval_hits[client_ip] = hits
 
         form = await request.form()
         totp_code = str(form.get("totp_code") or "")
@@ -1560,13 +1604,9 @@ def create_mcp_app(
     @app.post("/create-profile")
     async def create_profile_submit(request: Request):
         client_ip = request.client.host if request.client else "unknown"
-        now = time.time()
-        hits = [t for t in _create_profile_hits.get(client_ip, []) if t > now - 60]
-        if len(hits) >= 5:
+        if _rate_limited(_create_profile_hits, client_ip):
             return HTMLResponse("Too many attempts; try again in a minute.",
                                 status_code=429)
-        hits.append(now)
-        _create_profile_hits[client_ip] = hits
 
         form = await request.form()
         values = {k: str(form.get(k) or "") for k in

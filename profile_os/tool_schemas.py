@@ -57,7 +57,8 @@ PROFILE = {
         "closeout_rules": {"type": "string"},
         "created_at": {"type": "number"},
     },
-    "required": ["id", "display_name"],
+    "required": ["id", "display_name", "description", "allowed_tools",
+                 "memory_policy", "closeout_rules", "created_at"],
 }
 
 MEMORY_EVENT = {
@@ -96,7 +97,8 @@ CLOSEOUT = {
         "new_state": {"type": "string"},
         "created_at": {"type": "number"},
     },
-    "required": ["id", "profile_id", "new_state"],
+    "required": ["id", "profile_id", "notes", "facts", "texture", "exchange",
+                 "new_state", "created_at"],
 }
 
 BOOT = {
@@ -109,7 +111,8 @@ BOOT = {
         "state_updated_at": NUMBER_OR_NULL,
         "recent_memories": array_of(MEMORY_EVENT),
     },
-    "required": ["profile", "base_prompt", "role_prompt", "compact_state"],
+    "required": ["profile", "base_prompt", "role_prompt", "compact_state",
+                 "state_updated_at", "recent_memories"],
 }
 
 START_SESSION = {
@@ -147,13 +150,31 @@ APPROVAL = {
     "type": "object",
     "properties": {
         "id": {"type": "string"},
-        "kind": {"type": "string"},
+        "kind": {"type": "string", "enum": ["prompt_edit", "store_schema",
+                                                    "project_create", "project_join"]},
         "profile_id": STRING_OR_NULL,
         "status": {"type": "string"},
-        "payload": JSON_OBJECT,
+        # Deliberately flattened: some MCP connector validators reject oneOf.
+        "payload": {
+            "type": "object",
+            "properties": {
+                "base_prompt": STRING_OR_NULL,
+                "role_prompt": STRING_OR_NULL,
+                "store_id": {"type": "string"},
+                "store_name": {"type": "string"},
+                "project_id": {"type": "string"},
+                "project_name": {"type": "string"},
+                "joining_profile_id": {"type": "string"},
+                "name": {"type": "string"},
+                "purpose": {"type": "string"},
+                "schema": JSON_OBJECT,
+            },
+            "required": [],
+            "additionalProperties": False,
+        },
         "approval_link": {"type": "string"},
     },
-    "required": ["id", "kind", "status", "payload"],
+    "required": ["id", "kind", "profile_id", "status", "payload"],
 }
 
 MESSAGE = {
@@ -246,13 +267,14 @@ DYNAMIC_STORE = {
         },
         "rejection_reason": STRING_OR_NULL,
         "created_at": {"type": "number"},
-        "updated_at": NUMBER_OR_NULL,
         "approved_at": NUMBER_OR_NULL,
         "rejected_at": NUMBER_OR_NULL,
         "approval_id": {"type": "string"},
         "approval_link": {"type": "string"},
     },
-    "required": ["profile_id", "name", "purpose", "schema", "status"],
+    "required": ["id", "profile_id", "name", "version", "purpose",
+                 "proposed_by", "schema", "status", "rejection_reason",
+                 "created_at", "approved_at", "rejected_at"],
 }
 
 DYNAMIC_RECORD = {
@@ -263,8 +285,67 @@ DYNAMIC_RECORD = {
         "schema_version": {"type": "integer"},
         "data": JSON_OBJECT,
         "created_at": {"type": "number"},
+        "updated_at": NUMBER_OR_NULL,
     },
-    "required": ["id", "store", "data"],
+    "required": ["id", "store", "schema_version", "data", "created_at", "updated_at"],
+}
+
+PROJECT_MEMBER = {
+    "type": "object",
+    "properties": {"profile_id": {"type": "string"}, "role": {"type": "string"},
+                   "joined_at": {"type": "number"}},
+    "required": ["profile_id", "role", "joined_at"],
+}
+
+PROJECT = {
+    "type": "object",
+    "properties": {
+        "id": {"type": "string"}, "name": {"type": "string"},
+        "purpose": {"type": "string"}, "schema": DYNAMIC_SCHEMA,
+        "created_by_profile_id": {"type": "string"},
+        "status": {"type": "string", "enum": ["pending", "active"]},
+        "created_at": {"type": "number"}, "approved_at": NUMBER_OR_NULL,
+        "members": array_of(PROJECT_MEMBER), "viewer_is_member": {"type": "boolean"},
+        "approval_id": {"type": "string"}, "approval_link": {"type": "string"},
+    },
+    "required": ["id", "name", "purpose", "schema", "created_by_profile_id",
+                 "status", "created_at", "approved_at", "members"],
+}
+
+PROJECT_WITH_APPROVAL = {
+    **PROJECT,
+    "required": [*PROJECT["required"], "approval_id"],
+}
+
+PROJECT_RECORD = {
+    "type": "object",
+    "properties": {"id": {"type": "string"}, "project_id": {"type": "string"},
+                   "data": JSON_OBJECT, "created_by_profile_id": {"type": "string"},
+                   "created_at": {"type": "number"}},
+    "required": ["id", "project_id", "data", "created_by_profile_id", "created_at"],
+}
+
+DELETED_RECORD = {
+    "type": "object",
+    "properties": {"deleted": {"type": "boolean"}, "record_id": {"type": "string"},
+                   "store": {"type": "string"}},
+    "required": ["deleted", "record_id", "store"],
+}
+
+LEFT_PROJECT = {
+    "type": "object",
+    "properties": {"left": {"type": "boolean"}, "project_id": {"type": "string"},
+                   "empty": {"type": "boolean"}},
+    "required": ["left", "project_id", "empty"],
+}
+
+# Reused by MCP input and output schemas.  Keeping definitions centralized
+# makes references stable without relying on discriminator/oneOf support.
+SHARED_DEFS = {
+    "Profile": PROFILE, "Project": PROJECT, "ProjectRecord": PROJECT_RECORD,
+    "DynamicRecord": DYNAMIC_RECORD, "DynamicSchema": DYNAMIC_SCHEMA,
+    "ListEnvelope": {"type": "object", "properties": {"items": {"type": "array"}},
+                     "required": ["items"]},
 }
 
 AUDIT_EVENT = {

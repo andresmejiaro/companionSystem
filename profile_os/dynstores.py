@@ -473,6 +473,7 @@ class DynamicStores:
             data = {field: data[field] for field in fields if field in data}
         result["data"] = data
         result["store"] = result.pop("store_name")
+        result.pop("profile_id", None)
         return result
 
     @staticmethod
