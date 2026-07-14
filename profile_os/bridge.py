@@ -401,6 +401,31 @@ class ToolBridge:
                              json={"facts": facts, "texture": texture,
                                    "exchange": exchange, "notes": notes})
 
+    def create_project(self, profile_id: str, name: str, purpose: str, schema: dict):
+        return self._request("POST", f"/profiles/{profile_id}/projects",
+                             json={"name": name, "purpose": purpose, "schema": schema})
+
+    def list_projects(self, profile_id: str, available: bool = False):
+        return self._request("GET", f"/profiles/{profile_id}/projects",
+                             params={"available": available})
+
+    def join_project(self, profile_id: str, project_id: str):
+        return self._request("POST", f"/projects/{project_id}/join",
+                             json={"profile_id": profile_id})
+
+    def leave_project(self, profile_id: str, project_id: str):
+        return self._request("DELETE", f"/projects/{project_id}/members/{profile_id}")
+
+    def add_project_record(self, profile_id: str, project_id: str, data: dict):
+        return self._request("POST", f"/projects/{project_id}/records",
+                             params={"profile_id": profile_id}, json={"data": data})
+
+    def query_project_records(self, profile_id: str, project_id: str,
+                              contains: str = "", limit: int = 50):
+        return self._request("GET", f"/projects/{project_id}/records",
+                             params={"profile_id": profile_id, "contains": contains,
+                                     "limit": limit})
+
     def propose_store(self, profile_id: str, name: str, purpose: str,
                       schema: dict):
         return self._request("POST", f"/profiles/{profile_id}/stores",

@@ -337,6 +337,45 @@ def test_decide_without_totp_enrolled_is_403(auth_client):
     assert decide.status_code == 403
 
 
+def test_project_creation_and_join_each_require_totp_approval(auth_client, clock):
+    client, access, admin_id = auth_client
+    totp = _enroll_and_confirm(access, admin_id, clock)
+    agent = access.create_principal("agent", "project-agent")
+    access.create_credential(agent["id"], "k", "project-secret")
+    for profile_id in ("tara", "sidra"):
+        for operation in ("manage_profile", "records:read", "records:write"):
+            access.grant(agent["id"], operation, profile_id=profile_id)
+    h = _bearer("project-secret")
+    schema = {"fields": {"title": {"type": "string"}}}
+
+    proposed = client.post("/profiles/tara/projects", headers=h, json={
+        "name": "shared_launch", "purpose": "coordinate launch", "schema": schema})
+    assert proposed.status_code == 201, proposed.text
+    project_id = proposed.json()["id"]
+    assert proposed.json()["status"] == "pending"
+
+    bad = client.post(f"/approvals/{proposed.json()['approval_id']}/decide",
+                      headers=_bearer("root-secret"),
+                      json={"approve": True, "totp_code": "000000"})
+    assert bad.status_code == 401
+    approved = client.post(f"/approvals/{proposed.json()['approval_id']}/decide",
+                           headers=_bearer("root-secret"),
+                           json={"approve": True, "totp_code": clock.next_code(totp)})
+    assert approved.status_code == 200, approved.text
+
+    join = client.post(f"/projects/{project_id}/join", headers=h,
+                       json={"profile_id": "sidra"})
+    assert join.status_code == 201, join.text
+    assert not any(p["id"] == project_id for p in
+                   client.get("/profiles/sidra/projects", headers=h).json())
+    joined = client.post(f"/approvals/{join.json()['approval_id']}/decide",
+                         headers=_bearer("root-secret"),
+                         json={"approve": True, "totp_code": clock.next_code(totp)})
+    assert joined.status_code == 200, joined.text
+    assert any(p["id"] == project_id for p in
+               client.get("/profiles/sidra/projects", headers=h).json())
+
+
 def test_start_session_bundles_identity_and_semantic_boot_memories(tmp_path, monkeypatch):
     identity_path = tmp_path / "quien_soy.md"
     identity_path.write_text("canonical facts")
@@ -374,6 +413,7 @@ def test_start_session_bundles_identity_and_semantic_boot_memories(tmp_path, mon
         assert "last_closeouts" not in body
         assert "recent_memories" not in body
         assert isinstance(body["server_time"]["unix"], (int, float))
+        assert body["you_got_mail"] is False
         assert body["server_time"]["iso"].startswith(
             datetime.now(timezone.utc).strftime("%Y-%m-%d"))
 

@@ -7,6 +7,10 @@ Profiles live **here**; Claude/GPT/Gemini UIs are future secondary surfaces.
 No LLM is embedded or called. `profile_os/adapters.py` ships a deterministic
 `FakeModelAdapter`; real provider adapters are a later slice.
 
+> **Working on tests or investigating a hang?** Read
+> [TESTING.md](TESTING.md) first. It records the verified FastAPI `TestClient`
+> setup and the sandbox diagnostic that prevents recurring false diagnoses.
+
 ## Run locally
 
 ```bash

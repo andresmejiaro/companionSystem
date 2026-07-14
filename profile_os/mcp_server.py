@@ -415,6 +415,12 @@ MCP_OUTPUT_SCHEMAS = {
     "query_records": mcp_items(DYNAMIC_RECORD),
     "add_record": DYNAMIC_RECORD,
     "bulk_add_records": mcp_items(DYNAMIC_RECORD),
+    "create_project": {"type": "object"},
+    "list_projects": {"type": "object", "properties": {"items": {"type": "array"}}},
+    "join_project": {"type": "object"},
+    "leave_project": {"type": "object"},
+    "add_project_record": {"type": "object"},
+    "query_project_records": {"type": "object", "properties": {"items": {"type": "array"}}},
 }
 
 MCP_TOOLS = [
@@ -678,6 +684,45 @@ MCP_TOOLS = [
         {"profile_id": _PROFILE_ID, "store_name": {"type": "string"}, "records": {"type": "array", "items": {"type": "object"}}},
         ["profile_id", "store_name", "records"],
     ),
+    _tool(
+        "create_project", "Create Shared Project",
+        "Propose a shared schema-enforced project. Human TOTP approval is required; return the approval link.",
+        {"profile_id": _PROFILE_ID, "name": {"type": "string"},
+         "purpose": {"type": "string"}, "schema": {"type": "object"}},
+        ["profile_id", "name", "purpose", "schema"],
+    ),
+    _tool(
+        "list_projects", "List Shared Projects",
+        "List projects this companion belongs to, or all available projects it may request to join.",
+        {"profile_id": _PROFILE_ID, "available": {"type": "boolean", "default": False}},
+        ["profile_id"],
+    ),
+    _tool(
+        "join_project", "Join Shared Project",
+        "Request membership in a project. Human TOTP approval is required; return the approval link.",
+        {"profile_id": _PROFILE_ID, "project_id": {"type": "string"}},
+        ["profile_id", "project_id"],
+    ),
+    _tool(
+        "leave_project", "Leave Shared Project",
+        "Leave a shared project immediately; no TOTP approval is required.",
+        {"profile_id": _PROFILE_ID, "project_id": {"type": "string"}},
+        ["profile_id", "project_id"],
+    ),
+    _tool(
+        "add_project_record", "Add Shared Project Record",
+        "Add a schema-validated record to a project this companion belongs to.",
+        {"profile_id": _PROFILE_ID, "project_id": {"type": "string"},
+         "data": {"type": "object"}}, ["profile_id", "project_id", "data"],
+    ),
+    _tool(
+        "query_project_records", "Query Shared Project Records",
+        "Query records in a project this companion belongs to.",
+        {"profile_id": _PROFILE_ID, "project_id": {"type": "string"},
+         "contains": {"type": "string", "default": ""},
+         "limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50}},
+        ["profile_id", "project_id"],
+    ),
 ]
 
 MCP_TOOL_NAMES = {tool["name"] for tool in MCP_TOOLS}
@@ -940,6 +985,23 @@ class MCPToolRunner:
             )
         if name == "bulk_add_records":
             return self.bridge.bulk_add_records(arguments["profile_id"], arguments["store_name"], arguments["records"])
+        if name == "create_project":
+            return self.bridge.create_project(arguments["profile_id"], arguments["name"],
+                                              arguments["purpose"], arguments["schema"])
+        if name == "list_projects":
+            return self.bridge.list_projects(arguments["profile_id"],
+                                             arguments.get("available", False))
+        if name == "join_project":
+            return self.bridge.join_project(arguments["profile_id"], arguments["project_id"])
+        if name == "leave_project":
+            return self.bridge.leave_project(arguments["profile_id"], arguments["project_id"])
+        if name == "add_project_record":
+            return self.bridge.add_project_record(arguments["profile_id"], arguments["project_id"],
+                                                  arguments["data"])
+        if name == "query_project_records":
+            return self.bridge.query_project_records(
+                arguments["profile_id"], arguments["project_id"],
+                arguments.get("contains", ""), arguments.get("limit", 50))
         raise ValueError(f"unknown tool {name!r}")
 
 
@@ -1162,7 +1224,8 @@ def _handle_rpc(message: dict[str, Any], app: FastAPI) -> dict[str, Any]:
         profile_id = _safe_profile(arguments)
         try:
             value = app.state.runner.call(name, arguments)
-            if name in {"propose_prompt_edit", "propose_store"} and isinstance(value, dict):
+            if name in {"propose_prompt_edit", "propose_store", "create_project",
+                        "join_project"} and isinstance(value, dict):
                 settings: MCPSettings = app.state.settings
                 approval_id = (value.get("id") if name == "propose_prompt_edit"
                                else value.get("approval_id"))

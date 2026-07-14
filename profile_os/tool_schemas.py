@@ -121,6 +121,7 @@ START_SESSION = {
         "compact_state": {"type": "string"},
         "identity": STRING_OR_NULL,
         "memories": array_of(HYDRATION_MEMORY),
+        "you_got_mail": {"type": "boolean"},
         "server_time": {
             "type": "object",
             "properties": {
@@ -137,6 +138,7 @@ START_SESSION = {
         "compact_state",
         "identity",
         "memories",
+        "you_got_mail",
         "server_time",
     ],
 }

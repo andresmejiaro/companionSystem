@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field
 from . import seed
 from .access import AccessControl, AccessError
 from .dynstores import DynamicStores
+from .projects import Projects
 from .enroll import Enrollment, InviteConsumed, InviteInvalid
 from .errors import (DynStoreConflict, DynStoreNotFound, FileNotFoundInStore,
                      MalformedMemoryEvent, MalformedMessage, MalformedRecord,
@@ -146,6 +147,16 @@ class SessionInspectIn(BaseModel):
     totp_code: str
 
 
+class ProjectCreateIn(BaseModel):
+    name: str
+    purpose: str
+    schema_def: dict = Field(alias="schema")
+
+
+class ProjectJoinIn(BaseModel):
+    profile_id: str
+
+
 def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
                auth_enabled: bool | None = None,
                identity_file: str | None = None) -> FastAPI:
@@ -161,6 +172,8 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
 
     dyn = DynamicStores(store)
     app.state.dynstores = dyn
+    projects = Projects(store)
+    app.state.projects = projects
     access = AccessControl(store)
     app.state.access = access
     enrollment = Enrollment(access)
@@ -317,6 +330,13 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
                 if store_id:
                     try:
                         dyn.reject_id(store_id, "approval expired after 24 hours", actor="system")
+                    except (DynStoreConflict, DynStoreNotFound):
+                        pass
+            elif approval["kind"] == "project_create":
+                project_id = approval["payload"].get("project_id")
+                if project_id:
+                    try:
+                        projects.reject_create(project_id)
                     except (DynStoreConflict, DynStoreNotFound):
                         pass
 
@@ -531,6 +551,9 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
             **booted,
             "identity": identity_content,
             "memories": hydrated_memories,
+            # Deliberately only a flag: inbox contents stay behind read_inbox,
+            # but a newly hydrated companion knows when to check it.
+            "you_got_mail": bool(_wrap(store.list_inbox, profile_id, True, 1)),
             "server_time": {
                 "unix": now,
                 "iso": datetime.fromtimestamp(now, tz=timezone.utc).isoformat(),
@@ -634,6 +657,71 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
         return _wrap(store.closeout, profile_id, body.facts, body.texture,
                      body.exchange, body.notes)
 
+    # -- shared projects ------------------------------------------------------
+
+    @app.post("/profiles/{profile_id}/projects", status_code=201)
+    def propose_project(profile_id: str, body: ProjectCreateIn, request: Request):
+        principal_id = _require("manage_profile", profile_id, request)
+        project = _wrap(projects.propose_create, profile_id, body.name,
+                        body.purpose, body.schema_def)
+        approval = access.propose_approval(
+            "project_create", principal_id or profile_id,
+            {"project_id": project["id"], "name": project["name"],
+             "purpose": project["purpose"], "schema": project["schema"]},
+            profile_id=profile_id)
+        return {**project, "approval_id": approval["id"]}
+
+    @app.get("/profiles/{profile_id}/projects")
+    def list_projects(profile_id: str, request: Request, available: bool = False):
+        _require("records:read", profile_id, request)
+        fn = projects.list_available if available else projects.list_for
+        return _wrap(fn, profile_id)
+
+    @app.post("/projects/{project_id}/join", status_code=201)
+    def propose_project_join(project_id: str, body: ProjectJoinIn, request: Request):
+        principal_id = _require("manage_profile", body.profile_id, request)
+        project = _wrap(projects.request_join, body.profile_id, project_id)
+        approval = access.propose_approval(
+            "project_join", principal_id or body.profile_id,
+            {"project_id": project_id, "project_name": project["name"],
+             "joining_profile_id": body.profile_id}, profile_id=body.profile_id)
+        return {**project, "approval_id": approval["id"]}
+
+    @app.delete("/projects/{project_id}/members/{profile_id}")
+    def leave_project(project_id: str, profile_id: str, request: Request):
+        _require("manage_profile", profile_id, request)
+        return _wrap(projects.leave, profile_id, project_id)
+
+    @app.get("/projects/{project_id}/records")
+    def query_project_records(project_id: str, profile_id: str, request: Request,
+                              contains: str | None = None, limit: int = 50):
+        _require("records:read", profile_id, request)
+        return _wrap(projects.query, profile_id, project_id, contains, limit)
+
+    @app.post("/projects/{project_id}/records", status_code=201)
+    def add_project_record(project_id: str, profile_id: str, body: DomainRecordIn,
+                           request: Request):
+        _require("records:write", profile_id, request)
+        return _wrap(projects.add_record, profile_id, project_id, body.data)
+
+    @app.get("/settings/notifications")
+    def settings_notifications(request: Request, include_silenced: bool = False):
+        if not _has_settings_session(request):
+            raise HTTPException(401, "settings are locked")
+        return projects.notifications(include_silenced)
+
+    @app.post("/settings/notifications/{notification_id}/silence")
+    def silence_notification(notification_id: str, request: Request):
+        if not _has_settings_session(request):
+            raise HTTPException(401, "settings are locked")
+        return _wrap(projects.silence, notification_id)
+
+    @app.delete("/settings/projects/{project_id}")
+    def delete_empty_project(project_id: str, request: Request):
+        if not _has_settings_session(request):
+            raise HTTPException(401, "settings are locked")
+        return _wrap(projects.delete, project_id)
+
     # -- TOTP-gated approvals ("edgy" actions) --------------------------------
     # Routine writes (remember, closeout, records) never need a code. Only
     # actions a companion shouldn't be able to do unilaterally — starting
@@ -665,6 +753,10 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
             store_id = approval["payload"].get("store_id")
             if store_id:
                 _wrap(dyn.reject_id, store_id, "withdrawn by proposer", actor=principal_id or "anonymous")
+        elif approval["kind"] == "project_create":
+            project_id = approval["payload"].get("project_id")
+            if project_id:
+                _wrap(projects.reject_create, project_id)
         return approval
 
     @app.put("/profiles/{profile_id}/description")
@@ -732,6 +824,16 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
                 _wrap(dyn.approve_id, store_id, actor=actor)
             else:
                 _wrap(dyn.reject_id, store_id, "rejected via approval link", actor=actor)
+        elif row["kind"] == "project_create":
+            project_id = row["payload"].get("project_id")
+            if body.approve:
+                _wrap(projects.approve_create, project_id)
+            else:
+                _wrap(projects.reject_create, project_id)
+        elif row["kind"] == "project_join" and body.approve:
+            _wrap(projects.approve_join,
+                  row["payload"].get("joining_profile_id"),
+                  row["payload"].get("project_id"))
         try:
             decided = access.decide_approval(approval_id, body.approve,
                                             principal_id or "anonymous")

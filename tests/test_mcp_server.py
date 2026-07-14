@@ -87,6 +87,7 @@ class FakeBridge:
             **self.boot_profile(profile_id),
             "identity": "Canonical identity.",
             "memories": [{"id": "memory-1", "kind": "note", "content": "A memory.", "tags": ["lookup-only"]}],
+            "you_got_mail": False,
             "server_time": {"unix": 1, "iso": "1970-01-01T00:00:01+00:00"},
         }
 

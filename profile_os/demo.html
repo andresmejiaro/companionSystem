@@ -94,6 +94,11 @@ Each run uses a fresh store name, so it can be repeated; the fields in section 5
 <button onclick="taraDemo()">Run Tara hotel demo</button>
 <pre id="demo-out" class="out">–</pre>
 
+<h2>7. Project notifications</h2>
+<p>Empty projects are retained. Silence their alert or permanently delete the empty project and its shared records.</p>
+<button onclick="loadNotifications()">Refresh notifications</button>
+<div id="notifications"></div>
+
 <script>
 const $ = id => document.getElementById(id);
 const pid = () => $('profile').value || 'tara';
@@ -218,7 +223,28 @@ async function taraDemo() {
   await step('5. audit trail', 'GET', `/profiles/tara/stores/${name}/audit`);
 }
 
+async function loadNotifications() {
+  const r = await api('GET', '/settings/notifications');
+  const el = $('notifications');
+  if (!r.ok) { el.innerHTML = `<pre class="out err">HTTP ${r.status}\n${esc(JSON.stringify(r.data))}</pre>`; return; }
+  el.innerHTML = r.data.length ? r.data.map(n => `<fieldset>
+    <legend>${esc(n.kind)}</legend><p>${esc(n.message)}</p>
+    <button onclick="silenceNotification('${n.id}')">Silence</button>
+    <button onclick="deleteEmptyProject('${n.project_id}')">Delete empty project/store</button>
+  </fieldset>`).join('') : '<p>No active notifications.</p>';
+}
+async function silenceNotification(id) {
+  await api('POST', `/settings/notifications/${id}/silence`); loadNotifications();
+}
+async function deleteEmptyProject(id) {
+  if (!confirm('Permanently delete this empty project and all of its shared records?')) return;
+  const r = await api('DELETE', `/settings/projects/${id}`);
+  if (!r.ok) alert(`Delete failed: ${JSON.stringify(r.data)}`);
+  loadNotifications();
+}
+
 loadProfiles();
+loadNotifications();
 </script>
 </body>
 </html>

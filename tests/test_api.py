@@ -53,8 +53,20 @@ def test_session_inspect_matches_start_session_shape_when_auth_is_disabled(clien
     assert inspected.status_code == 200
     body = inspected.json()
     assert {"profile", "base_prompt", "role_prompt", "compact_state", "identity",
-            "memories", "server_time"} <= set(body)
+            "memories", "you_got_mail", "server_time"} <= set(body)
+    assert body["you_got_mail"] is False
     assert "last_closeouts" not in body
+
+
+def test_start_session_you_got_mail_tracks_unread_inbox(client):
+    sent = client.post("/profiles/tara/messages", json={
+        "to_profile_id": "sidra", "content": "Project update"})
+    assert sent.status_code == 201
+    assert client.post("/profiles/sidra/session").json()["you_got_mail"] is True
+
+    message_id = sent.json()["id"]
+    assert client.post(f"/profiles/sidra/inbox/{message_id}/read").status_code == 200
+    assert client.post("/profiles/sidra/session").json()["you_got_mail"] is False
 
 
 def test_remember_search_closeout_flow(client):
