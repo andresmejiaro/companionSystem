@@ -72,6 +72,7 @@ class ProfileCreateTotpIn(BaseModel):
     display_name: str
     base_prompt: str = ""
     role_prompt: str = ""
+    allowed_tools: list[str] | None = None
     totp_code: str
 
 
@@ -473,7 +474,8 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
         if body.id in {p["id"] for p in store.list_profiles()}:
             raise HTTPException(409, f"profile {body.id!r} already exists")
         profile = store.create_profile(
-            body.id, body.display_name, body.base_prompt, body.role_prompt)
+            body.id, body.display_name, body.base_prompt, body.role_prompt,
+            allowed_tools=body.allowed_tools)
         access.record_audit(admin_id, "create_profile_totp", body.id)
         return profile
 

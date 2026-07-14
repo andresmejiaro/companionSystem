@@ -33,6 +33,9 @@ def test_root_directory_and_admin_shortcuts(client):
     assert new.status_code == 200
     assert "New companion" in new.text
     assert "/profiles/totp-create" in new.text
+    preset = client.get("/companions/new?template=system_notifier")
+    assert "System Notifier" in preset.text
+    assert "allowed_tools: 'send_message'" in preset.text
     settings = client.get("/settings")
     assert settings.status_code == 200
     assert "Unlock settings" in settings.text
