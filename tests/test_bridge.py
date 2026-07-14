@@ -128,7 +128,12 @@ def test_no_tool_bypasses_api_authorization(tmp_path):
         "get_store": {"profile_id": "tara", "name": "n1"},
         "add_record": {"profile_id": "tara", "store_name": "n1", "data": {}},
         "bulk_add_records": {"profile_id": "tara", "store_name": "n1", "records": []},
-        "query_records": {"profile_id": "tara", "store_name": "n1"},
+            "query_records": {"profile_id": "tara", "store_name": "n1"},
+            "filter_records": {"profile_id": "tara", "store_name": "n1"},
+            "get_record": {"profile_id": "tara", "store_name": "n1", "record_id": "r1"},
+            "update_record": {"profile_id": "tara", "store_name": "n1", "record_id": "r1",
+                              "patch": {"x": "y"}},
+            "delete_record": {"profile_id": "tara", "store_name": "n1", "record_id": "r1"},
         "audit": {"profile_id": "tara"},
         "retract_approval": {"approval_id": "a1"},
     }

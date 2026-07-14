@@ -413,6 +413,10 @@ MCP_OUTPUT_SCHEMAS = {
     "update_pending_store": DYNAMIC_STORE,
     "withdraw_pending_store": DYNAMIC_STORE,
     "query_records": mcp_items(DYNAMIC_RECORD),
+    "filter_records": mcp_items(DYNAMIC_RECORD),
+    "get_record": DYNAMIC_RECORD,
+    "update_record": DYNAMIC_RECORD,
+    "delete_record": {"type": "object"},
     "add_record": DYNAMIC_RECORD,
     "bulk_add_records": mcp_items(DYNAMIC_RECORD),
     "create_project": {"type": "object"},
@@ -666,6 +670,37 @@ MCP_TOOLS = [
             "limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50},
         },
         ["profile_id", "store_name"],
+    ),
+    _tool(
+        "filter_records", "Filter Records",
+        "Filter records by structured fields, sort them, and return only selected fields. Conditions may be direct equality or use eq, ne, gt, gte, lt, lte, contains, or in.",
+        {"profile_id": _PROFILE_ID, "store_name": {"type": "string"},
+         "where": {"type": "object", "default": {}},
+         "fields": {"type": "array", "items": {"type": "string"}},
+         "order_by": {"type": "string"}, "descending": {"type": "boolean", "default": True},
+         "limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50}},
+        ["profile_id", "store_name"],
+    ),
+    _tool(
+        "get_record", "Get Record",
+        "Read one record by ID, optionally returning only selected data fields.",
+        {"profile_id": _PROFILE_ID, "store_name": {"type": "string"},
+         "record_id": {"type": "string"},
+         "fields": {"type": "array", "items": {"type": "string"}}},
+        ["profile_id", "store_name", "record_id"],
+    ),
+    _tool(
+        "update_record", "Update Record",
+        "Patch selected fields in one record. The complete result is validated against its schema version.",
+        {"profile_id": _PROFILE_ID, "store_name": {"type": "string"},
+         "record_id": {"type": "string"}, "patch": {"type": "object"}},
+        ["profile_id", "store_name", "record_id", "patch"],
+    ),
+    _tool(
+        "delete_record", "Delete Record", "Delete one record by ID.",
+        {"profile_id": _PROFILE_ID, "store_name": {"type": "string"},
+         "record_id": {"type": "string"}},
+        ["profile_id", "store_name", "record_id"],
     ),
     _tool(
         "add_record",
@@ -977,6 +1012,22 @@ class MCPToolRunner:
                 contains=contains or None,
                 limit=int(arguments.get("limit", 50)),
             )
+        if name == "filter_records":
+            return self.bridge.filter_records(
+                arguments["profile_id"], arguments["store_name"],
+                where=arguments.get("where"), fields=arguments.get("fields"),
+                order_by=arguments.get("order_by"),
+                descending=bool(arguments.get("descending", True)),
+                limit=int(arguments.get("limit", 50)))
+        if name == "get_record":
+            return self.bridge.get_record(arguments["profile_id"], arguments["store_name"],
+                                          arguments["record_id"], arguments.get("fields"))
+        if name == "update_record":
+            return self.bridge.update_record(arguments["profile_id"], arguments["store_name"],
+                                             arguments["record_id"], arguments["patch"])
+        if name == "delete_record":
+            return self.bridge.delete_record(arguments["profile_id"], arguments["store_name"],
+                                             arguments["record_id"])
         if name == "add_record":
             return self.bridge.add_record(
                 arguments["profile_id"],

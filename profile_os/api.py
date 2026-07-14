@@ -94,6 +94,18 @@ class BulkRecordsIn(BaseModel):
     records: list[dict]
 
 
+class RecordPatchIn(BaseModel):
+    patch: dict
+
+
+class RecordQueryIn(BaseModel):
+    where: dict = Field(default_factory=dict)
+    fields: list[str] | None = None
+    order_by: str | None = None
+    descending: bool = True
+    limit: int = 50
+
+
 class PendingStoreUpdateIn(BaseModel):
     purpose: str
     schema_def: dict = Field(alias="schema")
@@ -967,6 +979,32 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
                             contains: str | None = None, limit: int = 50):
         _require("records:read", profile_id, request)
         return _wrap(dyn.query_records, profile_id, name, contains, limit)
+
+    @app.post("/profiles/{profile_id}/stores/{name}/records/query")
+    def filter_store_records(profile_id: str, name: str, body: RecordQueryIn,
+                             request: Request):
+        _require("records:read", profile_id, request)
+        return _wrap(dyn.filter_records, profile_id, name, body.where, body.fields,
+                     body.order_by, body.descending, body.limit)
+
+    @app.get("/profiles/{profile_id}/stores/{name}/records/{record_id}")
+    def get_store_record(profile_id: str, name: str, record_id: str,
+                         request: Request, fields: str | None = None):
+        _require("records:read", profile_id, request)
+        selected = [field for field in (fields or "").split(",") if field] or None
+        return _wrap(dyn.get_record, profile_id, name, record_id, selected)
+
+    @app.patch("/profiles/{profile_id}/stores/{name}/records/{record_id}")
+    def update_store_record(profile_id: str, name: str, record_id: str,
+                            body: RecordPatchIn, request: Request):
+        _require("records:write", profile_id, request)
+        return _wrap(dyn.update_record, profile_id, name, record_id, body.patch)
+
+    @app.delete("/profiles/{profile_id}/stores/{name}/records/{record_id}")
+    def delete_store_record(profile_id: str, name: str, record_id: str,
+                            request: Request):
+        _require("records:write", profile_id, request)
+        return _wrap(dyn.delete_record, profile_id, name, record_id)
 
     @app.get("/profiles/{profile_id}/stores/{name}/audit")
     def store_audit(profile_id: str, name: str, request: Request, limit: int = 100):

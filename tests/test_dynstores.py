@@ -205,3 +205,75 @@ def test_date_validation_rejects_impossible_dates(dyn):
             dyn.add_record("tara", "hotel_reservations", {**HOTEL_RECORD, "check_in": bad})
     rec = dyn.add_record("tara", "hotel_reservations", {**HOTEL_RECORD, "check_in": "2026-08-01"})
     assert rec["data"]["check_in"] == "2026-08-01"
+
+
+def test_structured_field_types_and_record_crud(dyn):
+    schema = {"fields": {
+        "title": {"type": "string"},
+        "tags": {"type": "string_list"},
+        "details": {"type": "object"},
+        "sections": {"type": "object_list"},
+    }}
+    dyn.propose("tara", "research_notes", "structured notes", "tara", schema)
+    dyn.approve("tara", "research_notes")
+    rec = dyn.add_record("tara", "research_notes", {
+        "title": "SQLite", "tags": ["database", "local"],
+        "details": {"status": "draft"},
+        "sections": [{"heading": "Summary", "text": "Small and reliable"}],
+    })
+    projected = dyn.get_record("tara", "research_notes", rec["id"], ["title", "tags"])
+    assert projected["data"] == {"title": "SQLite", "tags": ["database", "local"]}
+    updated = dyn.update_record("tara", "research_notes", rec["id"],
+                                {"details": {"status": "done"}})
+    assert updated["data"]["title"] == "SQLite"
+    assert updated["data"]["details"] == {"status": "done"}
+    assert updated["updated_at"] is not None
+    assert dyn.delete_record("tara", "research_notes", rec["id"])["deleted"] is True
+    with pytest.raises(DynStoreNotFound):
+        dyn.get_record("tara", "research_notes", rec["id"])
+
+
+def test_structured_field_types_reject_wrong_shapes(dyn):
+    schema = {"fields": {"tags": {"type": "string_list"},
+                         "details": {"type": "object"},
+                         "sections": {"type": "object_list"}}}
+    dyn.propose("tara", "structured", "structured", "tara", schema)
+    dyn.approve("tara", "structured")
+    for bad in [
+        {"tags": "one", "details": {}, "sections": []},
+        {"tags": [1], "details": {}, "sections": []},
+        {"tags": [], "details": [], "sections": []},
+        {"tags": [], "details": {}, "sections": ["text"]},
+    ]:
+        with pytest.raises(SchemaError):
+            dyn.add_record("tara", "structured", bad)
+
+
+def test_filter_sort_and_project_records(dyn):
+    schema = {"fields": {"title": {"type": "string"},
+                         "score": {"type": "integer"},
+                         "tags": {"type": "string_list"}}}
+    dyn.propose("tara", "applications", "applications", "tara", schema)
+    dyn.approve("tara", "applications")
+    dyn.add_record("tara", "applications", {"title": "Alpha", "score": 3, "tags": ["remote"]})
+    dyn.add_record("tara", "applications", {"title": "Beta", "score": 8, "tags": ["remote", "python"]})
+    dyn.add_record("tara", "applications", {"title": "Gamma", "score": 5, "tags": ["office"]})
+    hits = dyn.filter_records("tara", "applications",
+                              {"score": {"gte": 3}, "tags": {"contains": "remote"}},
+                              fields=["title", "score"], order_by="score", limit=10)
+    assert [r["data"] for r in hits] == [
+        {"title": "Beta", "score": 8}, {"title": "Alpha", "score": 3}]
+    assert len(dyn.filter_records("tara", "applications", {"title": {"in": ["Gamma"]}})) == 1
+    with pytest.raises(SchemaError):
+        dyn.filter_records("tara", "applications", {"missing": "x"})
+
+
+def test_archived_store_blocks_record_mutation(dyn):
+    _approved(dyn)
+    rec = dyn.add_record("tara", "hotel_reservations", HOTEL_RECORD)
+    dyn.archive("tara", "hotel_reservations")
+    assert dyn.get_record("tara", "hotel_reservations", rec["id"])["id"] == rec["id"]
+    with pytest.raises(DynStoreConflict):
+        dyn.update_record("tara", "hotel_reservations", rec["id"], {"city": "Madrid"})
+    with pytest.raises(DynStoreConflict):
+        dyn.delete_record("tara", "hotel_reservations", rec["id"])

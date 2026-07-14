@@ -12,7 +12,8 @@ Schema format (deliberately tiny, validated locally, no dependencies):
         "notes":      {"type": "string", "required": false}
     }}
 
-Types: string | number | integer | boolean | date (date = "YYYY-MM-DD" string).
+Types: string | number | integer | boolean | date | string_list | object |
+object_list (date = "YYYY-MM-DD" string).
 Fields are required unless "required": false. Unknown fields in a record are
 rejected. This subset covers slice-two needs; JSON Schema can replace it
 behind validate_record() later if it ever falls short.
@@ -57,7 +58,8 @@ CREATE TABLE IF NOT EXISTS dynamic_records (
     store_name TEXT NOT NULL,
     schema_version INTEGER NOT NULL,       -- version the record was validated against
     data TEXT NOT NULL,
-    created_at REAL NOT NULL
+    created_at REAL NOT NULL,
+    updated_at REAL
 );
 CREATE INDEX IF NOT EXISTS idx_dynrec ON dynamic_records(profile_id, store_name);
 CREATE TABLE IF NOT EXISTS store_audit (
@@ -71,7 +73,8 @@ CREATE TABLE IF NOT EXISTS store_audit (
 );
 """
 
-FIELD_TYPES = {"string", "number", "integer", "boolean", "date"}
+FIELD_TYPES = {"string", "number", "integer", "boolean", "date",
+               "string_list", "object", "object_list"}
 NAME_RE = re.compile(r"^[a-z][a-z0-9_]{1,63}$")
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
@@ -123,6 +126,11 @@ def validate_record(schema: dict, data: dict) -> None:
             or (ftype == "integer" and isinstance(value, int) and not isinstance(value, bool))
             or (ftype == "number" and isinstance(value, (int, float)) and not isinstance(value, bool))
             or (ftype == "date" and isinstance(value, str) and _valid_date(value))
+            or (ftype == "string_list" and isinstance(value, list)
+                and all(isinstance(item, str) for item in value))
+            or (ftype == "object" and isinstance(value, dict))
+            or (ftype == "object_list" and isinstance(value, list)
+                and all(isinstance(item, dict) for item in value))
         )
         if not ok:
             raise SchemaError(f"field {fname!r}: expected {ftype}, got {value!r}")
@@ -134,6 +142,11 @@ class DynamicStores:
     def __init__(self, store: Store):
         self._store = store
         self.db.executescript(DYN_SCHEMA)
+        columns = {r["name"] for r in self.db.execute(
+            "PRAGMA table_info(dynamic_records)").fetchall()}
+        if "updated_at" not in columns:
+            with self.db:
+                self.db.execute("ALTER TABLE dynamic_records ADD COLUMN updated_at REAL")
 
     @property
     def db(self):
@@ -293,10 +306,75 @@ class DynamicStores:
             params.append(f"%{contains}%")
         sql += " ORDER BY created_at DESC LIMIT ?"
         params.append(limit)
-        return [{"id": r["id"], "store": r["store_name"],
-                 "schema_version": r["schema_version"],
-                 "data": json.loads(r["data"]), "created_at": r["created_at"]}
-                for r in self.db.execute(sql, params).fetchall()]
+        return [self._record_dict(r) for r in self.db.execute(sql, params).fetchall()]
+
+    def get_record(self, profile_id: str, name: str, record_id: str,
+                   fields: list[str] | None = None) -> dict:
+        self._require_queryable(profile_id, name)
+        row = self._require_record(profile_id, name, record_id)
+        return self._record_dict(row, fields)
+
+    def update_record(self, profile_id: str, name: str, record_id: str,
+                      patch: dict) -> dict:
+        self._require_writable(profile_id, name)
+        if not isinstance(patch, dict) or not patch:
+            raise SchemaError("patch must be a non-empty object")
+        row = self._require_record(profile_id, name, record_id)
+        schema_row = self.db.execute(
+            "SELECT schema FROM dynamic_stores WHERE profile_id=? AND name=? AND version=?",
+            (profile_id, name, row["schema_version"])).fetchone()
+        if schema_row is None:
+            raise DynStoreConflict("record schema version no longer exists")
+        data = {**json.loads(row["data"]), **patch}
+        validate_record(json.loads(schema_row["schema"]), data)
+        now = time.time()
+        with self.db:
+            self.db.execute("UPDATE dynamic_records SET data=?, updated_at=? WHERE id=?",
+                            (json.dumps(data), now, record_id))
+        self._audit(profile_id, name, "record_updated", profile_id, record_id)
+        return self.get_record(profile_id, name, record_id)
+
+    def delete_record(self, profile_id: str, name: str, record_id: str) -> dict:
+        self._require_writable(profile_id, name)
+        self._require_record(profile_id, name, record_id)
+        with self.db:
+            self.db.execute("DELETE FROM dynamic_records WHERE id=?", (record_id,))
+        self._audit(profile_id, name, "record_deleted", profile_id, record_id)
+        return {"deleted": True, "record_id": record_id, "store": name}
+
+    def filter_records(self, profile_id: str, name: str,
+                       where: dict | None = None, fields: list[str] | None = None,
+                       order_by: str | None = None, descending: bool = True,
+                       limit: int = 50) -> list[dict]:
+        schema = self._require_queryable(profile_id, name)
+        field_defs = schema["fields"]
+        where = where or {}
+        if not isinstance(where, dict):
+            raise SchemaError("where must be an object")
+        requested = set(where)
+        if fields:
+            requested.update(fields)
+        if order_by:
+            requested.add(order_by)
+        unknown = requested - set(field_defs)
+        if unknown:
+            raise SchemaError(f"unknown query fields: {sorted(unknown)}")
+        if not 1 <= limit <= 200:
+            raise SchemaError("limit must be between 1 and 200")
+        rows = self.db.execute(
+            "SELECT * FROM dynamic_records WHERE profile_id=? AND store_name=?",
+            (profile_id, name)).fetchall()
+        records = [self._record_dict(r) for r in rows]
+        records = [r for r in records if self._matches(r["data"], where)]
+        if order_by:
+            records.sort(key=lambda r: (r["data"].get(order_by) is None,
+                                        r["data"].get(order_by)), reverse=descending)
+        else:
+            records.sort(key=lambda r: r["created_at"], reverse=descending)
+        if fields:
+            records = [{**r, "data": {k: r["data"][k] for k in fields
+                                       if k in r["data"]}} for r in records]
+        return records[:limit]
 
     # -- introspection -----------------------------------------------------------
 
@@ -362,6 +440,82 @@ class DynamicStores:
         if row is None:
             raise DynStoreNotFound("-", store_id)
         return row
+
+    def _require_queryable(self, profile_id: str, name: str) -> dict:
+        latest = self._require(profile_id, name)
+        row = self._latest_with_status(profile_id, name, ("approved", "archived"))
+        if row is None:
+            raise DynStoreConflict(f"store {name!r} is {latest['status']}; not queryable")
+        return json.loads(row["schema"])
+
+    def _require_writable(self, profile_id: str, name: str):
+        latest = self._require(profile_id, name)
+        row = self._latest_with_status(profile_id, name, ("approved",))
+        if row is None:
+            raise DynStoreConflict(
+                f"store {name!r} has no approved version (latest is"
+                f" v{latest['version']}, {latest['status']}); writes rejected")
+        return row
+
+    def _require_record(self, profile_id: str, name: str, record_id: str):
+        row = self.db.execute(
+            "SELECT * FROM dynamic_records WHERE id=? AND profile_id=? AND store_name=?",
+            (record_id, profile_id, name)).fetchone()
+        if row is None:
+            raise DynStoreNotFound(profile_id, f"{name}/{record_id}")
+        return row
+
+    @staticmethod
+    def _record_dict(row, fields: list[str] | None = None) -> dict:
+        result = dict(row)
+        data = json.loads(result["data"])
+        if fields is not None:
+            data = {field: data[field] for field in fields if field in data}
+        result["data"] = data
+        result["store"] = result.pop("store_name")
+        return result
+
+    @staticmethod
+    def _matches(data: dict, where: dict) -> bool:
+        def compare(value, operator: str, operand) -> bool:
+            try:
+                if operator == "eq":
+                    return value == operand
+                if operator == "ne":
+                    return value != operand
+                if operator == "gt":
+                    return value is not None and value > operand
+                if operator == "gte":
+                    return value is not None and value >= operand
+                if operator == "lt":
+                    return value is not None and value < operand
+                if operator == "lte":
+                    return value is not None and value <= operand
+                if operator == "contains":
+                    if isinstance(value, str) and isinstance(operand, str):
+                        return operand.casefold() in value.casefold()
+                    if isinstance(value, list):
+                        return operand in value
+                    return False
+                if operator == "in":
+                    return isinstance(operand, list) and value in operand
+            except TypeError:
+                return False
+            raise SchemaError(
+                f"unknown filter operator {operator!r}; use eq, ne, gt, gte, "
+                "lt, lte, contains, or in")
+
+        for field, condition in where.items():
+            value = data.get(field)
+            if isinstance(condition, dict):
+                if not condition:
+                    raise SchemaError(f"filter for {field!r} must not be empty")
+                for operator, operand in condition.items():
+                    if not compare(value, operator, operand):
+                        return False
+            elif value != condition:
+                return False
+        return True
 
     def _audit(self, profile_id: str, name: str, action: str, actor: str, detail: str):
         with self.db:

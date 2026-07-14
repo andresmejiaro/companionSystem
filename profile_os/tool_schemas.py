@@ -211,7 +211,8 @@ DYNAMIC_FIELD = {
     "properties": {
         "type": {
             "type": "string",
-            "enum": ["string", "number", "integer", "boolean", "date"],
+            "enum": ["string", "number", "integer", "boolean", "date",
+                     "string_list", "object", "object_list"],
         },
         "required": {"type": "boolean"},
     },
@@ -245,6 +246,7 @@ DYNAMIC_STORE = {
         },
         "rejection_reason": STRING_OR_NULL,
         "created_at": {"type": "number"},
+        "updated_at": NUMBER_OR_NULL,
         "approved_at": NUMBER_OR_NULL,
         "rejected_at": NUMBER_OR_NULL,
         "approval_id": {"type": "string"},

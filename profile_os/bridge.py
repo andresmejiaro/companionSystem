@@ -109,6 +109,10 @@ BRIDGE_OUTPUT_SCHEMAS = {
     "add_record": DYNAMIC_RECORD,
     "bulk_add_records": array_of(DYNAMIC_RECORD),
     "query_records": array_of(DYNAMIC_RECORD),
+    "filter_records": array_of(DYNAMIC_RECORD),
+    "get_record": DYNAMIC_RECORD,
+    "update_record": DYNAMIC_RECORD,
+    "delete_record": {"type": "object"},
     "audit": array_of(AUDIT_EVENT),
 }
 
@@ -236,6 +240,21 @@ TOOLS = [
            "contains": {"type": "string"},
            "limit": {"type": "integer", "default": 50}},
           ["profile_id", "store_name"]),
+    _tool("filter_records", "Filter, sort, and project fields from dynamic records.",
+          {"profile_id": _PID, "store_name": {"type": "string"},
+           "where": {"type": "object"}, "fields": {"type": "array", "items": {"type": "string"}},
+           "order_by": {"type": "string"}, "descending": {"type": "boolean"},
+           "limit": {"type": "integer", "default": 50}}, ["profile_id", "store_name"]),
+    _tool("get_record", "Read one dynamic record, optionally selecting fields.",
+          {"profile_id": _PID, "store_name": {"type": "string"}, "record_id": {"type": "string"},
+           "fields": {"type": "array", "items": {"type": "string"}}},
+          ["profile_id", "store_name", "record_id"]),
+    _tool("update_record", "Patch one dynamic record and revalidate its complete data.",
+          {"profile_id": _PID, "store_name": {"type": "string"}, "record_id": {"type": "string"},
+           "patch": {"type": "object"}}, ["profile_id", "store_name", "record_id", "patch"]),
+    _tool("delete_record", "Delete one dynamic record.",
+          {"profile_id": _PID, "store_name": {"type": "string"}, "record_id": {"type": "string"}},
+          ["profile_id", "store_name", "record_id"]),
     _tool("audit", "Read the store lifecycle audit trail (profile-wide or one store).",
           {"profile_id": _PID,
            "store_name": {"type": "string"},
@@ -460,6 +479,25 @@ class ToolBridge:
         return self._request(
             "GET", f"/profiles/{profile_id}/stores/{store_name}/records",
             params={"contains": contains, "limit": limit})
+
+    def filter_records(self, profile_id: str, store_name: str, where: dict | None = None,
+                       fields: list[str] | None = None, order_by: str | None = None,
+                       descending: bool = True, limit: int = 50):
+        return self._request("POST", f"/profiles/{profile_id}/stores/{store_name}/records/query",
+                             json={"where": where or {}, "fields": fields, "order_by": order_by,
+                                   "descending": descending, "limit": limit})
+
+    def get_record(self, profile_id: str, store_name: str, record_id: str,
+                   fields: list[str] | None = None):
+        return self._request("GET", f"/profiles/{profile_id}/stores/{store_name}/records/{record_id}",
+                             params={"fields": ",".join(fields) if fields else None})
+
+    def update_record(self, profile_id: str, store_name: str, record_id: str, patch: dict):
+        return self._request("PATCH", f"/profiles/{profile_id}/stores/{store_name}/records/{record_id}",
+                             json={"patch": patch})
+
+    def delete_record(self, profile_id: str, store_name: str, record_id: str):
+        return self._request("DELETE", f"/profiles/{profile_id}/stores/{store_name}/records/{record_id}")
 
     def audit(self, profile_id: str, store_name: str | None = None,
               limit: int = 100):

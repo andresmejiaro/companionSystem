@@ -251,6 +251,17 @@ def test_dynamic_store_lifecycle_via_api(client):
     r = client.post("/profiles/tara/stores/hotel_reservations/records",
                     json={"data": {"hotel_name": "Grand", "city": "Sevilla"}})
     assert r.status_code == 201
+    record_id = r.json()["id"]
+
+    got = client.get(f"/profiles/tara/stores/hotel_reservations/records/{record_id}",
+                     params={"fields": "hotel_name"})
+    assert got.status_code == 200 and got.json()["data"] == {"hotel_name": "Grand"}
+    updated = client.patch(f"/profiles/tara/stores/hotel_reservations/records/{record_id}",
+                           json={"patch": {"notes": "quiet room"}})
+    assert updated.status_code == 200 and updated.json()["data"]["notes"] == "quiet room"
+    filtered = client.post("/profiles/tara/stores/hotel_reservations/records/query",
+                           json={"where": {"city": "Sevilla"}, "fields": ["hotel_name"]})
+    assert filtered.status_code == 200 and filtered.json()[0]["data"] == {"hotel_name": "Grand"}
 
     # invalid record → 422
     r = client.post("/profiles/tara/stores/hotel_reservations/records",
