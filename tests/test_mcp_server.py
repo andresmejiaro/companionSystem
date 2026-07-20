@@ -264,6 +264,9 @@ def test_initialize_and_list_tools(tmp_path, monkeypatch):
         assert set(tool["annotations"]) == {"readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint"}
     list_profiles = next(tool for tool in tools if tool["name"] == "list_profiles")
     assert list_profiles["outputSchema"]["properties"]["items"]["type"] == "array"
+    discover = next(tool for tool in tools if tool["name"] == "discover_companions")
+    assert "start session as Rita" in discover["description"]
+    assert discover["annotations"]["readOnlyHint"] is True
     closeout = next(tool for tool in tools if tool["name"] == "closeout")
     assert set(closeout["inputSchema"]["properties"]) == {
         "profile_id", "facts", "texture", "exchange", "notes",
@@ -321,6 +324,8 @@ def test_mcp_tool_flow_and_logging(tmp_path, caplog):
 
     profiles = _call_tool(client, "list_profiles", {}).json()["result"]
     assert any(item["id"] == "sidra" for item in profiles["structuredContent"]["items"])
+    discovered = _call_tool(client, "discover_companions", {}).json()["result"]
+    assert any(item["id"] == "tara" for item in discovered["structuredContent"]["items"])
 
     with caplog.at_level(logging.INFO, logger="profile_os.mcp_server"):
         boot = _call_tool(client, "boot_profile", {"profile_id": "sidra"}).json()
@@ -395,6 +400,7 @@ def test_successful_structured_content_matches_declared_output_schema():
         return result["structuredContent"]
 
     call_and_validate("list_profiles", {})
+    call_and_validate("discover_companions", {})
     call_and_validate("boot_profile", {"profile_id": "sidra"})
     call_and_validate("remember", {"profile_id": "tara", "kind": "note", "content": "x"})
     call_and_validate("search_memories", {"profile_id": "tara", "query": "x"})

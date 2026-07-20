@@ -402,6 +402,7 @@ _MEMORY_KINDS = MEMORY_KINDS
 
 MCP_OUTPUT_SCHEMAS = {
     "whoami": IDENTITY,
+    "discover_companions": mcp_items(PROFILE),
     "list_profiles": mcp_items(PROFILE),
     "boot_profile": BOOT,
     "start_session": START_SESSION,
@@ -441,7 +442,7 @@ MCP_OUTPUT_SCHEMAS = {
 
 
 _READ_ONLY_TOOLS = {
-    "whoami", "list_profiles", "boot_profile", "start_session", "search_memories",
+    "whoami", "discover_companions", "list_profiles", "boot_profile", "start_session", "search_memories",
     "read_inbox", "list_files", "read_file", "list_stores", "query_records",
     "filter_records", "get_record", "list_projects", "query_project_records",
 }
@@ -471,9 +472,21 @@ MCP_TOOLS = [
         [],
     ),
     _tool(
+        "discover_companions",
+        "Discover Companions",
+        "Use this first when the user names a companion (for example, 'start session as Rita')"
+        " but has not supplied its exact profile_id. This is the routing step: it returns"
+        " every available companion with its canonical id, display_name, and description."
+        " Match the requested name to a returned companion, then pass that exact id to"
+        " start_session. Do not use whoami for companion discovery.",
+        {},
+        [],
+    ),
+    _tool(
         "list_profiles",
         "List Profiles",
-        "List profiles visible to this connector's backend credential.",
+        "Compatibility name for discover_companions. Use discover_companions when you"
+        " need to route a user request such as 'talk to Rita' or 'start session as Rita'.",
         {},
         [],
     ),
@@ -487,7 +500,9 @@ MCP_TOOLS = [
     _tool(
         "start_session",
         "Start Session",
-        "Call this on your first response in a conversation instead of boot_profile:"
+        "Call this on your first response in a conversation instead of boot_profile."
+        " profile_id must be the exact canonical id returned by discover_companions; if"
+        " the user provided only a name, call discover_companions first. This tool"
         " returns whoami identity, prompts, compact_state, a bounded semantic"
         " memory slice (no IDs, tags, or full history), and the current server"
         " date/time (server_time) in one call.",
@@ -962,7 +977,7 @@ class MCPToolRunner:
     def call(self, name: str, arguments: dict[str, Any]) -> Any:
         if name == "whoami":
             return self.bridge.whoami()
-        if name == "list_profiles":
+        if name in {"discover_companions", "list_profiles"}:
             return self.bridge.list_profiles()
         if name == "boot_profile":
             return self.bridge.boot_profile(arguments["profile_id"])
@@ -1292,8 +1307,9 @@ def _handle_rpc(message: dict[str, Any], app: FastAPI) -> dict[str, Any]:
                 "version": SERVER_VERSION,
             },
             "instructions": (
-                "Use list_profiles to discover available profiles. When asked to act as "
-                "a companion, start with start_session; use boot_profile only when raw "
+                "When a user names a companion but not its exact profile id, call "
+                "discover_companions first, then pass the returned canonical id to "
+                "start_session. list_profiles is a compatibility alias. Use boot_profile only when raw "
                 "memory-event IDs/tags or full profile fields are needed. The returned "
                 "allowed_tools is guidance for which tools this profile should use; it is "
                 "not enforced server-side."

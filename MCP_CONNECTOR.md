@@ -22,6 +22,7 @@ Exposed MCP tools:
 - `start_session`
 - `propose_prompt_edit`
 - `update_own_description`
+- `discover_companions` (the first step for requests phrased with a companion name)
 - `list_profiles`
 - `boot_profile`
 - `remember`
