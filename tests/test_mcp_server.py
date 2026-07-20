@@ -231,7 +231,9 @@ def _call_tool(client: ThreadedASGIClient, name: str, arguments: dict, request_i
     )
 
 
-def test_initialize_and_list_tools(tmp_path):
+def test_initialize_and_list_tools(tmp_path, monkeypatch):
+    # Schema-capable clients can opt in to output schemas.
+    monkeypatch.setenv("MCP_OMIT_OUTPUT_SCHEMAS", "0")
     client = _mcp_client()
 
     r = client.post(
@@ -288,6 +290,16 @@ def test_list_tools_can_omit_output_schemas(tmp_path, monkeypatch):
     assert {tool["name"] for tool in tools} == {tool["name"] for tool in MCP_TOOLS}
     for tool in tools:
         assert set(tool) == {"name", "title", "description", "inputSchema", "annotations"}
+
+
+def test_list_tools_omit_output_schemas_by_default(tmp_path, monkeypatch):
+    monkeypatch.delenv("MCP_OMIT_OUTPUT_SCHEMAS", raising=False)
+    client = _mcp_client()
+    r = client.post("/mcp", json=_rpc("tools/list"), headers=_bearer())
+    assert r.status_code == 200
+    tools = r.json()["result"]["tools"]
+    discovered = next(tool for tool in tools if tool["name"] == "list_profiles")
+    assert "outputSchema" not in discovered
 
 
 def test_post_responses_use_sse_when_accepted(tmp_path):

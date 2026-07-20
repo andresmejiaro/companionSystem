@@ -802,9 +802,11 @@ MCP_TOOL_NAMES = {tool["name"] for tool in MCP_TOOLS}
 
 
 def _advertised_tools() -> list[dict[str, Any]]:
-    # ChatGPT's connector setup rejects tool lists it cannot validate;
-    # MCP_OMIT_OUTPUT_SCHEMAS=1 serves the same tools without outputSchema.
-    if os.environ.get("MCP_OMIT_OUTPUT_SCHEMAS") != "1":
+    # ChatGPT's connector setup rejects the full tool list when it cannot
+    # validate an output schema.  Keep discovery reliably available by
+    # default; operators with a host that supports output schemas can opt in
+    # with MCP_OMIT_OUTPUT_SCHEMAS=0.
+    if os.environ.get("MCP_OMIT_OUTPUT_SCHEMAS", "1") == "0":
         return MCP_TOOLS
     return [{k: v for k, v in tool.items() if k != "outputSchema"}
             for tool in MCP_TOOLS]

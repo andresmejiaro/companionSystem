@@ -41,9 +41,11 @@ Exposed MCP tools:
 - `query_records`
 - `add_record`
 
-Each tool definition includes an `outputSchema` for successful
-`structuredContent`. List-returning tools expose structured content as
-`{"items": [...]}`.
+List-returning tool results expose structured content as `{"items": [...]}`.
+For ChatGPT compatibility, `outputSchema` is omitted from advertised tool
+definitions by default; this avoids a strict schema validator rejecting the
+entire tool list (including `list_profiles`). Set `MCP_OMIT_OUTPUT_SCHEMAS=0`
+only for a connector known to support the published schemas.
 
 Not exposed as MCP tools: approve, reject, archive, audit, profile
 management, grant management, or credential management.

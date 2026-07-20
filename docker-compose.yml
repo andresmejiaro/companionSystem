@@ -46,7 +46,10 @@ services:
       MCP_CONNECTOR_TOKEN: ${MCP_CONNECTOR_TOKEN:-}
       MCP_CONNECTOR_TOKENS: ${MCP_CONNECTOR_TOKENS:-}
       MCP_OAUTH_SIGNING_KEY: ${MCP_OAUTH_SIGNING_KEY:-}
-      MCP_OMIT_OUTPUT_SCHEMAS: ${MCP_OMIT_OUTPUT_SCHEMAS:-0}
+      # Some ChatGPT MCP clients reject an entire tools/list response when a
+      # complex outputSchema is present.  Omit them by default so
+      # list_profiles (companion discovery) stays available.
+      MCP_OMIT_OUTPUT_SCHEMAS: ${MCP_OMIT_OUTPUT_SCHEMAS:-1}
       MCP_AUTH_REQUIRED: ${MCP_AUTH_REQUIRED:-1}
       MCP_OAUTH_ACCESS_TOKEN_TTL_SECONDS: ${MCP_OAUTH_ACCESS_TOKEN_TTL_SECONDS:-}
       MCP_OAUTH_STATE_FILE: /app/oauth-state/clients.json
