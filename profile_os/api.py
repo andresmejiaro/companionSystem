@@ -72,6 +72,8 @@ class ProfileCreateTotpIn(BaseModel):
     display_name: str
     base_prompt: str = ""
     role_prompt: str = ""
+    description: str = Field(default="", max_length=200)
+    signature: str = Field(default="", max_length=5)
     allowed_tools: list[str] | None = None
     totp_code: str
 
@@ -128,6 +130,8 @@ class ProfileCreateIn(BaseModel):
     display_name: str
     base_prompt: str = ""
     role_prompt: str = ""
+    description: str = Field(default="", max_length=200)
+    signature: str = Field(default="", max_length=5)
 
 
 class EnrollIn(BaseModel):
@@ -142,7 +146,8 @@ class PromptEditProposeIn(BaseModel):
 
 
 class DescriptionIn(BaseModel):
-    description: str
+    description: str | None = Field(default=None, max_length=200)
+    signature: str | None = Field(default=None, max_length=5)
 
 
 class ApprovalDecideIn(BaseModel):
@@ -445,7 +450,8 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
                     403, f"principal already owns {count} profiles"
                         f" (limit {MAX_PROFILES_PER_PRINCIPAL})")
         profile = store.create_profile(
-            body.id, body.display_name, body.base_prompt, body.role_prompt)
+            body.id, body.display_name, body.base_prompt, body.role_prompt,
+            description=body.description, signature=body.signature)
         if principal_id is not None:
             for op in OWNER_OPS:
                 access.grant(principal_id, op, profile_id=body.id)
@@ -475,6 +481,7 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
             raise HTTPException(409, f"profile {body.id!r} already exists")
         profile = store.create_profile(
             body.id, body.display_name, body.base_prompt, body.role_prompt,
+            description=body.description, signature=body.signature,
             allowed_tools=body.allowed_tools)
         access.record_audit(admin_id, "create_profile_totp", body.id)
         return profile
@@ -537,16 +544,17 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
         """One-call model hydration packet for a companion's first turn.
 
         It carries semantic context, not database records: the current
-        handoff and bounded boot-memory slice, with each memory reduced to
-        kind/content. Full history, IDs, tags, timestamps, and closeout
-        archives stay on their dedicated tools.
+        handoff, a bounded boot-memory slice, and a few recent interaction
+        anchors. Each memory is reduced to kind/content; each anchor contains
+        only texture and a short exchange. Full history, IDs, tags,
+        timestamps, and closeout archives stay on their dedicated tools.
         """
         principal_id = _require("boot", profile_id, request)
         booted = _wrap(store.boot, profile_id)
         profile = booted["profile"]
         booted["profile"] = {
             key: profile[key] for key in
-            ("id", "display_name", "description", "allowed_tools", "memory_policy", "closeout_rules")
+            ("id", "display_name", "description", "signature", "allowed_tools", "memory_policy", "closeout_rules")
             if key in profile
         }
         booted.pop("state_updated_at", None)
@@ -565,9 +573,16 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
             **booted,
             "identity": identity_content,
             "memories": hydrated_memories,
+            # A bounded chronological few-shot set for voice and relational
+            # continuity; this is not a closeout-history export.
+            "recent_exchanges": _wrap(store.recent_exchanges, profile_id, 4),
             # Deliberately only a flag: inbox contents stay behind read_inbox,
             # but a newly hydrated companion knows when to check it.
             "you_got_mail": bool(_wrap(store.list_inbox, profile_id, True, 1)),
+            "routing_guidance": "When a request is outside your lane, invite the user to use the right companion. Available companions: " + "; ".join(
+                f"{item['display_name']}{(' ' + item['signature']) if item['signature'] else ''} — {item['description']}"
+                for item in store.list_profiles() if item["id"] != profile_id
+            ),
             "server_time": {
                 "unix": now,
                 "iso": datetime.fromtimestamp(now, tz=timezone.utc).isoformat(),
@@ -780,7 +795,7 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
         who to ask via list_profiles instead of a human hardcoding names
         into prompts."""
         _require("manage_profile", profile_id, request)
-        return _wrap(store.update_description, profile_id, body.description)
+        return _wrap(store.update_description, profile_id, body.description, body.signature)
 
     _APPROVAL_OPS = ["approvals:decide", "approvals:totp_decide"]
 

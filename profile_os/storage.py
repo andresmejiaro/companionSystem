@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS profiles (
     id TEXT PRIMARY KEY,
     display_name TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
+    signature TEXT NOT NULL DEFAULT '',
     allowed_tools TEXT NOT NULL DEFAULT '[]',      -- JSON list
     memory_policy TEXT NOT NULL DEFAULT '{}',      -- JSON object
     closeout_rules TEXT NOT NULL DEFAULT '',       -- free text rules
@@ -95,10 +96,13 @@ class Store:
         self._local = threading.local()
         self.db.executescript(SCHEMA)
         columns = {row["name"] for row in self.db.execute("PRAGMA table_info(closeouts)")}
+        profile_columns = {row["name"] for row in self.db.execute("PRAGMA table_info(profiles)")}
         with self.db:
             for name in ("facts", "texture", "exchange"):
                 if name not in columns:
                     self.db.execute(f"ALTER TABLE closeouts ADD COLUMN {name} TEXT NOT NULL DEFAULT ''")
+            if "signature" not in profile_columns:
+                self.db.execute("ALTER TABLE profiles ADD COLUMN signature TEXT NOT NULL DEFAULT ''")
 
     @property
     def db(self) -> sqlite3.Connection:
@@ -125,6 +129,7 @@ class Store:
         base_prompt: str,
         role_prompt: str,
         description: str = "",
+        signature: str = "",
         allowed_tools: list[str] | None = None,
         memory_policy: dict | None = None,
         closeout_rules: str = "",
@@ -132,12 +137,16 @@ class Store:
     ) -> dict:
         if not profile_id or not profile_id.replace("-", "").replace("_", "").isalnum():
             raise MalformedRecord("profile_id must be a non-empty slug (alnum, - or _)")
+        if not isinstance(description, str) or len(description) > 200:
+            raise MalformedRecord("description must be a string of at most 200 characters")
+        if not isinstance(signature, str) or len(signature) > 5:
+            raise MalformedRecord("signature must be a string of at most 5 characters")
         now = time.time()
         with self.db:
             self.db.execute(
-                "INSERT INTO profiles (id, display_name, description, allowed_tools,"
-                " memory_policy, closeout_rules, created_at) VALUES (?,?,?,?,?,?,?)",
-                (profile_id, display_name, description,
+                "INSERT INTO profiles (id, display_name, description, signature, allowed_tools,"
+                " memory_policy, closeout_rules, created_at) VALUES (?,?,?,?,?,?,?,?)",
+                (profile_id, display_name, description, signature,
                  json.dumps(allowed_tools or []), json.dumps(memory_policy or {}),
                  closeout_rules, now),
             )
@@ -172,6 +181,7 @@ class Store:
             "id": row["id"],
             "display_name": row["display_name"],
             "description": row["description"],
+            "signature": row["signature"],
             "allowed_tools": json.loads(row["allowed_tools"]),
             "memory_policy": json.loads(row["memory_policy"]),
             "closeout_rules": row["closeout_rules"],
@@ -213,18 +223,30 @@ class Store:
             (pdir / "role_prompt.md").write_text(role_prompt)
         return self.get_profile(profile_id)
 
-    def update_description(self, profile_id: str, description: str) -> dict:
+    def update_description(self, profile_id: str, description: str | None = None,
+                           signature: str | None = None) -> dict:
         """Self-service, no approval: a companion maintains its own one-line
         'what I do', so other companions can discover who to ask via
         list_profiles instead of a human hardcoding names into prompts.
         Unlike base_prompt/role_prompt this isn't gated by TOTP — it's
         discovery metadata, not identity/behavior."""
         self._require_profile(profile_id)
-        if not isinstance(description, str):
-            raise MalformedRecord("description must be a string")
+        if description is None and signature is None:
+            raise MalformedRecord("description or signature is required")
+        if description is not None and (not isinstance(description, str) or len(description) > 200):
+            raise MalformedRecord("description must be a string of at most 200 characters")
+        if signature is not None and (not isinstance(signature, str) or len(signature) > 5):
+            raise MalformedRecord("signature must be a string of at most 5 characters")
+        changes, values = [], []
+        if description is not None:
+            changes.append("description=?")
+            values.append(description)
+        if signature is not None:
+            changes.append("signature=?")
+            values.append(signature)
+        values.append(profile_id)
         with self.db:
-            self.db.execute("UPDATE profiles SET description=? WHERE id=?",
-                            (description, profile_id))
+            self.db.execute(f"UPDATE profiles SET {', '.join(changes)} WHERE id=?", values)
         return self.get_profile(profile_id)
 
     def recent_closeouts(self, profile_id: str, limit: int = 2) -> list[dict]:
@@ -234,6 +256,23 @@ class Store:
             (profile_id, limit)).fetchall()
         return [{"id": r["id"], "notes": r["notes"], "new_state": r["new_state"],
                  "created_at": r["created_at"]} for r in rows]
+
+    def recent_exchanges(self, profile_id: str, limit: int = 4) -> list[dict]:
+        """Return a small chronological set of semantic few-shot anchors.
+
+        This is intentionally not a closeout archive: IDs, timestamps, facts,
+        and notes remain out of session hydration. The model only receives the
+        prior texture and verbatim exchanges that help it continue the voice.
+        """
+        self._require_profile(profile_id)
+        rows = self.db.execute(
+            "SELECT texture, exchange FROM closeouts WHERE profile_id=? "
+            "ORDER BY created_at DESC LIMIT ?", (profile_id, limit)
+        ).fetchall()
+        return [
+            {"texture": row["texture"], "exchange": row["exchange"]}
+            for row in reversed(rows)
+        ]
 
     def all_memories(self, profile_id: str) -> list[dict]:
         self._require_profile(profile_id)

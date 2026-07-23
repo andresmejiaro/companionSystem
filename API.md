@@ -13,11 +13,11 @@ subset of these operations over `POST /mcp` and `GET /mcp`; see
 - `GET /profiles` → list of profile objects
 - `GET /profiles/{id}` → profile object:
   ```json
-  {"id": "tara", "display_name": "Tara", "description": "...",
+  {"id": "tara", "display_name": "Tara", "description": "...", "signature": "🍎",
    "allowed_tools": ["log_food"], "memory_policy": {"kinds": ["fact"]},
    "closeout_rules": "...", "created_at": 1751640000.0}
   ```
-- `POST /profiles` `{id, display_name, base_prompt, role_prompt}` → 201,
+- `POST /profiles` `{id, display_name, description?, signature?, base_prompt?, role_prompt?}` → 201,
   profile object. Requires the global `create_profile` grant; the creating
   principal automatically receives the owner grant bundle on the new
   profile (see ACCESS_CONTROL.md). `id` must match `[a-z0-9_-]{1,64}`; 409
@@ -26,7 +26,7 @@ subset of these operations over `POST /mcp` and `GET /mcp`; see
   Permanently removes the profile row, compact state, memories, legacy
   domain records, dynamic stores/records/audit, prompt files, and revokes
   any grants scoped to that profile id. 404 if unknown.
-- `POST /profiles/totp-create` `{id, display_name, base_prompt?, role_prompt?,
+- `POST /profiles/totp-create` `{id, display_name, description?, signature?, base_prompt?, role_prompt?,
   totp_code}` → 201, profile object. Public at the transport layer — no
   bearer header — authenticated by a live TOTP code alone (verified
   against the single TOTP-enrolled admin), rate-limited (5/min per IP).
@@ -65,7 +65,7 @@ subset of these operations over `POST /mcp` and `GET /mcp`; see
 - `POST /approvals/{id}/decide` `{"approve": true|false, "totp_code": "..."}`
   → the approval record. Approving requires a valid, unused TOTP code
   (401 without one); rejecting does not. 409 if already decided.
-- `PUT /profiles/{id}/description` `{description}` → 200, updated profile.
+- `PUT /profiles/{id}/description` `{description?, signature?}` → 200, updated profile.
   Requires `manage_profile`. Self-service, no approval — unlike prompt
   edits this is discovery metadata (surfaced via `GET /profiles`), not
   behavior, so it takes effect immediately.
@@ -120,12 +120,18 @@ belong as a structured dynamic-store record.
   if it doesn't exist.
 
 - ★ `POST /profiles/{id}/closeout` — end session. Body:
-  `{"notes": "free text", "new_state": "non-empty compact state"}` → 201.
+  `{"facts": "durable session facts", "texture": "concrete rapport/tone cues",
+  "exchange": "short verbatim meaningful excerpt", "notes": "optional audit note"}` → 201.
   Replaces compact state and appends to `closeouts.jsonl`.
   **Compaction boundary:** the backend does not summarize. The *caller*
-  (the assistant/model running the session) produces `new_state`; the backend
-  only validates it is non-empty and stores it verbatim. `notes` is an audit
-  trail, never an input to state.
+  (the assistant/model running the session) produces the compact state from
+  those fields; the backend only validates and stores it verbatim. `texture`
+  should preserve concrete, still-relevant relationship cues rather than a
+  generic mood label. `notes` is an audit trail, never an input to state.
+
+- `POST /profiles/{id}/session` includes `recent_exchanges`: up to four
+  chronological `{texture, exchange}` anchors from recent closeouts. This is
+  a bounded few-shot continuity aid, not a closeout-history export.
 
 ## Dynamic stores (slice two)
 

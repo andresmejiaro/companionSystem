@@ -271,6 +271,12 @@ def _create_profile_page(values: dict[str, str] | None = None,
 <label>Display name<br>
 <input type="text" name="display_name" value="{_f('display_name')}" required
  style="width:100%;padding:8px;margin:4px 0 16px"></label>
+<label>Description (optional, up to 200 characters)<br>
+<textarea name="description" rows="3" maxlength="200"
+ style="width:100%;padding:8px;margin:4px 0 16px">{_f('description')}</textarea></label>
+<label>Signature (optional, up to 5 characters)<br>
+<input type="text" name="signature" value="{_f('signature')}" maxlength="5"
+ style="width:100%;padding:8px;margin:4px 0 16px"></label>
 <label>Base prompt (optional — can self-define later)<br>
 <textarea name="base_prompt" rows="4"
  style="width:100%;padding:8px;margin:4px 0 16px">{_f('base_prompt')}</textarea></label>
@@ -504,7 +510,8 @@ MCP_TOOLS = [
         " profile_id must be the exact canonical id returned by discover_companions; if"
         " the user provided only a name, call discover_companions first. This tool"
         " returns whoami identity, prompts, compact_state, a bounded semantic"
-        " memory slice (no IDs, tags, or full history), and the current server"
+        " memory slice (no IDs, tags, or full history), up to four recent"
+        " texture/exchange examples for continuity, and the current server"
         " date/time (server_time) in one call.",
         {"profile_id": _PROFILE_ID},
         ["profile_id"],
@@ -532,11 +539,11 @@ MCP_TOOLS = [
     _tool(
         "update_own_description",
         "Update Own Description",
-        "Update your own one-line 'what do I do' description — self-service, no"
-        " approval. Other companions see it via list_profiles to know who to ask"
-        " about what, instead of a human hardcoding names into prompts.",
-        {"profile_id": _PROFILE_ID, "description": {"type": "string"}},
-        ["profile_id", "description"],
+        "Update your own discovery description (max 200 characters) and optional"
+        " emoji signature (max 5 characters) — self-service, no approval.",
+        {"profile_id": _PROFILE_ID, "description": {"type": "string", "maxLength": 200},
+         "signature": {"type": "string", "maxLength": 5}},
+        ["profile_id"],
     ),
     _tool(
         "remember",
@@ -659,11 +666,12 @@ MCP_TOOLS = [
     _tool(
         "closeout",
         "Close Out",
-        "End with facts, texture, and one short verbatim meaningful exchange; notes are optional.",
+        "End with facts, concrete continuity texture (rapport, tone, pacing, or an unresolved concern), and one short verbatim meaningful exchange; notes are optional.",
         {
             "profile_id": _PROFILE_ID,
             "facts": {"type": "string", "maxLength": 1200},
-            "texture": {"type": "string", "maxLength": 700},
+            "texture": {"type": "string", "maxLength": 700,
+                        "description": "Concrete cues that help the next session retain rapport and tone; not a generic adjective. Preserve only what remains relevant."},
             "exchange": {"type": "string", "maxLength": 800,
                          "description": "Verbatim 1–3-turn excerpt; never paraphrase or paste a transcript."},
             "notes": {"type": "string", "maxLength": 700, "default": ""},
@@ -993,7 +1001,8 @@ class MCPToolRunner:
             return self.bridge.retract_approval(arguments["approval_id"])
         if name == "update_own_description":
             return self.bridge.update_own_description(
-                arguments["profile_id"], arguments["description"])
+                arguments["profile_id"], arguments.get("description"),
+                arguments.get("signature"))
         if name == "remember":
             return self.bridge.remember(
                 arguments["profile_id"],
@@ -1628,13 +1637,14 @@ def create_mcp_app(
 
         form = await request.form()
         values = {k: str(form.get(k) or "") for k in
-                 ("id", "display_name", "base_prompt", "role_prompt")}
+                 ("id", "display_name", "description", "signature", "base_prompt", "role_prompt")}
         totp_code = str(form.get("totp_code") or "")
         try:
             created = await run_in_threadpool(
                 app.state.runner.bridge.create_profile_totp,
                 values["id"], values["display_name"],
-                values["base_prompt"], values["role_prompt"], totp_code)
+                values["base_prompt"], values["role_prompt"], totp_code,
+                values["description"], values["signature"])
         except ToolBridgeError as e:
             return HTMLResponse(_create_profile_page(values, error=e.detail),
                                 status_code=e.status_code)

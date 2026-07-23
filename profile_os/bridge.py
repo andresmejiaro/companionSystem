@@ -139,12 +139,11 @@ TOOLS = [
           ["profile_id"]),
     _tool("retract_approval", "Retract your own pending approval proposal.",
           {"approval_id": {"type": "string"}}, ["approval_id"]),
-    _tool("update_own_description", "Update your own one-line 'what do I do' description"
-                                   " — self-service, no approval. Other companions see it"
-                                   " via list_profiles to know who to ask about what,"
-                                   " instead of a human hardcoding names into prompts.",
-          {"profile_id": _PID, "description": {"type": "string"}},
-          ["profile_id", "description"]),
+    _tool("update_own_description", "Update your own discovery description (max 200 characters)"
+                                   " and optional emoji signature (max 5 characters)"
+                                   " — self-service, no approval.",
+          {"profile_id": _PID, "description": {"type": "string"},
+           "signature": {"type": "string"}}, ["profile_id"]),
     _tool("remember", "Append a memory event to a profile.",
           {"profile_id": _PID,
            "kind": {"type": "string", "enum": MEMORY_KINDS,
@@ -201,10 +200,11 @@ TOOLS = [
     _tool("delete_file", "Delete a file from your scratch file store.",
           {"profile_id": _PID, "filename": {"type": "string"}},
           ["profile_id", "filename"]),
-    _tool("closeout", "Close a session with facts, texture, and a short verbatim meaningful exchange; notes are optional.",
+    _tool("closeout", "Close a session with facts, concrete continuity texture (rapport, tone, pacing, or an unresolved concern), and a short verbatim meaningful exchange; notes are optional.",
           {"profile_id": _PID,
            "facts": {"type": "string", "maxLength": 1200},
-           "texture": {"type": "string", "maxLength": 700},
+           "texture": {"type": "string", "maxLength": 700,
+                       "description": "Concrete cues that help the next session retain rapport and tone; not a generic adjective. Preserve only what remains relevant."},
            "exchange": {"type": "string", "maxLength": 800},
            "notes": {"type": "string"},
           },
@@ -343,9 +343,10 @@ class ToolBridge:
     def retract_approval(self, approval_id: str):
         return self._request("POST", f"/approvals/{approval_id}/retract")
 
-    def update_own_description(self, profile_id: str, description: str):
+    def update_own_description(self, profile_id: str, description: str | None = None,
+                               signature: str | None = None):
         return self._request("PUT", f"/profiles/{profile_id}/description",
-                             json={"description": description})
+                             json={"description": description, "signature": signature})
 
     def get_approval(self, approval_id: str):
         """Not an MCP tool: used by the mcp service's public /approvals/{id}
@@ -359,13 +360,15 @@ class ToolBridge:
                              json={"approve": approve, "totp_code": totp_code})
 
     def create_profile_totp(self, profile_id: str, display_name: str,
-                            base_prompt: str, role_prompt: str, totp_code: str):
+                            base_prompt: str, role_prompt: str, totp_code: str,
+                            description: str = "", signature: str = ""):
         """Not an MCP tool: used by the mcp service's public /create-profile
         page — the backend route itself is TOTP-authenticated (public at
         the transport layer), so this bridge's own bearer is incidental."""
         return self._request("POST", "/profiles/totp-create", json={
             "id": profile_id, "display_name": display_name,
             "base_prompt": base_prompt, "role_prompt": role_prompt,
+            "description": description, "signature": signature,
             "totp_code": totp_code,
         })
 

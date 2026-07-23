@@ -18,6 +18,29 @@ def test_list_and_get_profiles(client):
     assert client.get("/profiles/ghost").status_code == 404
 
 
+def test_profile_discovery_metadata_and_startup_routing_guidance(client):
+    created = client.post("/profiles", json={
+        "id": "travel", "display_name": "Travel", "description": "Plans trips.",
+        "signature": "🧭", "base_prompt": "", "role_prompt": "",
+    })
+    assert created.status_code == 201
+    assert created.json()["signature"] == "🧭"
+
+    updated = client.put("/profiles/travel/description", json={"signature": "✈️"})
+    assert updated.status_code == 200
+    assert updated.json()["description"] == "Plans trips."
+    assert updated.json()["signature"] == "✈️"
+
+    session = client.post("/profiles/tara/session").json()
+    assert "outside your lane" in session["routing_guidance"]
+    assert "Travel ✈️ — Plans trips." in session["routing_guidance"]
+
+    assert client.post("/profiles", json={
+        "id": "too_long", "display_name": "Too long", "description": "x" * 201,
+    }).status_code == 422
+    assert client.put("/profiles/travel/description", json={"signature": "abcdef"}).status_code == 422
+
+
 def test_root_directory_and_admin_shortcuts(client):
     root = client.get("/", follow_redirects=False)
     assert root.status_code == 307
@@ -56,7 +79,7 @@ def test_session_inspect_matches_start_session_shape_when_auth_is_disabled(clien
     assert inspected.status_code == 200
     body = inspected.json()
     assert {"profile", "base_prompt", "role_prompt", "compact_state", "identity",
-            "memories", "you_got_mail", "server_time"} <= set(body)
+            "memories", "recent_exchanges", "you_got_mail", "server_time"} <= set(body)
     assert body["you_got_mail"] is False
     assert "last_closeouts" not in body
 
@@ -85,6 +108,23 @@ def test_remember_search_closeout_flow(client):
                           "exchange": "User: logged paella.\nTara: Recorded.", "notes": "done"})
     assert r.status_code == 201
     assert "Paella day logged." in client.post("/profiles/tara/boot").json()["compact_state"]
+
+
+def test_start_session_includes_four_recent_interaction_anchors(client):
+    for number in range(5):
+        response = client.post("/profiles/tara/closeout", json={
+            "facts": f"Fact {number}",
+            "texture": f"Texture {number}",
+            "exchange": f"User: Example {number}.\nTara: Reply {number}.",
+        })
+        assert response.status_code == 201
+
+    anchors = client.post("/profiles/tara/session").json()["recent_exchanges"]
+    assert anchors == [
+        {"texture": f"Texture {number}",
+         "exchange": f"User: Example {number}.\nTara: Reply {number}."}
+        for number in range(1, 5)
+    ]
 
 
 def test_update_and_delete_memory_via_api(client):

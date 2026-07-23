@@ -52,12 +52,13 @@ PROFILE = {
         "id": {"type": "string"},
         "display_name": {"type": "string"},
         "description": {"type": "string"},
+        "signature": {"type": "string", "maxLength": 5},
         "allowed_tools": array_of({"type": "string"}),
         "memory_policy": JSON_OBJECT,
         "closeout_rules": {"type": "string"},
         "created_at": {"type": "number"},
     },
-    "required": ["id", "display_name", "description", "allowed_tools",
+    "required": ["id", "display_name", "description", "signature", "allowed_tools",
                  "memory_policy", "closeout_rules", "created_at"],
 }
 
@@ -124,7 +125,16 @@ START_SESSION = {
         "compact_state": {"type": "string"},
         "identity": STRING_OR_NULL,
         "memories": array_of(HYDRATION_MEMORY),
+        "recent_exchanges": array_of({
+            "type": "object",
+            "properties": {
+                "texture": {"type": "string"},
+                "exchange": {"type": "string"},
+            },
+            "required": ["texture", "exchange"],
+        }),
         "you_got_mail": {"type": "boolean"},
+        "routing_guidance": {"type": "string"},
         "server_time": {
             "type": "object",
             "properties": {
@@ -141,7 +151,9 @@ START_SESSION = {
         "compact_state",
         "identity",
         "memories",
+        "recent_exchanges",
         "you_got_mail",
+        "routing_guidance",
         "server_time",
     ],
 }

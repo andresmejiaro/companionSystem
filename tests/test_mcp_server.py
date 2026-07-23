@@ -68,7 +68,7 @@ class FakeBridge:
     @staticmethod
     def _profile(profile_id):
         return {"id": profile_id, "display_name": profile_id.title(),
-                "description": "", "allowed_tools": ["remember", "search_memories"],
+                "description": "", "signature": "", "allowed_tools": ["remember", "search_memories"],
                 "memory_policy": {"max_boot_events": 10},
                 "closeout_rules": "Write compact state.", "created_at": 1}
 
@@ -177,12 +177,13 @@ class FakeBridge:
         return approval
 
     def create_profile_totp(self, profile_id, display_name, base_prompt,
-                            role_prompt, totp_code):
+                            role_prompt, totp_code, description="", signature=""):
         if totp_code != "123456":
             raise ToolBridgeError(401, "missing or invalid TOTP code")
         if profile_id in {"sidra", "tara"}:
             raise ToolBridgeError(409, f"profile {profile_id!r} already exists")
         return {"id": profile_id, "display_name": display_name,
+                "description": description, "signature": signature,
                 "base_prompt": base_prompt, "role_prompt": role_prompt}
 
 
@@ -275,6 +276,7 @@ def test_initialize_and_list_tools(tmp_path, monkeypatch):
         "profile_id", "facts", "texture", "exchange",
     ]
     assert closeout["inputSchema"]["properties"]["notes"]["maxLength"] == 700
+    assert "rapport" in closeout["inputSchema"]["properties"]["texture"]["description"]
     annotations = {tool["name"]: tool["annotations"] for tool in tools}
     assert annotations["forget"]["destructiveHint"] is True
     assert annotations["delete_file"]["destructiveHint"] is True

@@ -18,6 +18,8 @@
   <form id="new-companion">
     <label>Companion ID <input name="id" required pattern="[a-z0-9_-]{1,64}" autocomplete="off" placeholder="e.g. travel_planner"></label>
     <label>Display name <input name="display_name" required placeholder="e.g. Travel Planner"></label>
+    <label>Description <textarea name="description" rows="3" maxlength="200" placeholder="What this companion helps with (up to 200 characters)"></textarea></label>
+    <label>Signature <input name="signature" maxlength="5" placeholder="e.g. 🧭"></label>
     <label>Identity prompt <textarea name="base_prompt" rows="5" placeholder="Stable identity and operating mode"></textarea></label>
     <label>Role prompt <textarea name="role_prompt" rows="5" placeholder="Current role or lane"></textarea></label>
     <input type="hidden" name="allowed_tools" value="">
@@ -33,6 +35,8 @@ const templates = {
   system_notifier: {
     id: 'system_notifier',
     display_name: 'System Notifier',
+    description: 'Sends authorized operational notices to companion inboxes.',
+    signature: '📣',
     base_prompt: `You are a non-conversational system identity used only as the sender of operational notices to companion inboxes. You do not hold project knowledge, user memories, documents, or structured records. You do not offer advice, manage schemas, or act as a normal chat companion.`,
     role_prompt: `Your sole permitted operation is send_message. Messages must be factual system notices produced by an authorized workflow. Do not initiate conversation, answer as a personal companion, store information, call memory or record tools, or perform migrations. If opened interactively, state briefly that this identity is only an automated notification sender.`,
     allowed_tools: 'send_message',
