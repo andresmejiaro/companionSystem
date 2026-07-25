@@ -31,6 +31,10 @@ def _exercise_all_tools(bridge, profile="tara"):
     assert ev["content"] == "bridged memory"
     assert any("bridged" in e["content"]
                for e in bridge.search_memories(profile, "bridged"))
+    assert any(item["source_type"] == "memory"
+               for item in bridge.search_context(profile, "bridged"))
+    prepared = bridge.prepare_closeout(profile)
+    assert prepared["profile_id"] == profile
     bridge.closeout(profile, "State after bridge demo.", "Routine bridge test.", "User: done.", "notes")
     prop = bridge.propose_store(profile, "hotel_reservations", "p", SCHEMA)
     assert prop["status"] == "pending"
@@ -119,6 +123,8 @@ def test_no_tool_bypasses_api_authorization(tmp_path):
         "read_file": {"profile_id": "tara", "filename": "f.txt"},
         "delete_file": {"profile_id": "tara", "filename": "f.txt"},
         "search_memories": {"profile_id": "tara", "query": "x"},
+        "search_context": {"profile_id": "tara", "query": "x"},
+        "prepare_closeout": {"profile_id": "tara"},
         "closeout": {"profile_id": "tara", "facts": "s", "texture": "t", "exchange": "User: s."},
         "propose_store": {"profile_id": "tara", "name": "n1", "purpose": "p",
                           "schema": SCHEMA},

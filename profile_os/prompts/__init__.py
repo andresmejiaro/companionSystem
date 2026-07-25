@@ -1,9 +1,8 @@
 """Inspectable prompt seeds for companion profiles.
 
-``<profile>_base.md`` and ``<profile>_role.md`` seed the backend store;
-the backend's boot payload is the runtime source of truth. The shared tool
-contract is retained for optional provider-validation experiments, but is not
-part of the product runtime.
+``<profile>_base.md`` and ``<profile>_role.md`` seed the backend store.
+System-owned contracts are injected by ``start_session`` and are not managed
+as part of an individual companion's identity prompt.
 """
 
 from pathlib import Path
@@ -18,3 +17,7 @@ def load(name: str) -> str:
 
 def tool_contract() -> str:
     return load("tool_contract")
+
+
+def companion_contract() -> str:
+    return load("companion_contract")

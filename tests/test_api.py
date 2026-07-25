@@ -32,8 +32,15 @@ def test_profile_discovery_metadata_and_startup_routing_guidance(client):
     assert updated.json()["signature"] == "✈️"
 
     session = client.post("/profiles/tara/session").json()
-    assert "outside your lane" in session["routing_guidance"]
-    assert "Travel [travel] ✈️ — Plans trips." in session["routing_guidance"]
+    assert session["system_contracts"]["companion"].startswith("# Companion contract")
+    assert "search_context" in session["system_contracts"]["companion"]
+    assert "Memories preserve what the companion should keep in mind." in (
+        session["system_contracts"]["companion"]
+    )
+    assert any(item["id"] == "travel" for item in session["companion_directory"])
+    assert session["data_sources"] == {
+        "profile_stores": [], "joined_projects": [],
+    }
     assert session["selection"] == {
         "profile_id": "tara",
         "family_id": "tara",
@@ -41,6 +48,14 @@ def test_profile_discovery_metadata_and_startup_routing_guidance(client):
         "settled": True,
     }
     assert "Do not ask whether the user meant a sibling" in session["routing_guidance"]
+
+    system = client.post("/profiles", json={
+        "id": "system_notifier", "display_name": "System Notifier",
+        "profile_kind": "system", "allowed_tools": ["send_message"],
+    })
+    assert system.status_code == 201
+    assert system.json()["profile_kind"] == "system"
+    assert client.post("/profiles/system_notifier/session").json()["system_contracts"] == {}
 
     assert client.post("/profiles", json={
         "id": "too_long", "display_name": "Too long", "description": "x" * 201,
@@ -82,6 +97,7 @@ def test_profile_resolver_and_family_aware_session_routing(client):
     assert session["selection"]["settled"] is True
     assert session["selection"]["profile_id"] == "vera"
     assert "Dr Vera" not in session["routing_guidance"]
+    assert any(item["id"] == "dr_vera" for item in session["companion_directory"])
 
     normalized_session = client.post("/profiles/VERA/session").json()
     assert normalized_session["selection"]["profile_id"] == "vera"
@@ -137,7 +153,8 @@ def test_session_inspect_matches_start_session_shape_when_auth_is_disabled(clien
     assert inspected.status_code == 200
     body = inspected.json()
     assert {"profile", "base_prompt", "role_prompt", "compact_state", "identity",
-            "memories", "recent_exchanges", "you_got_mail", "server_time"} <= set(body)
+            "memories", "recent_exchanges", "you_got_mail", "server_time",
+            "system_contracts", "companion_directory", "data_sources"} <= set(body)
     assert body["you_got_mail"] is False
     assert "last_closeouts" not in body
 
@@ -166,6 +183,60 @@ def test_remember_search_closeout_flow(client):
                           "exchange": "User: logged paella.\nTara: Recorded.", "notes": "done"})
     assert r.status_code == 201
     assert "Paella day logged." in client.post("/profiles/tara/boot").json()["compact_state"]
+
+
+def test_context_search_and_prepare_closeout_cover_available_sources(client):
+    app = client.app
+    dyn = app.state.dynstores
+    projects = app.state.projects
+    schema = {"fields": {"status": {"type": "string"}}}
+
+    dyn.propose("tara", "case_status", "Current case state", "tara", schema)
+    dyn.approve("tara", "case_status")
+    dyn.add_record("tara", "case_status", {"status": "embargo resolved"})
+
+    project = projects.propose_create("tara", "casework", "Shared case work", schema)
+    project = projects.approve_create(project["id"])
+    projects.add_record("tara", project["id"], {"status": "embargo resolved"})
+
+    client.post("/profiles/tara/memories", json={
+        "kind": "note", "content": "embargo was discussed", "tags": [],
+    })
+    found = client.get("/profiles/tara/context/search", params={"q": "embargo"})
+    assert found.status_code == 200
+    assert {item["source_type"] for item in found.json()} == {
+        "memory", "profile_store", "shared_project",
+    }
+
+    prepared = client.post("/profiles/tara/closeout/prepare")
+    assert prepared.status_code == 200
+    body = prepared.json()
+    assert body["profile_id"] == "tara"
+    assert body["data_sources"]["profile_stores"][0]["name"] == "case_status"
+    assert body["data_sources"]["joined_projects"][0]["id"] == project["id"]
+    assert body["instructions"] == [
+        "Reconcile relevant profile stores and joined shared-project stores; query the owning source when current state matters.",
+        "Update existing records for the same real thing and identify duplicates or contradictions; flag conflicts the schema cannot resolve.",
+        "Write the companion-appropriate transient, front-of-mind memories.",
+        "Complete the existing closeout form.",
+        "Let the companion close in its own voice.",
+    ]
+
+
+def test_context_search_stays_within_the_companion_and_joined_projects(client):
+    app = client.app
+    dyn = app.state.dynstores
+    schema = {"fields": {"status": {"type": "string"}}}
+    dyn.propose("sidra", "private_cases", "Private cases", "sidra", schema)
+    dyn.approve("sidra", "private_cases")
+    dyn.add_record("sidra", "private_cases", {"status": "embargoed"})
+    client.post("/profiles/sidra/memories", json={
+        "kind": "note", "content": "embargoed private note", "tags": [],
+    })
+
+    results = client.get("/profiles/tara/context/search", params={"q": "embargoed"})
+    assert results.status_code == 200
+    assert results.json() == []
 
 
 def test_start_session_includes_four_recent_interaction_anchors(client):

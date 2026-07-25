@@ -26,6 +26,7 @@ from . import seed
 from .access import AccessControl, AccessError
 from .dynstores import DynamicStores
 from .projects import Projects
+from .prompts import companion_contract
 from .enroll import Enrollment, InviteConsumed, InviteInvalid
 from .errors import (DynStoreConflict, DynStoreNotFound, FileNotFoundInStore,
                      MalformedMemoryEvent, MalformedMessage, MalformedRecord,
@@ -79,6 +80,7 @@ class ProfileCreateTotpIn(BaseModel):
     family_id: str | None = None
     variant_label: str = ""
     is_family_default: bool = True
+    profile_kind: str = "companion"
     totp_code: str
 
 
@@ -140,6 +142,7 @@ class ProfileCreateIn(BaseModel):
     family_id: str | None = None
     variant_label: str = ""
     is_family_default: bool = True
+    profile_kind: str = "companion"
 
 
 class EnrollIn(BaseModel):
@@ -470,7 +473,7 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
             description=body.description, signature=body.signature,
             aliases=body.aliases, family_id=body.family_id,
             variant_label=body.variant_label,
-            is_family_default=body.is_family_default)
+            is_family_default=body.is_family_default, profile_kind=body.profile_kind)
         if principal_id is not None:
             for op in OWNER_OPS:
                 access.grant(principal_id, op, profile_id=body.id)
@@ -503,7 +506,7 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
             description=body.description, signature=body.signature,
             allowed_tools=body.allowed_tools, aliases=body.aliases,
             family_id=body.family_id, variant_label=body.variant_label,
-            is_family_default=body.is_family_default)
+            is_family_default=body.is_family_default, profile_kind=body.profile_kind)
         access.record_audit(admin_id, "create_profile_totp", body.id)
         return profile
 
@@ -603,7 +606,7 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
         booted["profile"] = {
             key: profile[key] for key in
             ("id", "display_name", "description", "signature", "allowed_tools",
-             "memory_policy", "closeout_rules", "aliases", "family_id",
+             "memory_policy", "closeout_rules", "aliases", "family_id", "profile_kind",
              "variant_label", "is_family_default")
             if key in profile
         }
@@ -619,8 +622,34 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
                 if path.is_file():
                     identity_content = path.read_text()
         now = time.time()
+        companion_directory = [
+            {
+                key: item[key] for key in
+                ("id", "display_name", "description", "signature", "family_id",
+                 "variant_label", "is_family_default")
+            }
+            for item in store.list_profiles()
+        ]
+        can_read_records = (
+            principal_id is None or access.allowed(principal_id, "records:read", profile_id)
+        )
+        profile_stores = []
+        joined_projects = []
+        if can_read_records:
+            profile_stores = [
+                {
+                    key: item[key] for key in
+                    ("name", "purpose", "status", "version", "schema")
+                }
+                for item in _wrap(dyn.list, profile_id)
+            ]
+            joined_projects = _wrap(projects.list_for, profile_id)
         return {
             **booted,
+            "system_contracts": (
+                {"companion": companion_contract()}
+                if profile["profile_kind"] == "companion" else {}
+            ),
             "identity": identity_content,
             "memories": hydrated_memories,
             # A bounded chronological few-shot set for voice and relational
@@ -635,25 +664,84 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
                 "variant_label": profile["variant_label"],
                 "settled": True,
             },
+            "companion_directory": companion_directory,
+            "data_sources": {
+                "profile_stores": profile_stores,
+                "joined_projects": joined_projects,
+            },
             "routing_guidance": (
                 f"Active profile: {profile['display_name']} [{profile['id']}]. "
                 "This selection is settled. Do not ask whether the user meant a sibling "
                 "variant and do not switch profiles unless the user explicitly requests "
-                "a switch. When a request is outside your lane, suggest the appropriate "
-                "companion without reopening the current selection. Sibling variants are "
-                "omitted from this list intentionally. Available companions: "
-                + "; ".join(
-                    f"{item['display_name']} [{item['id']}]"
-                    f"{(' ' + item['signature']) if item['signature'] else ''}"
-                    f" — {item['description']}"
-                    for item in store.list_profiles()
-                    if item["id"] != profile_id
-                    and item["family_id"] != profile["family_id"]
-                )
+                "a switch. The structured companion_directory is the current cast."
             ),
             "server_time": {
                 "unix": now,
                 "iso": datetime.fromtimestamp(now, tz=timezone.utc).isoformat(),
+            },
+        }
+
+    @app.get("/profiles/{profile_id}/context/search")
+    def search_context(profile_id: str, q: str, request: Request, limit: int = 20):
+        """Search all durable sources the companion can legitimately read."""
+        _require("search", profile_id, request)
+        _require("records:read", profile_id, request)
+        if not q.strip():
+            raise HTTPException(422, "q must not be empty")
+        if not 1 <= limit <= 100:
+            raise HTTPException(422, "limit must be between 1 and 100")
+
+        results: list[dict] = []
+        memories = _wrap(store.search, profile_id, q, limit)
+        results.extend({
+            "source_type": "memory",
+            "source_name": "memories",
+            "item": item,
+        } for item in memories)
+
+        for definition in _wrap(dyn.list, profile_id):
+            if definition["status"] not in {"approved", "archived"}:
+                continue
+            records = _wrap(dyn.query_records, profile_id, definition["name"], q, limit)
+            results.extend({
+                "source_type": "profile_store",
+                "source_name": definition["name"],
+                "item": item,
+            } for item in records)
+
+        for project in _wrap(projects.list_for, profile_id):
+            records = _wrap(projects.query, profile_id, project["id"], q, limit)
+            results.extend({
+                "source_type": "shared_project",
+                "source_name": project["name"],
+                "project_id": project["id"],
+                "item": item,
+            } for item in records)
+
+        def timestamp(result: dict) -> float:
+            return float(result["item"].get("updated_at")
+                         or result["item"].get("created_at") or 0)
+
+        results.sort(key=timestamp, reverse=True)
+        return results[:limit]
+
+    @app.post("/profiles/{profile_id}/closeout/prepare")
+    def prepare_closeout(profile_id: str, request: Request):
+        """Return the provider-neutral persistence review for session closeout."""
+        _require("closeout", profile_id, request)
+        _require("records:read", profile_id, request)
+        return {
+            "profile_id": profile_id,
+            "instructions": [
+                "Reconcile relevant profile stores and joined shared-project stores; query the owning source when current state matters.",
+                "Update existing records for the same real thing and identify duplicates or contradictions; flag conflicts the schema cannot resolve.",
+                "Write the companion-appropriate transient, front-of-mind memories.",
+                "Complete the existing closeout form.",
+                "Let the companion close in its own voice.",
+            ],
+            "data_sources": {
+                "profile_stores": _wrap(dyn.list, profile_id),
+                "joined_projects": _wrap(projects.list_for, profile_id),
             },
         }
 

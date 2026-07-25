@@ -53,6 +53,7 @@ PROFILE = {
         "display_name": {"type": "string"},
         "description": {"type": "string"},
         "signature": {"type": "string", "maxLength": 5},
+        "profile_kind": {"type": "string", "enum": ["companion", "system"]},
         "allowed_tools": array_of({"type": "string"}),
         "memory_policy": JSON_OBJECT,
         "closeout_rules": {"type": "string"},
@@ -63,7 +64,7 @@ PROFILE = {
         "created_at": {"type": "number"},
     },
     "required": ["id", "display_name", "description", "signature", "allowed_tools",
-                 "memory_policy", "closeout_rules", "aliases", "family_id",
+                 "memory_policy", "closeout_rules", "aliases", "family_id", "profile_kind",
                  "variant_label", "is_family_default", "created_at"],
 }
 
@@ -145,6 +146,12 @@ START_SESSION = {
         "base_prompt": {"type": "string"},
         "role_prompt": {"type": "string"},
         "compact_state": {"type": "string"},
+        "system_contracts": {
+            "type": "object",
+            "properties": {
+                "companion": {"type": "string"},
+            },
+        },
         "identity": STRING_OR_NULL,
         "memories": array_of(HYDRATION_MEMORY),
         "recent_exchanges": array_of({
@@ -167,6 +174,15 @@ START_SESSION = {
             "required": ["profile_id", "family_id", "variant_label", "settled"],
         },
         "routing_guidance": {"type": "string"},
+        "companion_directory": array_of(JSON_OBJECT),
+        "data_sources": {
+            "type": "object",
+            "properties": {
+                "profile_stores": {"type": "array", "items": JSON_OBJECT},
+                "joined_projects": {"type": "array", "items": JSON_OBJECT},
+            },
+            "required": ["profile_stores", "joined_projects"],
+        },
         "server_time": {
             "type": "object",
             "properties": {
@@ -181,14 +197,41 @@ START_SESSION = {
         "base_prompt",
         "role_prompt",
         "compact_state",
+        "system_contracts",
         "identity",
         "memories",
         "recent_exchanges",
         "you_got_mail",
         "selection",
         "routing_guidance",
+        "companion_directory",
+        "data_sources",
         "server_time",
     ],
+}
+
+CONTEXT_RESULT = {
+    "type": "object",
+    "properties": {
+        "source_type": {
+            "type": "string",
+            "enum": ["memory", "profile_store", "shared_project"],
+        },
+        "source_name": {"type": "string"},
+        "project_id": {"type": "string"},
+        "item": JSON_OBJECT,
+    },
+    "required": ["source_type", "source_name", "item"],
+}
+
+PREPARE_CLOSEOUT = {
+    "type": "object",
+    "properties": {
+        "profile_id": {"type": "string"},
+        "instructions": array_of({"type": "string"}),
+        "data_sources": JSON_OBJECT,
+    },
+    "required": ["profile_id", "instructions", "data_sources"],
 }
 
 APPROVAL = {

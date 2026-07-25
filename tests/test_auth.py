@@ -134,6 +134,8 @@ def test_all_protected_endpoints_401_without_credential(auth_client):
         ("POST", "/profiles/tara/boot", None),
         ("POST", "/profiles/tara/memories", {"kind": "note", "content": "x"}),
         ("GET", "/profiles/tara/memories/search?q=x", None),
+        ("GET", "/profiles/tara/context/search?q=x", None),
+        ("POST", "/profiles/tara/closeout/prepare", None),
         ("POST", "/profiles/tara/closeout", {"facts": "s", "texture": "t", "exchange": "User: s."}),
         ("GET", "/profiles/tara/domain", None),
         ("GET", "/profiles/tara/domain/notes", None),
@@ -181,6 +183,7 @@ def test_each_operation_grant_gates_its_endpoint(auth_client):
                       headers=h).status_code == 200
 
     access.grant(p["id"], "closeout", profile_id="tara")
+    assert client.post("/profiles/tara/closeout/prepare", headers=h).status_code == 403
     assert client.post("/profiles/tara/closeout", headers=h,
                        json={"facts": "resting", "texture": "quiet", "exchange": "User: rest."}).status_code == 201
 
@@ -193,11 +196,16 @@ def test_each_operation_grant_gates_its_endpoint(auth_client):
                              "proposed_by": "tara", "schema": SCHEMA}).status_code == 201
 
     assert client.get("/profiles/tara/stores", headers=h).status_code == 403
+    assert client.get("/profiles/tara/context/search", headers=h,
+                      params={"q": "x"}).status_code == 403
     access.grant(p["id"], "records:read", profile_id="tara")
     assert client.get("/profiles/tara/stores", headers=h).status_code == 200
     assert client.get("/profiles/tara/stores/hotel_reservations",
                       headers=h).status_code == 200
     assert client.get("/profiles/tara/domain", headers=h).status_code == 200
+    assert client.get("/profiles/tara/context/search", headers=h,
+                      params={"q": "x"}).status_code == 200
+    assert client.post("/profiles/tara/closeout/prepare", headers=h).status_code == 200
 
     assert client.post("/profiles/tara/stores/hotel_reservations/approve",
                        headers=h).status_code == 403

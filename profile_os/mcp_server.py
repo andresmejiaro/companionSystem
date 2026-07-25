@@ -34,6 +34,7 @@ from .tool_schemas import (
     APPROVAL,
     BOOT,
     CLOSEOUT,
+    CONTEXT_RESULT,
     DELETED_FILE,
     DELETED_MEMORY,
     DELETED_RECORD,
@@ -48,6 +49,7 @@ from .tool_schemas import (
     MESSAGE,
     PROFILE,
     PROFILE_RESOLUTION,
+    PREPARE_CLOSEOUT,
     PROJECT,
     PROJECT_WITH_APPROVAL,
     PROJECT_RECORD,
@@ -329,11 +331,14 @@ def _session_inspector_page(profiles: list[dict], *, selected_id: str = "",
             ]
             output = "<section><h2>Hydration packet</h2><p>This is the context delivered to the agent. Lookup IDs, tags, full history, and closeout archives are not hydrated.</p></section>"
             output += block("Profile context", "Profile registry fields that affect how this companion operates.", profile_context)
+            output += block("System contracts", "Shared runtime rules injected by start_session; they do not replace this companion's identity prompt.", result.get("system_contracts"))
             output += block("Base prompt", "Durable identity / operating constitution: profile base_prompt.", result.get("base_prompt"))
             output += block("Role prompt", "Role or lane overlay: profile role_prompt.", result.get("role_prompt"))
             output += block("Current handoff", "Current compact state, written at closeout. This is the latest session handoff.", current_state)
             output += block("Global identity (whoami)", "Canonical external identity file, when the bridge has identity:read.", result.get("identity"))
             output += block("Memories", "Mutable context, newest first. Tags and database IDs are intentionally hidden here; use the raw payload for lookup fields.", memory_context)
+            output += block("Data sources", "Profile stores and shared projects this companion may use in this session.", result.get("data_sources"))
+            output += block("Companion directory", "The current companion cast; it does not include private context.", result.get("companion_directory"))
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Companion session inspector</title><style>
@@ -419,6 +424,7 @@ MCP_OUTPUT_SCHEMAS = {
     "update_own_description": PROFILE,
     "remember": MEMORY_EVENT,
     "search_memories": mcp_items(MEMORY_EVENT),
+    "search_context": mcp_items(CONTEXT_RESULT),
     "update_memory": MEMORY_EVENT,
     "forget": DELETED_MEMORY,
     "send_message": MESSAGE,
@@ -429,6 +435,7 @@ MCP_OUTPUT_SCHEMAS = {
     "read_file": FILE_CONTENT,
     "delete_file": DELETED_FILE,
     "closeout": CLOSEOUT,
+    "prepare_closeout": PREPARE_CLOSEOUT,
     "list_stores": mcp_items(DYNAMIC_STORE),
     "propose_store": DYNAMIC_STORE,
     "update_pending_store": DYNAMIC_STORE,
@@ -451,9 +458,10 @@ MCP_OUTPUT_SCHEMAS = {
 
 _READ_ONLY_TOOLS = {
     "whoami", "resolve_companion", "discover_companions", "list_profiles",
-    "boot_profile", "start_session", "search_memories",
+    "boot_profile", "start_session", "search_memories", "search_context",
     "read_inbox", "list_files", "read_file", "list_stores", "query_records",
     "filter_records", "get_record", "list_projects", "query_project_records",
+    "prepare_closeout",
 }
 _OPEN_WORLD_TOOLS = {"send_message", "join_project", "leave_project",
                      "add_project_record", "query_project_records"}
@@ -526,7 +534,8 @@ MCP_TOOLS = [
         " When the returned selection.settled is true, never ask whether the user meant"
         " a sibling and never switch variants unless the user explicitly requests it. This tool"
         " returns whoami identity, prompts, compact_state, a bounded semantic"
-        " memory slice (no IDs, tags, or full history), up to four recent"
+        " memory slice, and the global companion contract for conversational profiles;"
+        " the memory slice has no IDs, tags, or full history. It also returns up to four recent"
         " texture/exchange examples for continuity, and the current server"
         " date/time (server_time) in one call.",
         {"profile_id": _PROFILE_ID},
@@ -585,6 +594,18 @@ MCP_TOOLS = [
         "search_memories",
         "Search Memories",
         "Search a profile's memory events by substring over content and tags.",
+        {
+            "profile_id": _PROFILE_ID,
+            "query": {"type": "string"},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20},
+        },
+        ["profile_id", "query"],
+    ),
+    _tool(
+        "search_context",
+        "Search Durable Context",
+        "Search memories, profile stores, and joined shared projects together."
+        " Every result is labeled with its source.",
         {
             "profile_id": _PROFILE_ID,
             "query": {"type": "string"},
@@ -678,6 +699,14 @@ MCP_TOOLS = [
         "Delete a file from your scratch file store.",
         {"profile_id": _PROFILE_ID, "filename": {"type": "string"}},
         ["profile_id", "filename"],
+    ),
+    _tool(
+        "prepare_closeout",
+        "Prepare Closeout",
+        "Return the current store/project topology and persistence checklist."
+        " Perform the needed writes yourself, then call closeout.",
+        {"profile_id": _PROFILE_ID},
+        ["profile_id"],
     ),
     _tool(
         "closeout",
@@ -1050,6 +1079,12 @@ class MCPToolRunner:
                 arguments["query"],
                 limit=int(arguments.get("limit", 20)),
             )
+        if name == "search_context":
+            return self.bridge.search_context(
+                arguments["profile_id"],
+                arguments["query"],
+                limit=int(arguments.get("limit", 20)),
+            )
         if name == "update_memory":
             return self.bridge.update_memory(
                 arguments["profile_id"],
@@ -1089,6 +1124,8 @@ class MCPToolRunner:
                 arguments["exchange"],
                 arguments.get("notes", ""),
             )
+        if name == "prepare_closeout":
+            return self.bridge.prepare_closeout(arguments["profile_id"])
         if name == "list_stores":
             return self.bridge.list_stores(arguments["profile_id"])
         if name == "propose_store":
@@ -1675,14 +1712,14 @@ def create_mcp_app(
 
         form = await request.form()
         values = {k: str(form.get(k) or "") for k in
-                 ("id", "display_name", "description", "signature", "base_prompt", "role_prompt")}
+                 ("id", "display_name", "description", "signature", "base_prompt", "role_prompt", "profile_kind")}
         totp_code = str(form.get("totp_code") or "")
         try:
             created = await run_in_threadpool(
                 app.state.runner.bridge.create_profile_totp,
                 values["id"], values["display_name"],
                 values["base_prompt"], values["role_prompt"], totp_code,
-                values["description"], values["signature"])
+                values["description"], values["signature"], values["profile_kind"] or "companion")
         except ToolBridgeError as e:
             return HTMLResponse(_create_profile_page(values, error=e.detail),
                                 status_code=e.status_code)

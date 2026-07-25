@@ -42,6 +42,7 @@ from .tool_schemas import (
     AUDIT_EVENT,
     BOOT,
     CLOSEOUT,
+    CONTEXT_RESULT,
     DELETED_FILE,
     DELETED_MEMORY,
     DYNAMIC_RECORD,
@@ -54,6 +55,7 @@ from .tool_schemas import (
     MESSAGE,
     PROFILE,
     PROFILE_RESOLUTION,
+    PREPARE_CLOSEOUT,
     START_SESSION,
     array_of,
 )
@@ -93,6 +95,7 @@ BRIDGE_OUTPUT_SCHEMAS = {
     "update_own_description": PROFILE,
     "remember": MEMORY_EVENT,
     "search_memories": array_of(MEMORY_EVENT),
+    "search_context": array_of(CONTEXT_RESULT),
     "update_memory": MEMORY_EVENT,
     "forget": DELETED_MEMORY,
     "send_message": MESSAGE,
@@ -103,6 +106,7 @@ BRIDGE_OUTPUT_SCHEMAS = {
     "read_file": FILE_CONTENT,
     "delete_file": DELETED_FILE,
     "closeout": CLOSEOUT,
+    "prepare_closeout": PREPARE_CLOSEOUT,
     "propose_store": DYNAMIC_STORE,
     "update_pending_store": DYNAMIC_STORE,
     "withdraw_pending_store": DYNAMIC_STORE,
@@ -130,6 +134,7 @@ TOOLS = [
           {"profile_id": _PID}, ["profile_id"]),
     _tool("start_session", "Call this on your first response in a conversation instead"
                           " of boot: returns identity (whoami), prompts, compact_state,"
+                          " the global companion contract for conversational profiles,"
                           " a bounded semantic memory slice (no IDs, tags, or full"
                           " history), and the current server date/time (server_time)"
                           " in one call.",
@@ -159,6 +164,11 @@ TOOLS = [
     _tool("search_memories", "Full-text search over a profile's memory events.",
           {"profile_id": _PID,
            "query": {"type": "string"},
+           "limit": {"type": "integer", "default": 20}},
+          ["profile_id", "query"]),
+    _tool("search_context", "Search memories, profile stores, and joined shared"
+                            " projects in one call. Results identify their source.",
+          {"profile_id": _PID, "query": {"type": "string"},
            "limit": {"type": "integer", "default": 20}},
           ["profile_id", "query"]),
     _tool("update_memory", "Revise one of your own memory events (kind/content/tags)."
@@ -205,6 +215,9 @@ TOOLS = [
     _tool("delete_file", "Delete a file from your scratch file store.",
           {"profile_id": _PID, "filename": {"type": "string"}},
           ["profile_id", "filename"]),
+    _tool("prepare_closeout", "Review current stores and shared projects and receive"
+                              " the persistence checklist before closing a session.",
+          {"profile_id": _PID}, ["profile_id"]),
     _tool("closeout", "Close a session with facts, concrete continuity texture (rapport, tone, pacing, or an unresolved concern), and a short verbatim meaningful exchange; notes are optional.",
           {"profile_id": _PID,
            "facts": {"type": "string", "maxLength": 1200},
@@ -369,7 +382,8 @@ class ToolBridge:
 
     def create_profile_totp(self, profile_id: str, display_name: str,
                             base_prompt: str, role_prompt: str, totp_code: str,
-                            description: str = "", signature: str = ""):
+                            description: str = "", signature: str = "",
+                            profile_kind: str = "companion"):
         """Not an MCP tool: used by the mcp service's public /create-profile
         page — the backend route itself is TOTP-authenticated (public at
         the transport layer), so this bridge's own bearer is incidental."""
@@ -377,6 +391,7 @@ class ToolBridge:
             "id": profile_id, "display_name": display_name,
             "base_prompt": base_prompt, "role_prompt": role_prompt,
             "description": description, "signature": signature,
+            "profile_kind": profile_kind,
             "totp_code": totp_code,
         })
 
@@ -388,6 +403,10 @@ class ToolBridge:
 
     def search_memories(self, profile_id: str, query: str, limit: int = 20):
         return self._request("GET", f"/profiles/{profile_id}/memories/search",
+                             params={"q": query, "limit": limit})
+
+    def search_context(self, profile_id: str, query: str, limit: int = 20):
+        return self._request("GET", f"/profiles/{profile_id}/context/search",
                              params={"q": query, "limit": limit})
 
     def update_memory(self, profile_id: str, event_id: str, kind: str | None = None,
@@ -430,6 +449,9 @@ class ToolBridge:
         return self._request("POST", f"/profiles/{profile_id}/closeout",
                              json={"facts": facts, "texture": texture,
                                    "exchange": exchange, "notes": notes})
+
+    def prepare_closeout(self, profile_id: str):
+        return self._request("POST", f"/profiles/{profile_id}/closeout/prepare")
 
     def create_project(self, profile_id: str, name: str, purpose: str, schema: dict):
         return self._request("POST", f"/profiles/{profile_id}/projects",

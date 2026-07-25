@@ -73,7 +73,7 @@ class FakeBridge:
                 "description": "", "signature": "", "allowed_tools": ["remember", "search_memories"],
                 "memory_policy": {"max_boot_events": 10},
                 "closeout_rules": "Write compact state.", "aliases": [],
-                "family_id": profile_id, "variant_label": "",
+                "family_id": profile_id, "profile_kind": "companion", "variant_label": "",
                 "is_family_default": True, "created_at": 1}
 
     def resolve_companion(self, query):
@@ -115,6 +115,9 @@ class FakeBridge:
         profile = booted["profile"]
         return {
             **booted,
+            "system_contracts": {
+                "companion": "Shared companion contract.",
+            },
             "identity": "Canonical identity.",
             "memories": memories,
             "recent_exchanges": [],
@@ -126,6 +129,10 @@ class FakeBridge:
                 "settled": True,
             },
             "routing_guidance": "Selection is settled.",
+            "companion_directory": self.list_profiles(),
+            "data_sources": {
+                "profile_stores": [], "joined_projects": [],
+            },
             "server_time": {"unix": 1, "iso": "1970-01-01T00:00:01+00:00"},
         }
 
@@ -161,6 +168,19 @@ class FakeBridge:
 
     def search_memories(self, profile_id, query, limit=20):
         return [m for m in self.memories if query.lower() in m["content"].lower()][:limit]
+
+    def search_context(self, profile_id, query, limit=20):
+        return [{"source_type": "memory", "source_name": "memories", "item": item}
+                for item in self.search_memories(profile_id, query, limit)]
+
+    def prepare_closeout(self, profile_id):
+        return {
+            "profile_id": profile_id,
+            "instructions": ["Review records, then memories, then close out."],
+            "data_sources": {
+                "profile_stores": [], "joined_projects": [],
+            },
+        }
 
     def closeout(self, profile_id, facts, texture, exchange, notes=""):
         return {"id": "closeout-1", "profile_id": profile_id,
@@ -233,13 +253,15 @@ class FakeBridge:
         return approval
 
     def create_profile_totp(self, profile_id, display_name, base_prompt,
-                            role_prompt, totp_code, description="", signature=""):
+                            role_prompt, totp_code, description="", signature="",
+                            profile_kind="companion"):
         if totp_code != "123456":
             raise ToolBridgeError(401, "missing or invalid TOTP code")
         if profile_id in {"sidra", "tara"}:
             raise ToolBridgeError(409, f"profile {profile_id!r} already exists")
         return {"id": profile_id, "display_name": display_name,
                 "description": description, "signature": signature,
+                "profile_kind": profile_kind,
                 "base_prompt": base_prompt, "role_prompt": role_prompt}
 
 
@@ -416,6 +438,16 @@ def test_mcp_tool_flow_and_logging(tmp_path, caplog):
     }).json()["result"]["structuredContent"]["items"]
     assert len(hits) == 1
 
+    context_hits = _call_tool(client, "search_context", {
+        "profile_id": "tara",
+        "query": "MCP memory",
+    }).json()["result"]["structuredContent"]["items"]
+    assert context_hits[0]["source_type"] == "memory"
+    prepared = _call_tool(client, "prepare_closeout", {
+        "profile_id": "tara",
+    }).json()["result"]["structuredContent"]
+    assert prepared["profile_id"] == "tara"
+
     assert _call_tool(client, "closeout", {
         "profile_id": "tara",
         "facts": "MCP state stored.",
@@ -490,6 +522,8 @@ def test_successful_structured_content_matches_declared_output_schema():
     call_and_validate("start_session", {"profile_id": "tara"})
     call_and_validate("remember", {"profile_id": "tara", "kind": "note", "content": "x"})
     call_and_validate("search_memories", {"profile_id": "tara", "query": "x"})
+    call_and_validate("search_context", {"profile_id": "tara", "query": "x"})
+    call_and_validate("prepare_closeout", {"profile_id": "tara"})
     call_and_validate("closeout", {"profile_id": "tara", "facts": "f", "texture": "t", "exchange": "u"})
     call_and_validate("propose_store", {"profile_id": "tara", "name": "items", "purpose": "p",
                                          "schema": {"fields": {"name": {"type": "string"}}}})
@@ -518,6 +552,7 @@ def test_session_inspector_renders_source_aware_and_raw_views():
     assert human.status_code == 200
     assert "Base prompt" in human.text
     assert "Memories" in human.text
+    assert "System contracts" in human.text
     assert "Canonical external identity file" in human.text
     assert "lookup-only" not in human.text
 

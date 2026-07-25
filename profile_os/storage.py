@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS profiles (
     display_name TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
     signature TEXT NOT NULL DEFAULT '',
+    profile_kind TEXT NOT NULL DEFAULT 'companion', -- companion|system
     allowed_tools TEXT NOT NULL DEFAULT '[]',      -- JSON list
     memory_policy TEXT NOT NULL DEFAULT '{}',      -- JSON object
     closeout_rules TEXT NOT NULL DEFAULT '',       -- free text rules
@@ -138,6 +139,9 @@ class Store:
                     self.db.execute(f"ALTER TABLE closeouts ADD COLUMN {name} TEXT NOT NULL DEFAULT ''")
             if "signature" not in profile_columns:
                 self.db.execute("ALTER TABLE profiles ADD COLUMN signature TEXT NOT NULL DEFAULT ''")
+            if "profile_kind" not in profile_columns:
+                self.db.execute(
+                    "ALTER TABLE profiles ADD COLUMN profile_kind TEXT NOT NULL DEFAULT 'companion'")
             if "aliases" not in profile_columns:
                 self.db.execute("ALTER TABLE profiles ADD COLUMN aliases TEXT NOT NULL DEFAULT '[]'")
             if "family_id" not in profile_columns:
@@ -186,6 +190,7 @@ class Store:
         family_id: str | None = None,
         variant_label: str = "",
         is_family_default: bool = True,
+        profile_kind: str = "companion",
     ) -> dict:
         if not profile_id or not profile_id.replace("-", "").replace("_", "").isalnum():
             raise MalformedRecord("profile_id must be a non-empty slug (alnum, - or _)")
@@ -196,6 +201,8 @@ class Store:
             raise MalformedRecord("description must be a string of at most 200 characters")
         if not isinstance(signature, str) or len(signature) > 5:
             raise MalformedRecord("signature must be a string of at most 5 characters")
+        if profile_kind not in {"companion", "system"}:
+            raise MalformedRecord("profile_kind must be 'companion' or 'system'")
         aliases = _validate_aliases(aliases)
         family_id = family_id or profile_id
         if not family_id.replace("-", "").replace("_", "").isalnum():
@@ -205,10 +212,10 @@ class Store:
         now = time.time()
         with self.db:
             self.db.execute(
-                "INSERT INTO profiles (id, display_name, description, signature, allowed_tools,"
+                "INSERT INTO profiles (id, display_name, description, signature, profile_kind, allowed_tools,"
                 " memory_policy, closeout_rules, aliases, family_id, variant_label,"
-                " is_family_default, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-                (profile_id, display_name, description, signature,
+                " is_family_default, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (profile_id, display_name, description, signature, profile_kind,
                  json.dumps(allowed_tools or []), json.dumps(memory_policy or {}),
                  closeout_rules, json.dumps(aliases), family_id, variant_label,
                  int(is_family_default), now),
@@ -250,6 +257,7 @@ class Store:
             "display_name": row["display_name"],
             "description": row["description"],
             "signature": row["signature"],
+            "profile_kind": row["profile_kind"],
             "allowed_tools": json.loads(row["allowed_tools"]),
             "memory_policy": json.loads(row["memory_policy"]),
             "closeout_rules": row["closeout_rules"],
