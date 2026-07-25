@@ -155,6 +155,21 @@ class Store:
             # family until an operator explicitly links sibling variants.
             self.db.execute("UPDATE profiles SET family_id=id WHERE family_id=''")
             self.db.execute("UPDATE profiles SET display_name=TRIM(display_name)")
+            # The first system-notifier template predated profile_kind. Its
+            # non-conversational prompt is an explicit migration marker; do
+            # not infer a system profile from its display name.
+            for row in self.db.execute(
+                    "SELECT id, allowed_tools FROM profiles WHERE profile_kind='companion'").fetchall():
+                try:
+                    allowed_tools = json.loads(row["allowed_tools"])
+                    role_prompt = (self.profiles_dir / row["id"] / "role_prompt.md").read_text()
+                except (OSError, json.JSONDecodeError):
+                    continue
+                if (allowed_tools == ["send_message"]
+                        and "non-conversational system identity" in role_prompt
+                        and "sole permitted operation is send_message" in role_prompt):
+                    self.db.execute("UPDATE profiles SET profile_kind='system' WHERE id=?",
+                                    (row["id"],))
 
     @property
     def db(self) -> sqlite3.Connection:

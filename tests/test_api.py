@@ -2,6 +2,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from profile_os.api import create_app
+from profile_os.storage import Store
 
 
 @pytest.fixture
@@ -237,6 +238,20 @@ def test_context_search_stays_within_the_companion_and_joined_projects(client):
     results = client.get("/profiles/tara/context/search", params={"q": "embargoed"})
     assert results.status_code == 200
     assert results.json() == []
+
+
+def test_legacy_system_notifier_marker_migrates_without_using_display_name(tmp_path):
+    data_dir = tmp_path / "data"
+    store = Store(data_dir)
+    store.create_profile(
+        "legacy_sender", "Operational sender", "",
+        "You are a non-conversational system identity. Your sole permitted operation is send_message.",
+        allowed_tools=["send_message"],
+    )
+    store.close()
+
+    migrated = Store(data_dir)
+    assert migrated.get_profile("legacy_sender")["profile_kind"] == "system"
 
 
 def test_start_session_includes_four_recent_interaction_anchors(client):
