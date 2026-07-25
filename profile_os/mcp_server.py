@@ -551,7 +551,7 @@ MCP_TOOLS = [
         "Propose Prompt Edit",
         "Propose changes to your own six canonical prompt sections. Held pending"
         " until the human approves it with a live TOTP code from their authenticator"
-        " app — you cannot approve your own edits, and there is no way around that.",
+        " app.",
         {
             "profile_id": _PROFILE_ID,
             "who_you_are": {"type": "string"},

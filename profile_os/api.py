@@ -1035,9 +1035,6 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
             raise HTTPException(404, str(e))
         if row["status"] != "pending":
             raise HTTPException(409, f"approval already {row['status']}")
-        if (row["kind"] == "prompt_edit" and principal_id is not None
-                and principal_id == row["proposed_by_principal"]):
-            raise HTTPException(403, "a companion cannot approve its own prompt proposal")
         if body.approve:
             if principal_id is None:
                 pass  # auth disabled: local/dev convenience, no TOTP surface
@@ -1049,9 +1046,18 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
                 # verifies against the single TOTP-enrolled admin instead —
                 # there is exactly one admin, so this is unambiguous, and the
                 # live single-use code is still the actual gate either way.
-                totp_principal = (principal_id
-                                 if access.allowed(principal_id, "approvals:decide", None)
-                                 else access.find_totp_admin_principal_id())
+                # A companion may submit its own proposal for approval: the
+                # human-in-the-loop is authenticated by their TOTP, not by
+                # the companion bearer.  Use the enrolled admin's code when
+                # the bearer is also the proposer, even if that bearer has a
+                # broad approvals:decide grant.
+                is_own_proposal = principal_id == row["proposed_by_principal"]
+                totp_principal = (
+                    principal_id
+                    if (not is_own_proposal
+                        and access.allowed(principal_id, "approvals:decide", None))
+                    else access.find_totp_admin_principal_id()
+                )
                 if totp_principal is None or not access.has_totp(totp_principal):
                     raise HTTPException(
                         403, "no TOTP enrolled; run python -m profile_os.enroll_totp")

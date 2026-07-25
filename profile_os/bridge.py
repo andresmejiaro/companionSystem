@@ -141,8 +141,7 @@ TOOLS = [
           {"profile_id": _PID}, ["profile_id"]),
     _tool("propose_prompt_edit", "Propose a change to your own canonical prompt sections."
                                 " Held pending until the human approves it with a live"
-                                " TOTP code from their authenticator app — you cannot"
-                                " approve your own edits.",
+                                " TOTP code from their authenticator app.",
           {"profile_id": _PID,
            "who_you_are": {"type": "string"},
            "signature": {"type": "string"}, "lane": {"type": "string"},

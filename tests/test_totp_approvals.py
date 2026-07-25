@@ -161,6 +161,35 @@ def test_totp_only_principal_can_decide_via_admins_totp(auth_client, clock):
     assert booted.json()["what_you_do"] == "via link"
 
 
+def test_proposer_can_submit_human_totp_approval(auth_client, clock):
+    """The proposer bearer is not the human approval factor.
+
+    A companion with a broad approval grant may submit its own pending prompt
+    proposal, but approval still needs the enrolled administrator's TOTP.
+    """
+    client, access, admin_id = auth_client
+    admin_totp = _enroll_and_confirm(access, admin_id, clock)
+
+    owner = access.create_principal("agent", "self-approving-owner")
+    access.create_credential(owner["id"], "k", "owner-secret")
+    access.grant(owner["id"], "manage_profile", profile_id="tara")
+    access.grant(owner["id"], "approvals:decide", profile_id=None)
+
+    proposed = client.post(
+        "/profiles/tara/prompt", headers=_bearer("owner-secret"),
+        json={"what_you_do": "approved by the human TOTP"},
+    )
+    assert proposed.status_code == 201, proposed.text
+    approval_id = proposed.json()["id"]
+
+    approved = client.post(
+        f"/approvals/{approval_id}/decide", headers=_bearer("owner-secret"),
+        json={"approve": True, "totp_code": clock.next_code(admin_totp)},
+    )
+    assert approved.status_code == 200, approved.text
+    assert approved.json()["status"] == "approved"
+
+
 def test_prompt_edit_rejection_needs_no_code(auth_client, clock):
     client, access, admin_id = auth_client
     _enroll_and_confirm(access, admin_id, clock)
