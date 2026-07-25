@@ -7,3 +7,4 @@ jsonschema>=4
 cryptography>=42
 pyotp>=2.9
 python-multipart>=0.0.9
+regex>=2024.11.6

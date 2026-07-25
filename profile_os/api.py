@@ -20,7 +20,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
-from pydantic import AliasChoices, BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from . import seed
 from .access import AccessControl, AccessError
@@ -32,7 +32,7 @@ from .errors import (DynStoreConflict, DynStoreNotFound, FileNotFoundInStore,
                      MalformedMemoryEvent, MalformedMessage, MalformedRecord,
                      MemoryEventNotFound, MessageNotFound, ProfileNotFound, SchemaError)
 from .sign import signing_message
-from .storage import Store, normalize_profile_lookup
+from .storage import Store, normalize_profile_lookup, validate_lane, validate_signature, PROMPT_SECTION_NAMES
 
 DATA_DIR = os.environ.get("PROFILE_OS_DATA_DIR", "data")
 
@@ -71,12 +71,10 @@ class MessageIn(BaseModel):
 class ProfileCreateTotpIn(BaseModel):
     id: str
     display_name: str
-    who_you_are: str = Field(
-        default="", validation_alias=AliasChoices("who_you_are", "base_prompt"))
-    what_you_do: str = Field(
-        default="", validation_alias=AliasChoices("what_you_do", "role_prompt"))
+    who_you_are: str = ""
+    what_you_do: str = ""
     description: str = Field(default="", max_length=200)
-    signature: str = Field(default="", max_length=5)
+    signature: str = ""
     allowed_tools: list[str] | None = None
     aliases: list[str] = Field(default_factory=list)
     family_id: str | None = None
@@ -136,12 +134,10 @@ class RejectIn(BaseModel):
 class ProfileCreateIn(BaseModel):
     id: str
     display_name: str
-    who_you_are: str = Field(
-        default="", validation_alias=AliasChoices("who_you_are", "base_prompt"))
-    what_you_do: str = Field(
-        default="", validation_alias=AliasChoices("what_you_do", "role_prompt"))
+    who_you_are: str = ""
+    what_you_do: str = ""
     description: str = Field(default="", max_length=200)
-    signature: str = Field(default="", max_length=5)
+    signature: str = ""
     aliases: list[str] = Field(default_factory=list)
     family_id: str | None = None
     variant_label: str = ""
@@ -156,15 +152,57 @@ class EnrollIn(BaseModel):
 
 
 class PromptEditProposeIn(BaseModel):
-    who_you_are: str | None = Field(
-        default=None, validation_alias=AliasChoices("who_you_are", "base_prompt"))
-    what_you_do: str | None = Field(
-        default=None, validation_alias=AliasChoices("what_you_do", "role_prompt"))
+    who_you_are: str | None = None
+    signature: str | None = None
+    lane: str | None = None
+    voice: str | None = None
+    what_you_do: str | None = None
+    how_you_keep_context: str | None = None
+
+    @field_validator("signature")
+    @classmethod
+    def signature_is_emoji(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        try:
+            return validate_signature(value)
+        except MalformedRecord as error:
+            raise ValueError(str(error)) from error
+
+    @field_validator("lane")
+    @classmethod
+    def lane_is_one_line(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        try:
+            return validate_lane(value)
+        except MalformedRecord as error:
+            raise ValueError(str(error)) from error
 
 
 class DescriptionIn(BaseModel):
     description: str | None = Field(default=None, max_length=200)
-    signature: str | None = Field(default=None, max_length=5)
+    signature: str | None = None
+
+    @field_validator("description")
+    @classmethod
+    def description_is_one_line(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        try:
+            return validate_lane(value)
+        except MalformedRecord as error:
+            raise ValueError(str(error)) from error
+
+    @field_validator("signature")
+    @classmethod
+    def signature_is_emoji(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        try:
+            return validate_signature(value)
+        except MalformedRecord as error:
+            raise ValueError(str(error)) from error
 
 
 class RoutingMetadataIn(BaseModel):
@@ -450,12 +488,16 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
     def list_profiles(request: Request):
         principal_id = _authenticate(request)
         profiles = store.list_profiles()
-        if principal_id is None:
-            return profiles
-        visible = access.visible_profile_ids(principal_id)
-        if visible is None:  # wildcard grant
-            return profiles
-        return [p for p in profiles if p["id"] in visible]
+        if principal_id is not None:
+            visible = access.visible_profile_ids(principal_id)
+            if visible is not None:
+                profiles = [p for p in profiles if p["id"] in visible]
+        return [{
+            "id": profile["id"],
+            "display_name": profile["display_name"],
+            "signature": store._prompt_sections(profile["id"])["signature"] or profile["signature"],
+            "lane": store._prompt_sections(profile["id"])["lane"],
+        } for profile in profiles]
 
     @app.post("/profiles", status_code=201)
     def create_profile(body: ProfileCreateIn, request: Request):
@@ -628,14 +670,17 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
                 if path.is_file():
                     identity_content = path.read_text()
         now = time.time()
-        companion_directory = [
-            {
-                key: item[key] for key in
-                ("id", "display_name", "description", "signature", "family_id",
-                 "variant_label", "is_family_default")
-            }
-            for item in store.list_profiles()
-        ]
+        companion_directory = []
+        for item in store.list_profiles():
+            sections = store._prompt_sections(item["id"])
+            # The prompt section is authoritative once populated. The old
+            # registry signature is a transition-only display fallback.
+            companion_directory.append({
+                "id": item["id"],
+                "display_name": item["display_name"],
+                "signature": sections["signature"] or item["signature"],
+                "lane": sections["lane"],
+            })
         can_read_records = (
             principal_id is None or access.allowed(principal_id, "records:read", profile_id)
         )
@@ -924,11 +969,12 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
     def propose_prompt_edit(profile_id: str, body: PromptEditProposeIn, request: Request):
         principal_id = _require("manage_profile", profile_id, request)
         _wrap(store.get_profile, profile_id)  # 404 if unknown
-        if body.who_you_are is None and body.what_you_do is None:
-            raise HTTPException(422, "at least one of who_you_are/what_you_do is required")
+        payload = body.model_dump()
+        if all(value is None for value in payload.values()):
+            raise HTTPException(422, "at least one canonical prompt section is required")
         return access.propose_approval(
             "prompt_edit", principal_id or "anonymous",
-            {"who_you_are": body.who_you_are, "what_you_do": body.what_you_do},
+            payload,
             profile_id=profile_id)
 
     @app.post("/approvals/{approval_id}/retract")
@@ -972,7 +1018,10 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
         _expire_approvals()
         _require_global_any(_APPROVAL_OPS, request)
         try:
-            return access.get_approval(approval_id)
+            approval = access.get_approval(approval_id)
+            if approval["kind"] == "prompt_edit" and approval["profile_id"]:
+                approval["current_sections"] = store._prompt_sections(approval["profile_id"])
+            return approval
         except AccessError as e:
             raise HTTPException(404, str(e))
 
@@ -986,6 +1035,9 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
             raise HTTPException(404, str(e))
         if row["status"] != "pending":
             raise HTTPException(409, f"approval already {row['status']}")
+        if (row["kind"] == "prompt_edit" and principal_id is not None
+                and principal_id == row["proposed_by_principal"]):
+            raise HTTPException(403, "a companion cannot approve its own prompt proposal")
         if body.approve:
             if principal_id is None:
                 pass  # auth disabled: local/dev convenience, no TOTP surface
@@ -1033,8 +1085,7 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
         if body.approve and decided["kind"] == "prompt_edit":
             payload = decided["payload"]
             _wrap(store.update_prompts, decided["profile_id"],
-                 payload.get("who_you_are", payload.get("base_prompt")),
-                 payload.get("what_you_do", payload.get("role_prompt")))
+                 **{name: payload.get(name) for name in PROMPT_SECTION_NAMES})
         return decided
 
     @app.get("/profiles/{profile_id}/domain")

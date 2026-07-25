@@ -18,14 +18,10 @@ backend with its own backend credential from env.
 
 Exposed MCP tools:
 
-- `whoami`
 - `start_session`
-- `resolve_companion`
 - `propose_prompt_edit`
 - `update_own_description`
 - `discover_companions` (browse the directory after not-found or on request)
-- `list_profiles`
-- `boot_profile`
 - `remember`
 - `update_memory`
 - `forget`
@@ -36,7 +32,6 @@ Exposed MCP tools:
 - `list_files`
 - `read_file`
 - `delete_file`
-- `search_memories`
 - `closeout`
 - `list_stores`
 - `propose_store`
@@ -51,7 +46,7 @@ returns `selection.settled=true`; clients must not ask about sibling variants
 or switch profiles unless the user explicitly requests it.
 For ChatGPT compatibility, `outputSchema` is omitted from advertised tool
 definitions by default; this avoids a strict schema validator rejecting the
-entire tool list (including `list_profiles`). Set `MCP_OMIT_OUTPUT_SCHEMAS=0`
+entire advertised tool list. Set `MCP_OMIT_OUTPUT_SCHEMAS=0`
 only for a connector known to support the published schemas.
 
 Not exposed as MCP tools: approve, reject, archive, audit, profile
@@ -136,11 +131,11 @@ This matters for OAuth audience validation: issued access tokens are scoped to
    prompt.
 8. Say: `Start session as sidra.`
 9. Expected first tool call: `start_session` with `{"profile_id": "sidra"}`.
-10. Claude should then answer using the returned `base_prompt`, `role_prompt`,
+10. Claude should then answer using the returned canonical prompt sections,
     `compact_state`, profile metadata, memory policy, closeout rules, and
     allowed tools.
 
-After boot, Claude can call `remember`, `search_memories`, `closeout`,
+After startup, Claude can call `remember`, `search_context`, `closeout`,
 `list_stores`, `propose_store`, `query_records`, and `add_record`. Record
 writes still require a backend-approved dynamic store; pending/rejected/
 archived stores are rejected by the backend. Pending schema proposals include
@@ -166,7 +161,7 @@ curl -sS -X POST http://127.0.0.1:8080/mcp \
   -H "Authorization: Bearer $MCP_CONNECTOR_TOKEN" \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
-  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"boot_profile","arguments":{"profile_id":"sidra"}}}'
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"start_session","arguments":{"profile_id":"sidra"}}}'
 ```
 
 ## Auth details

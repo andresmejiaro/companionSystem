@@ -21,7 +21,7 @@ The original bridge shape is still useful:
   harness and smoke runners.
 
 The remote MCP server deliberately exposes a narrower, Claude-facing tool set:
-`resolve_companion`, `list_profiles`, `boot_profile`, `remember`, `search_memories`, `closeout`,
+`resolve_companion`, `list_profiles`, `boot_profile`, `remember`, `search_context`, `closeout`,
 `list_stores`, `propose_store`, `query_records`, and `add_record`.
 
 ## Configuration
@@ -86,7 +86,7 @@ many profiles — grants are many-to-many.
 | `resolve_companion(query)` | `GET /profiles/resolve` | authenticated; visible profiles only |
 | `boot(profile_id)` | `POST /profiles/{id}/boot` | `boot` |
 | `remember(profile_id, kind, content, tags=[])` | `POST /profiles/{id}/memories` | `remember` |
-| `search_memories(profile_id, query, limit=20)` | `GET /profiles/{id}/memories/search` | `search` |
+| `search_context(profile_id, query, limit=20)` | `GET /profiles/{id}/context/search` | `search`, `records:read` |
 | `closeout(profile_id, notes, new_state)` | `POST /profiles/{id}/closeout` | `closeout` |
 | `propose_store(profile_id, name, purpose, schema)` | `POST /profiles/{id}/stores` | `stores:propose` |
 | `list_stores(profile_id)` | `GET /profiles/{id}/stores` | `records:read` |

@@ -97,9 +97,7 @@ def test_boot_returns_prompts_state_and_memories(store):
     assert "lane" in b["what_you_do"].lower()
     assert b["signature"] == b["lane"] == b["voice"] == ""
     assert b["how_you_keep_context"] == ""
-    # Legacy reads remain aliases, not separate persisted prompt bodies.
-    assert "Sidra" in b["base_prompt"]
-    assert "lane" in b["role_prompt"].lower()
+    assert "base_prompt" not in b and "role_prompt" not in b
     assert b["compact_state"] == "No active task contract."
     assert any(m["kind"] == "failure_scar" for m in b["recent_memories"])
     assert b["profile"]["allowed_tools"]
@@ -123,8 +121,7 @@ def test_legacy_prompt_files_are_renamed_byte_for_byte_and_new_sections_are_empt
         assert not (profile_dir / "role_prompt.md").exists()
         booted = reopened.boot("sidra")
         assert [booted[name] for name in ("signature", "lane", "voice", "how_you_keep_context")] == ["", "", "", ""]
-        assert booted["base_prompt"] == booted["who_you_are"]
-        assert booted["role_prompt"] == booted["what_you_do"]
+        assert "base_prompt" not in booted and "role_prompt" not in booted
     finally:
         reopened.close()
 
@@ -262,4 +259,4 @@ def test_create_profile_rolls_back_on_file_write_failure(store, monkeypatch):
     assert not (store.profiles_dir / "doomed").exists()
     # id is reusable after the failed attempt
     store.create_profile("doomed", "Doomed", "base", "role")
-    assert store.boot("doomed")["base_prompt"] == "base"
+    assert store.boot("doomed")["who_you_are"] == "base"

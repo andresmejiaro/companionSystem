@@ -26,6 +26,8 @@ import unicodedata
 import uuid
 from pathlib import Path
 
+import regex
+
 from .errors import (FileNotFoundInStore, MalformedMemoryEvent, MalformedMessage,
                      MalformedRecord, MemoryEventNotFound, MessageNotFound,
                      ProfileNotFound)
@@ -140,6 +142,34 @@ def _validate_aliases(aliases: list[str] | None) -> list[str]:
     if len(cleaned) > 20:
         raise MalformedRecord("a profile may have at most 20 aliases")
     return cleaned
+
+
+def validate_lane(value: str) -> str:
+    """Validate the public one-line directory summary."""
+    if not isinstance(value, str) or len(value) > 200:
+        raise MalformedRecord("lane must be a string of at most 200 characters")
+    if "\n" in value or "\r" in value:
+        raise MalformedRecord("lane must not contain line breaks")
+    return value
+
+
+def validate_signature(value: str) -> str:
+    """Allow at most five emoji grapheme clusters, not code points.
+
+    ``regex`` supplies Unicode grapheme segmentation (``\\X``) and current
+    emoji properties, which correctly handles ZWJ families, flags, skin tones,
+    and variation selectors without maintaining brittle local ranges.
+    """
+    if not isinstance(value, str):
+        raise MalformedRecord("signature must be a string")
+    clusters = regex.findall(r"\X", value)
+    if len(clusters) > 5:
+        raise MalformedRecord("signature must contain at most five emoji grapheme clusters")
+    allowed = regex.compile(r"^[\p{Emoji}\p{Emoji_Modifier}\p{Regional_Indicator}\u200d\ufe0e\ufe0f]+$")
+    emoji = regex.compile(r"[\p{Extended_Pictographic}\p{Regional_Indicator}]")
+    if any(not allowed.fullmatch(cluster) or not emoji.search(cluster) for cluster in clusters):
+        raise MalformedRecord("signature must contain emoji only")
+    return value
 
 
 class Store:
@@ -261,10 +291,8 @@ class Store:
         display_name = " ".join(display_name.strip().split()) if isinstance(display_name, str) else ""
         if not display_name:
             raise MalformedRecord("display_name must be a non-empty string")
-        if not isinstance(description, str) or len(description) > 200:
-            raise MalformedRecord("description must be a string of at most 200 characters")
-        if not isinstance(signature, str) or len(signature) > 5:
-            raise MalformedRecord("signature must be a string of at most 5 characters")
+        validate_lane(description)
+        validate_signature(signature)
         if profile_kind not in {"companion", "system"}:
             raise MalformedRecord("profile_kind must be 'companion' or 'system'")
         aliases = _validate_aliases(aliases)
@@ -472,15 +500,35 @@ class Store:
         path = self.profiles_dir / profile_id / name
         return path.read_text() if path.exists() else ""
 
-    def update_prompts(self, profile_id: str, who_you_are: str | None = None,
-                       what_you_do: str | None = None) -> dict:
-        """Overwrite one or both prompt files. None leaves that file untouched."""
+    def update_prompts(self, profile_id: str, **sections: str | None) -> dict:
+        """Overwrite proposed canonical sections; None leaves a section untouched."""
         self._require_profile(profile_id)
         pdir = self.profiles_dir / profile_id
-        if who_you_are is not None:
-            (pdir / "who_you_are.md").write_text(who_you_are)
-        if what_you_do is not None:
-            (pdir / "what_you_do.md").write_text(what_you_do)
+        unknown = set(sections) - set(PROMPT_SECTION_NAMES)
+        if unknown:
+            raise MalformedRecord(f"unknown prompt sections: {sorted(unknown)!r}")
+        if sections.get("lane") is not None:
+            validate_lane(sections["lane"])
+        if sections.get("signature") is not None:
+            validate_signature(sections["signature"])
+        changed = {name: value for name, value in sections.items() if value is not None}
+        if changed:
+            # Keep a complete, recoverable pre-approval snapshot. The approval
+            # record is the audit trail; this is the exact prior file version.
+            version_dir = pdir / ".prompt_versions" / f"{int(time.time() * 1000)}-{uuid.uuid4().hex}"
+            version_dir.mkdir(parents=True)
+            for name in PROMPT_SECTION_NAMES:
+                shutil.copy2(pdir / PROMPT_SECTION_FILES[name],
+                             version_dir / PROMPT_SECTION_FILES[name])
+        for name, value in sections.items():
+            if value is not None:
+                (pdir / PROMPT_SECTION_FILES[name]).write_text(value)
+        # Prompt sections are authoritative. Keep old directory metadata only
+        # as a transition fallback, synchronized after an approved proposal.
+        if sections.get("signature") is not None:
+            with self.db:
+                self.db.execute("UPDATE profiles SET signature=? WHERE id=?",
+                                (sections["signature"], profile_id))
         return self.get_profile(profile_id)
 
     def update_description(self, profile_id: str, description: str | None = None,
@@ -493,10 +541,10 @@ class Store:
         self._require_profile(profile_id)
         if description is None and signature is None:
             raise MalformedRecord("description or signature is required")
-        if description is not None and (not isinstance(description, str) or len(description) > 200):
-            raise MalformedRecord("description must be a string of at most 200 characters")
-        if signature is not None and (not isinstance(signature, str) or len(signature) > 5):
-            raise MalformedRecord("signature must be a string of at most 5 characters")
+        if description is not None:
+            validate_lane(description)
+        if signature is not None:
+            validate_signature(signature)
         changes, values = [], []
         if description is not None:
             changes.append("description=?")
@@ -576,16 +624,11 @@ class Store:
         }
 
     def _prompt_sections(self, profile_id: str) -> dict:
-        """Return canonical ordered prompt sections plus legacy read aliases."""
-        sections = {
+        """Return the one canonical, ordered prompt representation."""
+        return {
             name: self._prompt(profile_id, PROMPT_SECTION_FILES[name])
             for name in PROMPT_SECTION_NAMES
         }
-        # API compatibility only.  These are derived reads, not duplicate
-        # storage or a second prompt representation.
-        sections["base_prompt"] = sections["who_you_are"]
-        sections["role_prompt"] = sections["what_you_do"]
-        return sections
 
     def remember(self, profile_id: str, event: dict) -> dict:
         self._require_profile(profile_id)

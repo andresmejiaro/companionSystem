@@ -21,7 +21,7 @@ No state library beyond fetch + local component state. No backend of its own.
 ## Data models (as returned by the API — do not invent fields)
 
 - **Profile**: `id, display_name, description` (max 200 chars), `signature` (optional, max 5 chars), `allowed_tools[], memory_policy{}, closeout_rules, created_at`
-- **BootState**: `profile, base_prompt, role_prompt, compact_state, state_updated_at, recent_memories[]`
+- **BootState**: `profile, who_you_are, signature, lane, voice, what_you_do, how_you_keep_context, compact_state, state_updated_at, recent_memories[]`
 - **MemoryEvent**: `id, profile_id, kind, content, tags[], created_at`
 - **DomainRecord**: `id, store, data{}, created_at`
 - **Closeout** (request): `notes, new_state`

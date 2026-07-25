@@ -21,7 +21,7 @@ subset of these operations over `POST /mcp` and `GET /mcp`; see
 - `GET /profiles/resolve?q=` → deterministic routing result with status
   `resolved`, `ambiguous`, or `not_found`. Precedence is normalized exact
   canonical id, unique alias, unique display name, then family default.
-- `POST /profiles` `{id, display_name, description?, signature?, base_prompt?, role_prompt?,
+- `POST /profiles` `{id, display_name, description?, signature?, who_you_are?, what_you_do?,
   aliases?, family_id?, variant_label?, is_family_default?}` → 201,
   profile object. Requires the global `create_profile` grant; the creating
   principal automatically receives the owner grant bundle on the new
@@ -53,7 +53,7 @@ subset of these operations over `POST /mcp` and `GET /mcp`; see
 
 - ★ `POST /profiles/{id}/boot` → everything needed to start a session:
   ```json
-  {"profile": {...}, "base_prompt": "...", "role_prompt": "...",
+  {"profile": {...}, "who_you_are": "...", "signature": "...", "lane": "...", "voice": "...", "what_you_do": "...", "how_you_keep_context": "...",
    "compact_state": "No meals logged today.", "state_updated_at": 1751640000.0,
    "recent_memories": [ {memory event}, ... ]}
   ```
@@ -68,7 +68,7 @@ subset of these operations over `POST /mcp` and `GET /mcp`; see
   variants are omitted from `routing_guidance` so the model does not reopen
   an already-resolved choice. Canonical ids are normalized for case and
   surrounding whitespace. Requires the same `boot` grant.
-- `POST /profiles/{id}/prompt` `{base_prompt?, role_prompt?}` → 201, a
+- `POST /profiles/{id}/prompt` accepts any canonical prompt sections → 201, a
   pending approval record. Requires `manage_profile` on that profile.
   Companions can propose an edit to their own prompts; it only takes effect
   once an admin approves it with a live TOTP code — see "TOTP-gated

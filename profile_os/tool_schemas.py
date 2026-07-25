@@ -135,15 +135,12 @@ BOOT = {
         "voice": {"type": "string"},
         "what_you_do": {"type": "string"},
         "how_you_keep_context": {"type": "string"},
-        # Legacy read aliases derived from the canonical sections.
-        "base_prompt": {"type": "string"},
-        "role_prompt": {"type": "string"},
         "compact_state": {"type": "string"},
         "state_updated_at": NUMBER_OR_NULL,
         "recent_memories": array_of(MEMORY_EVENT),
     },
     "required": ["profile", "who_you_are", "signature", "lane", "voice",
-                 "what_you_do", "how_you_keep_context", "base_prompt", "role_prompt", "compact_state",
+                 "what_you_do", "how_you_keep_context", "compact_state",
                  "state_updated_at", "recent_memories"],
 }
 
@@ -157,9 +154,6 @@ START_SESSION = {
         "voice": {"type": "string"},
         "what_you_do": {"type": "string"},
         "how_you_keep_context": {"type": "string"},
-        # Legacy read aliases derived from the canonical sections.
-        "base_prompt": {"type": "string"},
-        "role_prompt": {"type": "string"},
         "compact_state": {"type": "string"},
         "system_contracts": {
             "type": "object",
@@ -215,8 +209,6 @@ START_SESSION = {
         "voice",
         "what_you_do",
         "how_you_keep_context",
-        "base_prompt",
-        "role_prompt",
         "compact_state",
         "system_contracts",
         "identity",
@@ -268,10 +260,11 @@ APPROVAL = {
             "type": "object",
             "properties": {
                 "who_you_are": STRING_OR_NULL,
+                "signature": STRING_OR_NULL,
+                "lane": STRING_OR_NULL,
+                "voice": STRING_OR_NULL,
                 "what_you_do": STRING_OR_NULL,
-                # Backward-compatible records may still contain these keys.
-                "base_prompt": STRING_OR_NULL,
-                "role_prompt": STRING_OR_NULL,
+                "how_you_keep_context": STRING_OR_NULL,
                 "store_id": {"type": "string"},
                 "store_name": {"type": "string"},
                 "project_id": {"type": "string"},

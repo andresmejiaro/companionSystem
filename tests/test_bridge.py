@@ -109,7 +109,7 @@ def test_no_tool_bypasses_api_authorization(tmp_path):
         "whoami": {},
         "resolve_companion": {"query": "tara"},
         "start_session": {"profile_id": "tara"},
-        "propose_prompt_edit": {"profile_id": "tara", "base_prompt": "x"},
+        "propose_prompt_edit": {"profile_id": "tara", "who_you_are": "x"},
         "update_own_description": {"profile_id": "tara", "description": "x"},
         "boot": {"profile_id": "tara"},
         "remember": {"profile_id": "tara", "kind": "note", "content": "x"},

@@ -199,19 +199,19 @@ def _approval_page(approval: dict, error: str | None = None) -> str:
     ACCESS_CONTROL.md 'TOTP-only approval links'."""
     payload = approval.get("payload") or {}
     if approval.get("kind") == "prompt_edit":
-        def prompt_field(name: str, legacy_name: str) -> str:
-            value = payload.get(name, payload.get(legacy_name))
+        current = approval.get("current_sections") or {}
+        def prompt_field(name: str) -> str:
+            value = payload.get(name)
+            before = current.get(name, "")
             if value is None:
                 body = '<p style="color:#555"><em>No change proposed — the current value remains.</em></p>'
-            elif value == "":
-                body = '<p style="color:#8a3b00"><strong>Proposed replacement: empty prompt.</strong></p>'
             else:
-                body = (f'<p style="color:#176b3a"><strong>Proposed replacement.</strong></p>'
-                        f'<pre style="white-space:pre-wrap;background:#f4f4f4;padding:12px;border-radius:6px">'
-                        f'{_html.escape(str(value))}</pre>')
+                body = (f'<p><strong>Current</strong></p><pre style="white-space:pre-wrap;background:#f4f4f4;padding:12px;border-radius:6px">{_html.escape(str(before))}</pre>'
+                        f'<p><strong>Proposed{(" (empty)" if value == "" else "")}</strong></p><pre style="white-space:pre-wrap;background:#f4f4f4;padding:12px;border-radius:6px">{_html.escape(str(value))}</pre>'
+                        f'<details><summary>Readable diff</summary><pre style="white-space:pre-wrap">{_html.escape("- " + str(before) + "\\n+ " + str(value))}</pre></details>')
             return f'<h4>{_html.escape(name)}</h4>{body}'
-        fields = (prompt_field("who_you_are", "base_prompt")
-                  + prompt_field("what_you_do", "role_prompt"))
+        fields = "".join(prompt_field(name) for name in (
+            "who_you_are", "signature", "lane", "voice", "what_you_do", "how_you_keep_context"))
     else:
         fields = "".join(
             f'<h4>{_html.escape(k)}</h4><pre style="white-space:pre-wrap;background:#f4f4f4;'
@@ -507,8 +507,8 @@ MCP_TOOLS = [
     _tool(
         "discover_companions",
         "Discover Companions",
-        "Browse every available companion with canonical id, display name, and"
-        " description. Do not call this before start_session merely because the"
+        "Browse every available companion with canonical id, display name, signature, and"
+        " lane. Do not call this before start_session merely because the"
         " user supplied a name: start_session tries normalized exact canonical ids"
         " first and falls back to server resolution. Use discovery for browsing or"
         " after a not_found result. Do not use whoami for companion discovery.",
@@ -549,15 +549,17 @@ MCP_TOOLS = [
     _tool(
         "propose_prompt_edit",
         "Propose Prompt Edit",
-        "Propose a change to your own who_you_are and/or what_you_do sections. Held pending"
+        "Propose changes to your own six canonical prompt sections. Held pending"
         " until the human approves it with a live TOTP code from their authenticator"
         " app — you cannot approve your own edits, and there is no way around that.",
         {
             "profile_id": _PROFILE_ID,
             "who_you_are": {"type": "string"},
+            "signature": {"type": "string", "description": "Up to five emoji grapheme clusters."},
+            "lane": {"type": "string", "maxLength": 200, "description": "One-line public directory summary."},
+            "voice": {"type": "string"},
             "what_you_do": {"type": "string"},
-            "base_prompt": {"type": "string", "deprecated": True},
-            "role_prompt": {"type": "string", "deprecated": True},
+            "how_you_keep_context": {"type": "string"},
         },
         ["profile_id"],
     ),
@@ -710,8 +712,7 @@ MCP_TOOLS = [
     _tool(
         "prepare_closeout",
         "Prepare Closeout",
-        "Return the current store/project topology and persistence checklist."
-        " Perform the needed writes yourself, then call closeout.",
+        "Use this when the user says they are done with the session. This gives instructions on how to update stores when done.",
         {"profile_id": _PROFILE_ID},
         ["profile_id"],
     ),
@@ -873,6 +874,12 @@ MCP_TOOLS = [
     ),
 ]
 
+_HIDDEN_MCP_TOOLS = {
+    "whoami", "resolve_companion", "list_profiles", "boot_profile",
+    "update_own_description", "search_memories", "create_project",
+    "list_projects", "join_project", "leave_project", "add_project_record",
+    "query_project_records",
+}
 MCP_TOOL_NAMES = {tool["name"] for tool in MCP_TOOLS}
 
 
@@ -881,10 +888,10 @@ def _advertised_tools() -> list[dict[str, Any]]:
     # validate an output schema.  Keep discovery reliably available by
     # default; operators with a host that supports output schemas can opt in
     # with MCP_OMIT_OUTPUT_SCHEMAS=0.
+    visible = [tool for tool in MCP_TOOLS if tool["name"] not in _HIDDEN_MCP_TOOLS]
     if os.environ.get("MCP_OMIT_OUTPUT_SCHEMAS", "1") == "0":
-        return MCP_TOOLS
-    return [{k: v for k, v in tool.items() if k != "outputSchema"}
-            for tool in MCP_TOOLS]
+        return visible
+    return [{k: v for k, v in tool.items() if k != "outputSchema"} for tool in visible]
 
 
 @dataclass
@@ -1062,11 +1069,10 @@ class MCPToolRunner:
                 )
             raise ToolBridgeError(404, f"no companion matches {requested!r}")
         if name == "propose_prompt_edit":
-            return self.bridge.propose_prompt_edit(
-                arguments["profile_id"],
-                arguments.get("who_you_are", arguments.get("base_prompt")),
-                arguments.get("what_you_do", arguments.get("role_prompt")),
-            )
+            prompt_args = {key: arguments[key] for key in (
+                "who_you_are", "signature", "lane", "voice", "what_you_do",
+                "how_you_keep_context") if key in arguments}
+            return self.bridge.propose_prompt_edit(arguments["profile_id"], **prompt_args)
         if name == "retract_approval":
             return self.bridge.retract_approval(arguments["approval_id"])
         if name == "update_own_description":
@@ -1398,10 +1404,8 @@ def _handle_rpc(message: dict[str, Any], app: FastAPI) -> dict[str, Any]:
                 "a normalized exact canonical id first and only resolves names after a 404; "
                 "do not browse the directory first. A returned selection with settled=true "
                 "is final: never ask about sibling variants or switch profiles unless the "
-                "user explicitly requests a switch. Use resolve_companion for an explicit "
-                "routing check and discover_companions only for browsing or not_found results. "
-                "list_profiles is a compatibility alias. Use boot_profile only when raw "
-                "memory-event IDs/tags or full profile fields are needed. The returned "
+                "user explicitly requests a switch. Use discover_companions only for browsing "
+                "or not_found results. The returned "
                 "allowed_tools is guidance for which tools this profile should use; it is "
                 "not enforced server-side."
             ),

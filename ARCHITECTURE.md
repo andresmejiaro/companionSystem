@@ -35,7 +35,7 @@ profile_os/
 
 - **SQLite** (`data/profile_os.db`): profiles, memory_events, compact_state,
   domain_records, closeouts. One file, inspectable with any sqlite client.
-- **Markdown prompt files** on disk per profile: base_prompt.md, role_prompt.md.
+- **Markdown prompt files** on disk per profile: the six canonical prompt sections.
   Deliberately *outside* the DB so identity files are visible, diffable, and
   never touched by memory operations.
 - **closeouts.jsonl** per profile: append-only human-auditable session log.

@@ -139,17 +139,16 @@ TOOLS = [
                           " history), and the current server date/time (server_time)"
                           " in one call.",
           {"profile_id": _PID}, ["profile_id"]),
-    _tool("propose_prompt_edit", "Propose a change to your own who_you_are and/or what_you_do prompt sections."
+    _tool("propose_prompt_edit", "Propose a change to your own canonical prompt sections."
                                 " Held pending until the human approves it with a live"
                                 " TOTP code from their authenticator app — you cannot"
                                 " approve your own edits.",
           {"profile_id": _PID,
            "who_you_are": {"type": "string"},
+           "signature": {"type": "string"}, "lane": {"type": "string"},
+           "voice": {"type": "string"},
            "what_you_do": {"type": "string"},
-           # Backward-compatible input aliases. New clients should use the
-           # canonical section names above.
-           "base_prompt": {"type": "string", "deprecated": True},
-           "role_prompt": {"type": "string", "deprecated": True}},
+           "how_you_keep_context": {"type": "string"}},
           ["profile_id"]),
     _tool("retract_approval", "Retract your own pending approval proposal.",
           {"approval_id": {"type": "string"}}, ["approval_id"]),
@@ -219,8 +218,7 @@ TOOLS = [
     _tool("delete_file", "Delete a file from your scratch file store.",
           {"profile_id": _PID, "filename": {"type": "string"}},
           ["profile_id", "filename"]),
-    _tool("prepare_closeout", "Review current stores and shared projects and receive"
-                              " the persistence checklist before closing a session.",
+    _tool("prepare_closeout", "Use this when the user says they are done with the session. This gives instructions on how to update stores when done.",
           {"profile_id": _PID}, ["profile_id"]),
     _tool("closeout", "Close a session with facts, concrete continuity texture (rapport, tone, pacing, or an unresolved concern), and a short verbatim meaningful exchange; notes are optional.",
           {"profile_id": _PID,
@@ -361,20 +359,13 @@ class ToolBridge:
                              json={"totp_code": totp_code})
 
     def propose_prompt_edit(self, profile_id: str, who_you_are: str | None = None,
-                            what_you_do: str | None = None, *,
-                            base_prompt: str | None = None,
-                            role_prompt: str | None = None):
-        """Propose canonical prompt-section edits.
-
-        ``base_prompt`` and ``role_prompt`` remain input-only compatibility
-        aliases for older local callers; no duplicate prompt bodies are kept.
-        """
-        if who_you_are is None:
-            who_you_are = base_prompt
-        if what_you_do is None:
-            what_you_do = role_prompt
+                            what_you_do: str | None = None, *, signature: str | None = None,
+                            lane: str | None = None, voice: str | None = None,
+                            how_you_keep_context: str | None = None):
         return self._request("POST", f"/profiles/{profile_id}/prompt",
-                             json={"who_you_are": who_you_are, "what_you_do": what_you_do})
+                             json={"who_you_are": who_you_are, "signature": signature,
+                                   "lane": lane, "voice": voice, "what_you_do": what_you_do,
+                                   "how_you_keep_context": how_you_keep_context})
 
     def retract_approval(self, approval_id: str):
         return self._request("POST", f"/approvals/{approval_id}/retract")

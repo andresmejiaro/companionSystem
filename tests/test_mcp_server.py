@@ -104,8 +104,6 @@ class FakeBridge:
             "voice": "",
             "what_you_do": "Role prompt.",
             "how_you_keep_context": "",
-            "base_prompt": "Base prompt.",
-            "role_prompt": "Role prompt.",
             "compact_state": "No active task.",
             "state_updated_at": None, "recent_memories": list(self.memories),
         }
@@ -232,10 +230,10 @@ class FakeBridge:
         self.records.append(record)
         return record
 
-    def propose_prompt_edit(self, profile_id, base_prompt=None, role_prompt=None):
+    def propose_prompt_edit(self, profile_id, who_you_are=None, what_you_do=None, **sections):
         approval = {"id": "approval-1", "kind": "prompt_edit", "profile_id": profile_id,
                    "status": "pending",
-                   "payload": {"base_prompt": base_prompt, "role_prompt": role_prompt}}
+                   "payload": {"who_you_are": who_you_are, "what_you_do": what_you_do, **sections}}
         self.approvals[approval["id"]] = approval
         return approval
 
@@ -334,27 +332,22 @@ def test_initialize_and_list_tools(tmp_path, monkeypatch):
     body = r.json()["result"]
     assert body["protocolVersion"] == "2025-06-18"
     assert body["capabilities"] == {"tools": {"listChanged": False}}
-    assert "boot_profile" in body["instructions"]
+    assert "start_session" in body["instructions"]
 
     r = client.post("/mcp", json=_rpc("tools/list"), headers=_bearer())
     assert r.status_code == 200
     tools = r.json()["result"]["tools"]
     names = {tool["name"] for tool in tools}
-    assert names == {tool["name"] for tool in MCP_TOOLS}
+    assert len(names) == 28
+    assert not names & {"whoami", "resolve_companion", "list_profiles", "boot_profile", "update_own_description", "search_memories", "create_project", "list_projects", "join_project", "leave_project", "add_project_record", "query_project_records"}
     assert not names & {"approve_store", "reject_store", "archive_store", "audit"}
-    assert names == {tool["name"] for tool in MCP_TOOLS}
     for tool in tools:
         assert set(tool) == {"name", "title", "description", "inputSchema", "outputSchema", "annotations"}
         assert tool["outputSchema"]["type"] == "object"
         assert set(tool["annotations"]) == {"readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint"}
-    list_profiles = next(tool for tool in tools if tool["name"] == "list_profiles")
-    assert list_profiles["outputSchema"]["properties"]["items"]["type"] == "array"
     discover = next(tool for tool in tools if tool["name"] == "discover_companions")
     assert "do not call this before start_session" in discover["description"].lower()
     assert discover["annotations"]["readOnlyHint"] is True
-    resolver = next(tool for tool in tools if tool["name"] == "resolve_companion")
-    assert "exact canonical id" in resolver["description"]
-    assert resolver["annotations"]["readOnlyHint"] is True
     closeout = next(tool for tool in tools if tool["name"] == "closeout")
     assert set(closeout["inputSchema"]["properties"]) == {
         "profile_id", "facts", "texture", "exchange", "notes",
@@ -368,9 +361,8 @@ def test_initialize_and_list_tools(tmp_path, monkeypatch):
     assert annotations["forget"]["destructiveHint"] is True
     assert annotations["delete_file"]["destructiveHint"] is True
     assert annotations["delete_record"]["destructiveHint"] is True
-    assert annotations["boot_profile"]["readOnlyHint"] is True
-    assert annotations["leave_project"] == {"readOnlyHint": False, "destructiveHint": False,
-                                             "idempotentHint": True, "openWorldHint": True}
+    assert annotations["start_session"]["readOnlyHint"] is True
+    assert next(tool for tool in tools if tool["name"] == "prepare_closeout")["description"] == "Use this when the user says they are done with the session. This gives instructions on how to update stores when done."
 
 
 def test_list_tools_can_omit_output_schemas(tmp_path, monkeypatch):
@@ -379,7 +371,7 @@ def test_list_tools_can_omit_output_schemas(tmp_path, monkeypatch):
     r = client.post("/mcp", json=_rpc("tools/list"), headers=_bearer())
     assert r.status_code == 200
     tools = r.json()["result"]["tools"]
-    assert {tool["name"] for tool in tools} == {tool["name"] for tool in MCP_TOOLS}
+    assert len(tools) == 28
     for tool in tools:
         assert set(tool) == {"name", "title", "description", "inputSchema", "annotations"}
 
@@ -390,7 +382,7 @@ def test_list_tools_omit_output_schemas_by_default(tmp_path, monkeypatch):
     r = client.post("/mcp", json=_rpc("tools/list"), headers=_bearer())
     assert r.status_code == 200
     tools = r.json()["result"]["tools"]
-    discovered = next(tool for tool in tools if tool["name"] == "list_profiles")
+    discovered = next(tool for tool in tools if tool["name"] == "discover_companions")
     assert "outputSchema" not in discovered
 
 
@@ -427,8 +419,8 @@ def test_mcp_tool_flow_and_logging(tmp_path, caplog):
         boot = _call_tool(client, "boot_profile", {"profile_id": "sidra"}).json()
     boot_data = boot["result"]["structuredContent"]
     assert boot_data["profile"]["id"] == "sidra"
-    assert boot_data["base_prompt"]
-    assert boot_data["role_prompt"]
+    assert boot_data["who_you_are"]
+    assert boot_data["what_you_do"]
     assert "mcp_tool_call name=boot_profile profile_id=sidra outcome=ok" in caplog.text
 
     r = _call_tool(client, "remember", {
@@ -717,7 +709,7 @@ def test_approval_link_page_totp_only_flow():
     bridge = FakeBridge()
     client = ThreadedASGIClient(create_mcp_app(bridge=bridge))
 
-    approval = bridge.propose_prompt_edit("tara", base_prompt="New text")
+    approval = bridge.propose_prompt_edit("tara", who_you_are="New text")
     approval_id = approval["id"]
 
     page = client.get(f"/approvals/{approval_id}")
@@ -727,7 +719,7 @@ def test_approval_link_page_totp_only_flow():
     assert "New text" in page.text
     assert "who_you_are" in page.text
     assert "what_you_do" in page.text
-    assert "Proposed replacement." in page.text
+    assert "Readable diff" in page.text
     assert "No change proposed — the current value remains." in page.text
 
     bad = client.post(f"/approvals/{approval_id}", data={
@@ -745,7 +737,7 @@ def test_approval_link_page_totp_only_flow():
 def test_approval_link_rejection_needs_no_code():
     bridge = FakeBridge()
     client = ThreadedASGIClient(create_mcp_app(bridge=bridge))
-    approval = bridge.propose_prompt_edit("tara", role_prompt="nope")
+    approval = bridge.propose_prompt_edit("tara", what_you_do="nope")
 
     r = client.post(f"/approvals/{approval['id']}", data={
         "totp_code": "", "decision": "reject"})
@@ -798,7 +790,7 @@ def test_propose_prompt_edit_tool_returns_approval_link():
 
     r = client.post("/mcp", json=_rpc("tools/call", {
         "name": "propose_prompt_edit",
-        "arguments": {"profile_id": "tara", "base_prompt": "hi"},
+        "arguments": {"profile_id": "tara", "who_you_are": "hi"},
     }), headers={"Accept": "application/json, text/event-stream"})
     assert r.status_code == 200
     result_text = _sse_json(r)["result"]["content"][0]["text"]

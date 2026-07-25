@@ -94,7 +94,7 @@ def test_prompt_edit_propose_and_approve_flow(auth_client, clock):
     access.grant(owner["id"], "boot", profile_id="tara")
 
     r = client.post("/profiles/tara/prompt", headers=_bearer("owner-secret"),
-                    json={"base_prompt": "New base prompt."})
+                    json={"who_you_are": "New base prompt."})
     assert r.status_code == 201, r.text
     approval_id = r.json()["id"]
     assert r.json()["status"] == "pending"
@@ -114,7 +114,7 @@ def test_prompt_edit_propose_and_approve_flow(auth_client, clock):
 
     # applied to the actual profile prompt
     booted = client.post("/profiles/tara/boot", headers=_bearer("owner-secret"))
-    assert booted.json()["base_prompt"] == "New base prompt."
+    assert booted.json()["who_you_are"] == "New base prompt."
 
     # can't decide twice
     again = client.post(f"/approvals/{approval_id}/decide", headers=_bearer("root-secret"),
@@ -141,7 +141,7 @@ def test_totp_only_principal_can_decide_via_admins_totp(auth_client, clock):
     assert not access.has_totp(link_principal["id"])  # this principal has no TOTP itself
 
     r = client.post("/profiles/tara/prompt", headers=_bearer("owner-secret"),
-                    json={"role_prompt": "via link"})
+                    json={"what_you_do": "via link"})
     approval_id = r.json()["id"]
 
     # fetching via GET works for a totp_decide-only principal too
@@ -158,7 +158,7 @@ def test_totp_only_principal_can_decide_via_admins_totp(auth_client, clock):
     assert ok.json()["status"] == "approved"
 
     booted = client.post("/profiles/tara/boot", headers=_bearer("owner-secret"))
-    assert booted.json()["role_prompt"] == "via link"
+    assert booted.json()["what_you_do"] == "via link"
 
 
 def test_prompt_edit_rejection_needs_no_code(auth_client, clock):
@@ -170,7 +170,7 @@ def test_prompt_edit_rejection_needs_no_code(auth_client, clock):
     access.grant(owner["id"], "boot", profile_id="tara")
 
     r = client.post("/profiles/tara/prompt", headers=_bearer("owner-secret"),
-                    json={"role_prompt": "nope"})
+                    json={"what_you_do": "nope"})
     approval_id = r.json()["id"]
     reject = client.post(f"/approvals/{approval_id}/decide", headers=_bearer("root-secret"),
                          json={"approve": False})
@@ -178,7 +178,7 @@ def test_prompt_edit_rejection_needs_no_code(auth_client, clock):
     assert reject.json()["status"] == "rejected"
 
     booted = client.post("/profiles/tara/boot", headers=_bearer("owner-secret"))
-    assert booted.json()["role_prompt"] != "nope"
+    assert booted.json()["what_you_do"] != "nope"
 
 
 def test_update_description_is_self_service_no_totp(auth_client):
@@ -196,7 +196,7 @@ def test_update_description_is_self_service_no_totp(auth_client):
 
     listed = client.get("/profiles", headers=_bearer("owner-secret")).json()
     tara = next(p for p in listed if p["id"] == "tara")
-    assert tara["description"] == "Food tracking and nutrition facts."
+    assert set(tara) == {"id", "display_name", "signature", "lane"}
 
 
 def test_update_description_requires_manage_profile_grant(auth_client):
@@ -213,7 +213,7 @@ def test_prompt_edit_requires_manage_profile_grant(auth_client):
     p = access.create_principal("agent", "no-owner")
     access.create_credential(p["id"], "k", "no-owner-secret")
     r = client.post("/profiles/tara/prompt", headers=_bearer("no-owner-secret"),
-                    json={"base_prompt": "x"})
+                    json={"who_you_are": "x"})
     assert r.status_code == 403
 
 
@@ -329,7 +329,7 @@ def test_decide_without_totp_enrolled_is_403(auth_client):
     access.create_credential(owner["id"], "k", "owner-secret")
     access.grant(owner["id"], "manage_profile", profile_id="tara")
     r = client.post("/profiles/tara/prompt", headers=_bearer("owner-secret"),
-                    json={"base_prompt": "x"})
+                    json={"who_you_are": "x"})
     approval_id = r.json()["id"]
     # admin has not enrolled TOTP yet in this test
     decide = client.post(f"/approvals/{approval_id}/decide", headers=_bearer("root-secret"),
