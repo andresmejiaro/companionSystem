@@ -15,9 +15,14 @@ subset of these operations over `POST /mcp` and `GET /mcp`; see
   ```json
   {"id": "tara", "display_name": "Tara", "description": "...", "signature": "🍎",
    "allowed_tools": ["log_food"], "memory_policy": {"kinds": ["fact"]},
-   "closeout_rules": "...", "created_at": 1751640000.0}
+   "closeout_rules": "...", "aliases": ["food duck"], "family_id": "tara",
+   "variant_label": "", "is_family_default": true, "created_at": 1751640000.0}
   ```
-- `POST /profiles` `{id, display_name, description?, signature?, base_prompt?, role_prompt?}` → 201,
+- `GET /profiles/resolve?q=` → deterministic routing result with status
+  `resolved`, `ambiguous`, or `not_found`. Precedence is normalized exact
+  canonical id, unique alias, unique display name, then family default.
+- `POST /profiles` `{id, display_name, description?, signature?, base_prompt?, role_prompt?,
+  aliases?, family_id?, variant_label?, is_family_default?}` → 201,
   profile object. Requires the global `create_profile` grant; the creating
   principal automatically receives the owner grant bundle on the new
   profile (see ACCESS_CONTROL.md). `id` must match `[a-z0-9_-]{1,64}`; 409
@@ -33,6 +38,11 @@ subset of these operations over `POST /mcp` and `GET /mcp`; see
   For creating/migrating a companion from mobile without the admin
   secret. Same `id`/409/422 rules as `POST /profiles`. Also reachable as a
   form at `GET /create-profile` on the mcp service.
+- `PUT /profiles/{id}/routing`
+  `{display_name?, aliases?, family_id?, variant_label?, is_family_default?}`
+  → updated profile. Requires `manage_profile`; display names and aliases
+  are whitespace-normalized, and selecting a family default clears the
+  prior default in that family.
 - `POST /enroll` `{invite_token, display_name, public_key}` → 201
   `{principal_id, key_id}`. Unauthenticated, single-use; consumes an invite
   minted locally via `python -m profile_os.mint_invite`. 410 if the invite
@@ -53,8 +63,11 @@ subset of these operations over `POST /mcp` and `GET /mcp`; see
   `identity:read`), a bounded boot-memory slice reduced to `kind` and
   `content`, and `server_time` (`{"unix": 1751640000.0,
   "iso": "2026-07-10T12:00:00+00:00"}`). It deliberately omits memory IDs,
-  tags, timestamps, full history, and closeout archives. Requires the same
-  `boot` grant.
+  tags, timestamps, full history, and closeout archives. `selection` names
+  the active profile/family/variant and sets `settled: true`; sibling
+  variants are omitted from `routing_guidance` so the model does not reopen
+  an already-resolved choice. Canonical ids are normalized for case and
+  surrounding whitespace. Requires the same `boot` grant.
 - `POST /profiles/{id}/prompt` `{base_prompt?, role_prompt?}` → 201, a
   pending approval record. Requires `manage_profile` on that profile.
   Companions can propose an edit to their own prompts; it only takes effect

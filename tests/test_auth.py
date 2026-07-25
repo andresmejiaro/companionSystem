@@ -128,7 +128,9 @@ def test_all_protected_endpoints_401_without_credential(auth_client):
     client, _ = auth_client
     protected = [
         ("GET", "/profiles", None),
+        ("GET", "/profiles/resolve?q=tara", None),
         ("GET", "/profiles/tara", None),
+        ("PUT", "/profiles/tara/routing", {"display_name": "Tara"}),
         ("POST", "/profiles/tara/boot", None),
         ("POST", "/profiles/tara/memories", {"kind": "note", "content": "x"}),
         ("GET", "/profiles/tara/memories/search?q=x", None),
@@ -232,6 +234,19 @@ def test_list_profiles_filtered_by_grants(auth_client):
     r = client.get("/profiles", headers=_bearer("tara-secret"))
     assert r.status_code == 200
     assert [prof["id"] for prof in r.json()] == ["tara"]
+    resolved = client.get(
+        "/profiles/resolve", params={"q": "TARA"},
+        headers=_bearer("tara-secret"),
+    )
+    assert resolved.status_code == 200
+    assert resolved.json()["resolved_profile_id"] == "tara"
+    assert client.post(
+        "/profiles/TARA/session", headers=_bearer("tara-secret")
+    ).status_code == 200
+    assert client.get(
+        "/profiles/resolve", params={"q": "sidra"},
+        headers=_bearer("tara-secret"),
+    ).json()["status"] == "not_found"
 
     w = access.create_principal("admin", "operator")
     access.create_credential(w["id"], "k", "admin-secret")

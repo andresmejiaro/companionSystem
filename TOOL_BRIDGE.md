@@ -21,7 +21,7 @@ The original bridge shape is still useful:
   harness and smoke runners.
 
 The remote MCP server deliberately exposes a narrower, Claude-facing tool set:
-`list_profiles`, `boot_profile`, `remember`, `search_memories`, `closeout`,
+`resolve_companion`, `list_profiles`, `boot_profile`, `remember`, `search_memories`, `closeout`,
 `list_stores`, `propose_store`, `query_records`, and `add_record`.
 
 ## Configuration
@@ -83,6 +83,7 @@ many profiles — grants are many-to-many.
 
 | Tool | Backend route | Required grant |
 |---|---|---|
+| `resolve_companion(query)` | `GET /profiles/resolve` | authenticated; visible profiles only |
 | `boot(profile_id)` | `POST /profiles/{id}/boot` | `boot` |
 | `remember(profile_id, kind, content, tags=[])` | `POST /profiles/{id}/memories` | `remember` |
 | `search_memories(profile_id, query, limit=20)` | `GET /profiles/{id}/memories/search` | `search` |

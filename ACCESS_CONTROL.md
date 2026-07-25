@@ -241,7 +241,7 @@ whatever a companion's memory says on conflict. Exposed as the MCP tool
 | `POST /profiles/{id}/session` | `boot` (same grant as normal boot) |
 | `POST /profiles/{id}/prompt` (propose) | `manage_profile` |
 | `GET /approvals`, `POST /approvals/{id}/decide` | global `approvals:decide` |
-| `GET /profiles` | authenticated; filtered to profiles with any active grant (`*` sees all) |
+| `GET /profiles`, `GET /profiles/resolve` | authenticated; filtered to profiles with any active grant (`*` sees all) |
 | `POST /profiles` | global `create_profile`; auto-grants owner bundle on the new profile |
 | `GET /profiles/{id}`, `POST /profiles/{id}/boot` | `boot` |
 | `POST /profiles/{id}/memories` | `remember` |
@@ -250,7 +250,7 @@ whatever a companion's memory says on conflict. Exposed as the MCP tool
 | `GET /profiles/{id}/inbox`, `POST /profiles/{id}/inbox/{message_id}/read` | `search` |
 | `PUT \| DELETE /profiles/{id}/files/{filename}` | `remember` (self-service, no admin approval) |
 | `GET /profiles/{id}/files`, `GET /profiles/{id}/files/{filename}` | `search` |
-| `PUT /profiles/{id}/description` | `manage_profile` (self-service, no TOTP — discovery metadata, not behavior) |
+| `PUT /profiles/{id}/description`, `PUT /profiles/{id}/routing` | `manage_profile` (self-service, no TOTP — discovery metadata, not behavior) |
 | `GET /profiles/{id}/memories/search` | `search` |
 | `POST /profiles/{id}/closeout` | `closeout` |
 | `GET /profiles/{id}/domain`, `GET /profiles/{id}/domain/{store}` | `records:read` |

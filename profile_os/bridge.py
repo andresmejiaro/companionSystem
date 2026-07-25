@@ -53,6 +53,7 @@ from .tool_schemas import (
     MEMORY_KINDS,
     MESSAGE,
     PROFILE,
+    PROFILE_RESOLUTION,
     START_SESSION,
     array_of,
 )
@@ -84,6 +85,7 @@ _PID = {"type": "string", "description": "assistant profile id, e.g. 'tara'"}
 
 BRIDGE_OUTPUT_SCHEMAS = {
     "whoami": IDENTITY,
+    "resolve_companion": PROFILE_RESOLUTION,
     "boot": BOOT,
     "start_session": START_SESSION,
     "propose_prompt_edit": APPROVAL,
@@ -121,6 +123,9 @@ TOOLS = [
                     " your memory on conflict — file wins, drift gets logged"
                     " by the human. Call this when unsure about personal facts.",
           {}, []),
+    _tool("resolve_companion",
+          "Resolve a companion query using exact id, alias, display name, then family default.",
+          {"query": {"type": "string"}}, ["query"]),
     _tool("boot", "Boot a profile: compact state, prompts, recent memories.",
           {"profile_id": _PID}, ["profile_id"]),
     _tool("start_session", "Call this on your first response in a conversation instead"
@@ -320,6 +325,9 @@ class ToolBridge:
 
     def list_profiles(self):
         return self._request("GET", "/profiles")
+
+    def resolve_companion(self, query: str):
+        return self._request("GET", "/profiles/resolve", params={"q": query})
 
     def boot_profile(self, profile_id: str):
         return self.boot(profile_id)

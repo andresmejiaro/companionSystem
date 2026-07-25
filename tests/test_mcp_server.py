@@ -59,6 +59,8 @@ class FakeBridge:
         self.records = []
         self.store_approved = False
         self.approvals = {}
+        self.start_session_calls = []
+        self.resolve_calls = []
 
     def list_profiles(self):
         return [
@@ -70,15 +72,61 @@ class FakeBridge:
         return {"id": profile_id, "display_name": profile_id.title(),
                 "description": "", "signature": "", "allowed_tools": ["remember", "search_memories"],
                 "memory_policy": {"max_boot_events": 10},
-                "closeout_rules": "Write compact state.", "created_at": 1}
+                "closeout_rules": "Write compact state.", "aliases": [],
+                "family_id": profile_id, "variant_label": "",
+                "is_family_default": True, "created_at": 1}
+
+    def resolve_companion(self, query):
+        self.resolve_calls.append(query)
+        normalized = " ".join(query.strip().casefold().split())
+        matches = [
+            profile for profile in self.list_profiles()
+            if profile["id"].casefold() == normalized
+            or profile["display_name"].casefold() == normalized
+        ]
+        return {
+            "query": query,
+            "status": "resolved" if len(matches) == 1 else (
+                "ambiguous" if matches else "not_found"),
+            "match_basis": "exact_id" if len(matches) == 1 else "none",
+            "resolved_profile_id": matches[0]["id"] if len(matches) == 1 else None,
+            "candidates": matches,
+        }
 
     def boot_profile(self, profile_id: str):
+        if profile_id not in {"sidra", "tara"}:
+            raise ToolBridgeError(404, f"profile {profile_id!r} not found")
         return {
             "profile": self._profile(profile_id),
             "base_prompt": "Base prompt.",
             "role_prompt": "Role prompt.",
             "compact_state": "No active task.",
             "state_updated_at": None, "recent_memories": list(self.memories),
+        }
+
+    def start_session(self, profile_id: str):
+        self.start_session_calls.append(profile_id)
+        booted = self.boot_profile(profile_id)
+        booted.pop("state_updated_at")
+        memories = [
+            {"kind": memory["kind"], "content": memory["content"]}
+            for memory in booted.pop("recent_memories")
+        ]
+        profile = booted["profile"]
+        return {
+            **booted,
+            "identity": "Canonical identity.",
+            "memories": memories,
+            "recent_exchanges": [],
+            "you_got_mail": False,
+            "selection": {
+                "profile_id": profile_id,
+                "family_id": profile["family_id"],
+                "variant_label": profile["variant_label"],
+                "settled": True,
+            },
+            "routing_guidance": "Selection is settled.",
+            "server_time": {"unix": 1, "iso": "1970-01-01T00:00:01+00:00"},
         }
 
     def inspect_session(self, profile_id, totp_code):
@@ -88,7 +136,15 @@ class FakeBridge:
             **self.boot_profile(profile_id),
             "identity": "Canonical identity.",
             "memories": [{"id": "memory-1", "kind": "note", "content": "A memory.", "tags": ["lookup-only"]}],
+            "recent_exchanges": [],
             "you_got_mail": False,
+            "selection": {
+                "profile_id": profile_id,
+                "family_id": profile_id,
+                "variant_label": "",
+                "settled": True,
+            },
+            "routing_guidance": "Selection is settled.",
             "server_time": {"unix": 1, "iso": "1970-01-01T00:00:01+00:00"},
         }
 
@@ -266,8 +322,11 @@ def test_initialize_and_list_tools(tmp_path, monkeypatch):
     list_profiles = next(tool for tool in tools if tool["name"] == "list_profiles")
     assert list_profiles["outputSchema"]["properties"]["items"]["type"] == "array"
     discover = next(tool for tool in tools if tool["name"] == "discover_companions")
-    assert "start session as Rita" in discover["description"]
+    assert "do not call this before start_session" in discover["description"].lower()
     assert discover["annotations"]["readOnlyHint"] is True
+    resolver = next(tool for tool in tools if tool["name"] == "resolve_companion")
+    assert "exact canonical id" in resolver["description"]
+    assert resolver["annotations"]["readOnlyHint"] is True
     closeout = next(tool for tool in tools if tool["name"] == "closeout")
     assert set(closeout["inputSchema"]["properties"]) == {
         "profile_id", "facts", "texture", "exchange", "notes",
@@ -328,6 +387,13 @@ def test_mcp_tool_flow_and_logging(tmp_path, caplog):
     assert any(item["id"] == "sidra" for item in profiles["structuredContent"]["items"])
     discovered = _call_tool(client, "discover_companions", {}).json()["result"]
     assert any(item["id"] == "tara" for item in discovered["structuredContent"]["items"])
+    resolved = _call_tool(client, "resolve_companion", {"query": "Tara"}).json()["result"]
+    assert resolved["structuredContent"]["resolved_profile_id"] == "tara"
+
+    started = _call_tool(client, "start_session", {"profile_id": "tara"}).json()["result"]
+    assert started["structuredContent"]["selection"]["settled"] is True
+    assert bridge.start_session_calls == ["tara"]
+    assert bridge.resolve_calls == ["Tara"]  # exact startup did not resolve
 
     with caplog.at_level(logging.INFO, logger="profile_os.mcp_server"):
         boot = _call_tool(client, "boot_profile", {"profile_id": "sidra"}).json()
@@ -389,6 +455,22 @@ def test_mcp_tool_flow_and_logging(tmp_path, caplog):
     assert records[0]["data"]["hotel_name"] == "Inn"
 
 
+def test_start_session_uses_exact_id_before_resolution_and_falls_back_on_404():
+    bridge = FakeBridge()
+    client = _mcp_client(bridge)
+
+    exact = _call_tool(client, "start_session", {"profile_id": "tara"}).json()["result"]
+    assert exact["isError"] is False
+    assert bridge.start_session_calls == ["tara"]
+    assert bridge.resolve_calls == []
+
+    named = _call_tool(client, "start_session", {"profile_id": "Tara"}).json()["result"]
+    assert named["isError"] is False
+    assert named["structuredContent"]["selection"]["profile_id"] == "tara"
+    assert bridge.start_session_calls == ["tara", "Tara", "tara"]
+    assert bridge.resolve_calls == ["Tara"]
+
+
 def test_successful_structured_content_matches_declared_output_schema():
     """Exercise representative real calls across each changed output family."""
     bridge = FakeBridge()
@@ -403,7 +485,9 @@ def test_successful_structured_content_matches_declared_output_schema():
 
     call_and_validate("list_profiles", {})
     call_and_validate("discover_companions", {})
+    call_and_validate("resolve_companion", {"query": "tara"})
     call_and_validate("boot_profile", {"profile_id": "sidra"})
+    call_and_validate("start_session", {"profile_id": "tara"})
     call_and_validate("remember", {"profile_id": "tara", "kind": "note", "content": "x"})
     call_and_validate("search_memories", {"profile_id": "tara", "query": "x"})
     call_and_validate("closeout", {"profile_id": "tara", "facts": "f", "texture": "t", "exchange": "u"})

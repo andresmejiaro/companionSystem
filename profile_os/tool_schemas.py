@@ -56,10 +56,32 @@ PROFILE = {
         "allowed_tools": array_of({"type": "string"}),
         "memory_policy": JSON_OBJECT,
         "closeout_rules": {"type": "string"},
+        "aliases": array_of({"type": "string"}),
+        "family_id": {"type": "string"},
+        "variant_label": {"type": "string"},
+        "is_family_default": {"type": "boolean"},
         "created_at": {"type": "number"},
     },
     "required": ["id", "display_name", "description", "signature", "allowed_tools",
-                 "memory_policy", "closeout_rules", "created_at"],
+                 "memory_policy", "closeout_rules", "aliases", "family_id",
+                 "variant_label", "is_family_default", "created_at"],
+}
+
+PROFILE_RESOLUTION = {
+    "type": "object",
+    "properties": {
+        "query": {"type": "string"},
+        "status": {"type": "string", "enum": ["resolved", "ambiguous", "not_found"]},
+        "match_basis": {
+            "type": "string",
+            "enum": ["exact_id", "alias", "display_name", "family_default", "none"],
+        },
+        "resolved_profile_id": STRING_OR_NULL,
+        "candidates": array_of(PROFILE),
+    },
+    "required": [
+        "query", "status", "match_basis", "resolved_profile_id", "candidates",
+    ],
 }
 
 MEMORY_EVENT = {
@@ -134,6 +156,16 @@ START_SESSION = {
             "required": ["texture", "exchange"],
         }),
         "you_got_mail": {"type": "boolean"},
+        "selection": {
+            "type": "object",
+            "properties": {
+                "profile_id": {"type": "string"},
+                "family_id": {"type": "string"},
+                "variant_label": {"type": "string"},
+                "settled": {"type": "boolean"},
+            },
+            "required": ["profile_id", "family_id", "variant_label", "settled"],
+        },
         "routing_guidance": {"type": "string"},
         "server_time": {
             "type": "object",
@@ -153,6 +185,7 @@ START_SESSION = {
         "memories",
         "recent_exchanges",
         "you_got_mail",
+        "selection",
         "routing_guidance",
         "server_time",
     ],

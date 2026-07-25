@@ -33,12 +33,70 @@ def test_profile_discovery_metadata_and_startup_routing_guidance(client):
 
     session = client.post("/profiles/tara/session").json()
     assert "outside your lane" in session["routing_guidance"]
-    assert "Travel ✈️ — Plans trips." in session["routing_guidance"]
+    assert "Travel [travel] ✈️ — Plans trips." in session["routing_guidance"]
+    assert session["selection"] == {
+        "profile_id": "tara",
+        "family_id": "tara",
+        "variant_label": "",
+        "settled": True,
+    }
+    assert "Do not ask whether the user meant a sibling" in session["routing_guidance"]
 
     assert client.post("/profiles", json={
         "id": "too_long", "display_name": "Too long", "description": "x" * 201,
     }).status_code == 422
     assert client.put("/profiles/travel/description", json={"signature": "abcdef"}).status_code == 422
+
+
+def test_profile_resolver_and_family_aware_session_routing(client):
+    assert client.post("/profiles", json={
+        "id": "vera",
+        "display_name": "Vera",
+        "aliases": ["life vera"],
+        "family_id": "vera_family",
+        "variant_label": "life",
+        "is_family_default": True,
+    }).status_code == 201
+    assert client.post("/profiles", json={
+        "id": "dr_vera",
+        "display_name": "Dr Vera",
+        "aliases": ["doctor vera"],
+        "family_id": "vera_family",
+        "variant_label": "clinical",
+        "is_family_default": False,
+    }).status_code == 201
+
+    exact = client.get("/profiles/resolve", params={"q": " VeRa "}).json()
+    assert exact["match_basis"] == "exact_id"
+    assert exact["resolved_profile_id"] == "vera"
+
+    alias = client.get("/profiles/resolve", params={"q": "Doctor Vera"}).json()
+    assert alias["match_basis"] == "alias"
+    assert alias["resolved_profile_id"] == "dr_vera"
+
+    family = client.get("/profiles/resolve", params={"q": "vera_family"}).json()
+    assert family["match_basis"] == "family_default"
+    assert family["resolved_profile_id"] == "vera"
+
+    session = client.post("/profiles/vera/session").json()
+    assert session["selection"]["settled"] is True
+    assert session["selection"]["profile_id"] == "vera"
+    assert "Dr Vera" not in session["routing_guidance"]
+
+    normalized_session = client.post("/profiles/VERA/session").json()
+    assert normalized_session["selection"]["profile_id"] == "vera"
+
+
+def test_routing_metadata_update_trims_display_name(client):
+    response = client.put("/profiles/tara/routing", json={
+        "display_name": "  Tara  ",
+        "aliases": ["food duck"],
+        "variant_label": "bookkeeping",
+    })
+    assert response.status_code == 200
+    assert response.json()["display_name"] == "Tara"
+    assert response.json()["aliases"] == ["food duck"]
+    assert response.json()["variant_label"] == "bookkeeping"
 
 
 def test_root_directory_and_admin_shortcuts(client):

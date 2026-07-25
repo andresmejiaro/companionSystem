@@ -47,6 +47,7 @@ from .tool_schemas import (
     MEMORY_KINDS,
     MESSAGE,
     PROFILE,
+    PROFILE_RESOLUTION,
     PROJECT,
     PROJECT_WITH_APPROVAL,
     PROJECT_RECORD,
@@ -408,6 +409,7 @@ _MEMORY_KINDS = MEMORY_KINDS
 
 MCP_OUTPUT_SCHEMAS = {
     "whoami": IDENTITY,
+    "resolve_companion": PROFILE_RESOLUTION,
     "discover_companions": mcp_items(PROFILE),
     "list_profiles": mcp_items(PROFILE),
     "boot_profile": BOOT,
@@ -448,7 +450,8 @@ MCP_OUTPUT_SCHEMAS = {
 
 
 _READ_ONLY_TOOLS = {
-    "whoami", "discover_companions", "list_profiles", "boot_profile", "start_session", "search_memories",
+    "whoami", "resolve_companion", "discover_companions", "list_profiles",
+    "boot_profile", "start_session", "search_memories",
     "read_inbox", "list_files", "read_file", "list_stores", "query_records",
     "filter_records", "get_record", "list_projects", "query_project_records",
 }
@@ -478,13 +481,24 @@ MCP_TOOLS = [
         [],
     ),
     _tool(
+        "resolve_companion",
+        "Resolve Companion",
+        "Resolve a non-canonical companion name on the server. Matching precedence"
+        " is normalized exact canonical id, unique alias, unique display name,"
+        " then family default; otherwise the result is ambiguous or not_found."
+        " Usually start_session should be called first because it already tries"
+        " an exact canonical id before falling back to this resolver.",
+        {"query": {"type": "string", "description": "Companion id, alias, display name, or family id."}},
+        ["query"],
+    ),
+    _tool(
         "discover_companions",
         "Discover Companions",
-        "Use this first when the user names a companion (for example, 'start session as Rita')"
-        " but has not supplied its exact profile_id. This is the routing step: it returns"
-        " every available companion with its canonical id, display_name, and description."
-        " Match the requested name to a returned companion, then pass that exact id to"
-        " start_session. Do not use whoami for companion discovery.",
+        "Browse every available companion with canonical id, display name, and"
+        " description. Do not call this before start_session merely because the"
+        " user supplied a name: start_session tries normalized exact canonical ids"
+        " first and falls back to server resolution. Use discovery for browsing or"
+        " after a not_found result. Do not use whoami for companion discovery.",
         {},
         [],
     ),
@@ -507,8 +521,10 @@ MCP_TOOLS = [
         "start_session",
         "Start Session",
         "Call this on your first response in a conversation instead of boot_profile."
-        " profile_id must be the exact canonical id returned by discover_companions; if"
-        " the user provided only a name, call discover_companions first. This tool"
+        " Pass the phrase the user supplied. A normalized exact canonical id is"
+        " decisive and is tried directly; only a 404 triggers server-side resolution."
+        " When the returned selection.settled is true, never ask whether the user meant"
+        " a sibling and never switch variants unless the user explicitly requests it. This tool"
         " returns whoami identity, prompts, compact_state, a bounded semantic"
         " memory slice (no IDs, tags, or full history), up to four recent"
         " texture/exchange examples for continuity, and the current server"
@@ -985,12 +1001,30 @@ class MCPToolRunner:
     def call(self, name: str, arguments: dict[str, Any]) -> Any:
         if name == "whoami":
             return self.bridge.whoami()
+        if name == "resolve_companion":
+            return self.bridge.resolve_companion(arguments["query"])
         if name in {"discover_companions", "list_profiles"}:
             return self.bridge.list_profiles()
         if name == "boot_profile":
             return self.bridge.boot_profile(arguments["profile_id"])
         if name == "start_session":
-            return self.bridge.start_session(arguments["profile_id"])
+            requested = arguments["profile_id"]
+            try:
+                # Canonical ids are decisive and incur no directory lookup.
+                return self.bridge.start_session(requested)
+            except ToolBridgeError as error:
+                if error.status_code != 404:
+                    raise
+            resolution = self.bridge.resolve_companion(requested)
+            if resolution["status"] == "resolved":
+                return self.bridge.start_session(resolution["resolved_profile_id"])
+            ids = [profile["id"] for profile in resolution["candidates"]]
+            if resolution["status"] == "ambiguous":
+                raise ToolBridgeError(
+                    409,
+                    f"ambiguous companion {requested!r}; candidates: {', '.join(ids)}",
+                )
+            raise ToolBridgeError(404, f"no companion matches {requested!r}")
         if name == "propose_prompt_edit":
             return self.bridge.propose_prompt_edit(
                 arguments["profile_id"],
@@ -1316,9 +1350,13 @@ def _handle_rpc(message: dict[str, Any], app: FastAPI) -> dict[str, Any]:
                 "version": SERVER_VERSION,
             },
             "instructions": (
-                "When a user names a companion but not its exact profile id, call "
-                "discover_companions first, then pass the returned canonical id to "
-                "start_session. list_profiles is a compatibility alias. Use boot_profile only when raw "
+                "Call start_session with the companion phrase the user supplied. It tries "
+                "a normalized exact canonical id first and only resolves names after a 404; "
+                "do not browse the directory first. A returned selection with settled=true "
+                "is final: never ask about sibling variants or switch profiles unless the "
+                "user explicitly requests a switch. Use resolve_companion for an explicit "
+                "routing check and discover_companions only for browsing or not_found results. "
+                "list_profiles is a compatibility alias. Use boot_profile only when raw "
                 "memory-event IDs/tags or full profile fields are needed. The returned "
                 "allowed_tools is guidance for which tools this profile should use; it is "
                 "not enforced server-side."

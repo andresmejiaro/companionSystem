@@ -31,7 +31,7 @@ from .errors import (DynStoreConflict, DynStoreNotFound, FileNotFoundInStore,
                      MalformedMemoryEvent, MalformedMessage, MalformedRecord,
                      MemoryEventNotFound, MessageNotFound, ProfileNotFound, SchemaError)
 from .sign import signing_message
-from .storage import Store
+from .storage import Store, normalize_profile_lookup
 
 DATA_DIR = os.environ.get("PROFILE_OS_DATA_DIR", "data")
 
@@ -75,6 +75,10 @@ class ProfileCreateTotpIn(BaseModel):
     description: str = Field(default="", max_length=200)
     signature: str = Field(default="", max_length=5)
     allowed_tools: list[str] | None = None
+    aliases: list[str] = Field(default_factory=list)
+    family_id: str | None = None
+    variant_label: str = ""
+    is_family_default: bool = True
     totp_code: str
 
 
@@ -132,6 +136,10 @@ class ProfileCreateIn(BaseModel):
     role_prompt: str = ""
     description: str = Field(default="", max_length=200)
     signature: str = Field(default="", max_length=5)
+    aliases: list[str] = Field(default_factory=list)
+    family_id: str | None = None
+    variant_label: str = ""
+    is_family_default: bool = True
 
 
 class EnrollIn(BaseModel):
@@ -148,6 +156,14 @@ class PromptEditProposeIn(BaseModel):
 class DescriptionIn(BaseModel):
     description: str | None = Field(default=None, max_length=200)
     signature: str | None = Field(default=None, max_length=5)
+
+
+class RoutingMetadataIn(BaseModel):
+    display_name: str | None = None
+    aliases: list[str] | None = None
+    family_id: str | None = None
+    variant_label: str | None = None
+    is_family_default: bool | None = None
 
 
 class ApprovalDecideIn(BaseModel):
@@ -451,7 +467,10 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
                         f" (limit {MAX_PROFILES_PER_PRINCIPAL})")
         profile = store.create_profile(
             body.id, body.display_name, body.base_prompt, body.role_prompt,
-            description=body.description, signature=body.signature)
+            description=body.description, signature=body.signature,
+            aliases=body.aliases, family_id=body.family_id,
+            variant_label=body.variant_label,
+            is_family_default=body.is_family_default)
         if principal_id is not None:
             for op in OWNER_OPS:
                 access.grant(principal_id, op, profile_id=body.id)
@@ -482,7 +501,9 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
         profile = store.create_profile(
             body.id, body.display_name, body.base_prompt, body.role_prompt,
             description=body.description, signature=body.signature,
-            allowed_tools=body.allowed_tools)
+            allowed_tools=body.allowed_tools, aliases=body.aliases,
+            family_id=body.family_id, variant_label=body.variant_label,
+            is_family_default=body.is_family_default)
         access.record_audit(admin_id, "create_profile_totp", body.id)
         return profile
 
@@ -518,10 +539,34 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
             raise HTTPException(401, "invalid, missing, or reused TOTP code")
         return {"ok": True, "principal_id": principal_id}
 
+    @app.get("/profiles/resolve")
+    def resolve_profile(q: str, request: Request):
+        principal_id = _authenticate(request)
+        profiles = store.list_profiles()
+        if principal_id is not None:
+            visible = access.visible_profile_ids(principal_id)
+            if visible is not None:
+                profiles = [profile for profile in profiles if profile["id"] in visible]
+        return _wrap(store.resolve_profile, q, profiles)
+
     @app.get("/profiles/{profile_id}")
     def get_profile(profile_id: str, request: Request):
         _require("boot", profile_id, request)
         return _wrap(store.get_profile, profile_id)
+
+    @app.put("/profiles/{profile_id}/routing")
+    def update_routing_metadata(profile_id: str, body: RoutingMetadataIn,
+                                request: Request):
+        _require("manage_profile", profile_id, request)
+        return _wrap(
+            store.update_routing_metadata,
+            profile_id,
+            display_name=body.display_name,
+            aliases=body.aliases,
+            family_id=body.family_id,
+            variant_label=body.variant_label,
+            is_family_default=body.is_family_default,
+        )
 
     @app.delete("/profiles/{profile_id}", status_code=204)
     def delete_profile(profile_id: str, request: Request):
@@ -549,12 +594,17 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
         only texture and a short exchange. Full history, IDs, tags,
         timestamps, and closeout archives stay on their dedicated tools.
         """
+        normalized_id = normalize_profile_lookup(profile_id)
+        if PROFILE_ID_RE.match(normalized_id):
+            profile_id = normalized_id
         principal_id = _require("boot", profile_id, request)
         booted = _wrap(store.boot, profile_id)
         profile = booted["profile"]
         booted["profile"] = {
             key: profile[key] for key in
-            ("id", "display_name", "description", "signature", "allowed_tools", "memory_policy", "closeout_rules")
+            ("id", "display_name", "description", "signature", "allowed_tools",
+             "memory_policy", "closeout_rules", "aliases", "family_id",
+             "variant_label", "is_family_default")
             if key in profile
         }
         booted.pop("state_updated_at", None)
@@ -579,9 +629,27 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
             # Deliberately only a flag: inbox contents stay behind read_inbox,
             # but a newly hydrated companion knows when to check it.
             "you_got_mail": bool(_wrap(store.list_inbox, profile_id, True, 1)),
-            "routing_guidance": "When a request is outside your lane, invite the user to use the right companion. Available companions: " + "; ".join(
-                f"{item['display_name']}{(' ' + item['signature']) if item['signature'] else ''} — {item['description']}"
-                for item in store.list_profiles() if item["id"] != profile_id
+            "selection": {
+                "profile_id": profile["id"],
+                "family_id": profile["family_id"],
+                "variant_label": profile["variant_label"],
+                "settled": True,
+            },
+            "routing_guidance": (
+                f"Active profile: {profile['display_name']} [{profile['id']}]. "
+                "This selection is settled. Do not ask whether the user meant a sibling "
+                "variant and do not switch profiles unless the user explicitly requests "
+                "a switch. When a request is outside your lane, suggest the appropriate "
+                "companion without reopening the current selection. Sibling variants are "
+                "omitted from this list intentionally. Available companions: "
+                + "; ".join(
+                    f"{item['display_name']} [{item['id']}]"
+                    f"{(' ' + item['signature']) if item['signature'] else ''}"
+                    f" — {item['description']}"
+                    for item in store.list_profiles()
+                    if item["id"] != profile_id
+                    and item["family_id"] != profile["family_id"]
+                )
             ),
             "server_time": {
                 "unix": now,

@@ -19,6 +19,74 @@ def test_profiles_seeded(store):
     assert {"sidra", "tara"} <= ids
 
 
+def test_profile_resolution_precedence_and_family_default(store):
+    store.create_profile(
+        "vera", "Vera", "", "", aliases=["life vera"],
+        family_id="vera_family", variant_label="life",
+        is_family_default=True,
+    )
+    store.create_profile(
+        "dr_vera", "Dr Vera", "", "", aliases=["doctor vera"],
+        family_id="vera_family", variant_label="clinical",
+        is_family_default=False,
+    )
+
+    exact = store.resolve_profile("  VeRa  ")
+    assert exact["status"] == "resolved"
+    assert exact["match_basis"] == "exact_id"
+    assert exact["resolved_profile_id"] == "vera"
+
+    alias = store.resolve_profile("DOCTOR   VERA")
+    assert alias["match_basis"] == "alias"
+    assert alias["resolved_profile_id"] == "dr_vera"
+
+    display = store.resolve_profile("Dr Vera")
+    assert display["match_basis"] == "display_name"
+    assert display["resolved_profile_id"] == "dr_vera"
+
+    family = store.resolve_profile("vera_family")
+    assert family["match_basis"] == "family_default"
+    assert family["resolved_profile_id"] == "vera"
+
+    missing = store.resolve_profile("not-a-companion")
+    assert missing["status"] == "not_found"
+    assert missing["candidates"] == []
+
+
+def test_profile_resolution_reports_same_tier_collisions(store):
+    store.create_profile("one", "Shared", "", "", aliases=["same"])
+    store.create_profile("two", "Shared", "", "", aliases=["same"])
+
+    alias = store.resolve_profile("same")
+    assert alias["status"] == "ambiguous"
+    assert alias["match_basis"] == "alias"
+    assert {p["id"] for p in alias["candidates"]} == {"one", "two"}
+
+    display = store.resolve_profile("shared")
+    assert display["status"] == "ambiguous"
+    assert display["match_basis"] == "display_name"
+
+
+def test_routing_metadata_trims_names_and_keeps_one_family_default(store):
+    store.create_profile("base", " Base  ", "", "", family_id="birds")
+    store.create_profile(
+        "variant", "Variant", "", "", family_id="birds",
+        is_family_default=False,
+    )
+    assert store.get_profile("base")["display_name"] == "Base"
+
+    updated = store.update_routing_metadata(
+        "variant",
+        display_name="  Variant GM  ",
+        aliases=[" GM ", "gm"],
+        is_family_default=True,
+    )
+    assert updated["display_name"] == "Variant GM"
+    assert updated["aliases"] == ["GM"]
+    assert updated["is_family_default"] is True
+    assert store.get_profile("base")["is_family_default"] is False
+
+
 def test_boot_returns_prompts_state_and_memories(store):
     b = store.boot("sidra")
     assert "Sidra" in b["base_prompt"]

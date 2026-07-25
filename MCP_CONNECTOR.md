@@ -20,9 +20,10 @@ Exposed MCP tools:
 
 - `whoami`
 - `start_session`
+- `resolve_companion`
 - `propose_prompt_edit`
 - `update_own_description`
-- `discover_companions` (the first step for requests phrased with a companion name)
+- `discover_companions` (browse the directory after not-found or on request)
 - `list_profiles`
 - `boot_profile`
 - `remember`
@@ -43,6 +44,11 @@ Exposed MCP tools:
 - `add_record`
 
 List-returning tool results expose structured content as `{"items": [...]}`.
+`start_session` first attempts the supplied normalized canonical id directly.
+Only a backend 404 invokes server-side resolution, with precedence exact id,
+unique alias, unique display name, then family default. A successful session
+returns `selection.settled=true`; clients must not ask about sibling variants
+or switch profiles unless the user explicitly requests it.
 For ChatGPT compatibility, `outputSchema` is omitted from advertised tool
 definitions by default; this avoids a strict schema validator rejecting the
 entire tool list (including `list_profiles`). Set `MCP_OMIT_OUTPUT_SCHEMAS=0`
@@ -128,8 +134,8 @@ This matters for OAuth audience validation: issued access tokens are scoped to
    server to call the Profile OS backend.
 7. Add the connector to a Claude Project with no companion identity/system
    prompt.
-8. Say: `Boot Sidra.`
-9. Expected first tool call: `boot_profile` with `{"profile_id": "sidra"}`.
+8. Say: `Start session as sidra.`
+9. Expected first tool call: `start_session` with `{"profile_id": "sidra"}`.
 10. Claude should then answer using the returned `base_prompt`, `role_prompt`,
     `compact_state`, profile metadata, memory policy, closeout rules, and
     allowed tools.

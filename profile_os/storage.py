@@ -18,6 +18,7 @@ import shutil
 import sqlite3
 import threading
 import time
+import unicodedata
 import uuid
 from pathlib import Path
 
@@ -34,6 +35,10 @@ CREATE TABLE IF NOT EXISTS profiles (
     allowed_tools TEXT NOT NULL DEFAULT '[]',      -- JSON list
     memory_policy TEXT NOT NULL DEFAULT '{}',      -- JSON object
     closeout_rules TEXT NOT NULL DEFAULT '',       -- free text rules
+    aliases TEXT NOT NULL DEFAULT '[]',            -- JSON routing aliases
+    family_id TEXT NOT NULL DEFAULT '',             -- sibling profile family
+    variant_label TEXT NOT NULL DEFAULT '',         -- human-readable mode label
+    is_family_default INTEGER NOT NULL DEFAULT 1,   -- default within family
     created_at REAL NOT NULL
 );
 CREATE TABLE IF NOT EXISTS compact_state (
@@ -85,6 +90,36 @@ DEFAULT_BOOT_EVENTS = 10
 MAX_BOOT_EVENTS_CAP = 100
 
 
+def normalize_profile_lookup(value: str) -> str:
+    """Normalize human routing input without changing canonical profile ids."""
+    if not isinstance(value, str):
+        return ""
+    return " ".join(unicodedata.normalize("NFKC", value).strip().casefold().split())
+
+
+def _validate_aliases(aliases: list[str] | None) -> list[str]:
+    if aliases is None:
+        return []
+    if (not isinstance(aliases, list)
+            or not all(isinstance(alias, str) for alias in aliases)):
+        raise MalformedRecord("aliases must be a list of strings")
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for alias in aliases:
+        value = " ".join(alias.strip().split())
+        normalized = normalize_profile_lookup(value)
+        if not normalized:
+            raise MalformedRecord("aliases must not contain blank values")
+        if len(value) > 100:
+            raise MalformedRecord("aliases must be at most 100 characters")
+        if normalized not in seen:
+            cleaned.append(value)
+            seen.add(normalized)
+    if len(cleaned) > 20:
+        raise MalformedRecord("a profile may have at most 20 aliases")
+    return cleaned
+
+
 class Store:
     def __init__(self, data_dir: str | Path = "data"):
         self.data_dir = Path(data_dir)
@@ -103,6 +138,19 @@ class Store:
                     self.db.execute(f"ALTER TABLE closeouts ADD COLUMN {name} TEXT NOT NULL DEFAULT ''")
             if "signature" not in profile_columns:
                 self.db.execute("ALTER TABLE profiles ADD COLUMN signature TEXT NOT NULL DEFAULT ''")
+            if "aliases" not in profile_columns:
+                self.db.execute("ALTER TABLE profiles ADD COLUMN aliases TEXT NOT NULL DEFAULT '[]'")
+            if "family_id" not in profile_columns:
+                self.db.execute("ALTER TABLE profiles ADD COLUMN family_id TEXT NOT NULL DEFAULT ''")
+            if "variant_label" not in profile_columns:
+                self.db.execute("ALTER TABLE profiles ADD COLUMN variant_label TEXT NOT NULL DEFAULT ''")
+            if "is_family_default" not in profile_columns:
+                self.db.execute(
+                    "ALTER TABLE profiles ADD COLUMN is_family_default INTEGER NOT NULL DEFAULT 1")
+            # Old rows predate family routing. Each starts as its own default
+            # family until an operator explicitly links sibling variants.
+            self.db.execute("UPDATE profiles SET family_id=id WHERE family_id=''")
+            self.db.execute("UPDATE profiles SET display_name=TRIM(display_name)")
 
     @property
     def db(self) -> sqlite3.Connection:
@@ -134,21 +182,36 @@ class Store:
         memory_policy: dict | None = None,
         closeout_rules: str = "",
         initial_state: str = "",
+        aliases: list[str] | None = None,
+        family_id: str | None = None,
+        variant_label: str = "",
+        is_family_default: bool = True,
     ) -> dict:
         if not profile_id or not profile_id.replace("-", "").replace("_", "").isalnum():
             raise MalformedRecord("profile_id must be a non-empty slug (alnum, - or _)")
+        display_name = " ".join(display_name.strip().split()) if isinstance(display_name, str) else ""
+        if not display_name:
+            raise MalformedRecord("display_name must be a non-empty string")
         if not isinstance(description, str) or len(description) > 200:
             raise MalformedRecord("description must be a string of at most 200 characters")
         if not isinstance(signature, str) or len(signature) > 5:
             raise MalformedRecord("signature must be a string of at most 5 characters")
+        aliases = _validate_aliases(aliases)
+        family_id = family_id or profile_id
+        if not family_id.replace("-", "").replace("_", "").isalnum():
+            raise MalformedRecord("family_id must be a non-empty slug (alnum, - or _)")
+        variant_label = " ".join(variant_label.strip().split()) if isinstance(
+            variant_label, str) else ""
         now = time.time()
         with self.db:
             self.db.execute(
                 "INSERT INTO profiles (id, display_name, description, signature, allowed_tools,"
-                " memory_policy, closeout_rules, created_at) VALUES (?,?,?,?,?,?,?,?)",
+                " memory_policy, closeout_rules, aliases, family_id, variant_label,"
+                " is_family_default, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                 (profile_id, display_name, description, signature,
                  json.dumps(allowed_tools or []), json.dumps(memory_policy or {}),
-                 closeout_rules, now),
+                 closeout_rules, json.dumps(aliases), family_id, variant_label,
+                 int(is_family_default), now),
             )
             self.db.execute(
                 "INSERT INTO compact_state (profile_id, state, updated_at) VALUES (?,?,?)",
@@ -167,6 +230,11 @@ class Store:
                 self.db.execute("DELETE FROM profiles WHERE id=?", (profile_id,))
             shutil.rmtree(pdir, ignore_errors=True)
             raise
+        if is_family_default:
+            with self.db:
+                self.db.execute(
+                    "UPDATE profiles SET is_family_default=0"
+                    " WHERE family_id=? AND id<>?", (family_id, profile_id))
         return self.get_profile(profile_id)
 
     def _require_profile(self, profile_id: str) -> sqlite3.Row:
@@ -185,12 +253,130 @@ class Store:
             "allowed_tools": json.loads(row["allowed_tools"]),
             "memory_policy": json.loads(row["memory_policy"]),
             "closeout_rules": row["closeout_rules"],
+            "aliases": json.loads(row["aliases"]),
+            "family_id": row["family_id"] or row["id"],
+            "variant_label": row["variant_label"],
+            "is_family_default": bool(row["is_family_default"]),
             "created_at": row["created_at"],
         }
 
     def list_profiles(self) -> list[dict]:
         rows = self.db.execute("SELECT id FROM profiles ORDER BY id").fetchall()
         return [self.get_profile(r["id"]) for r in rows]
+
+    def resolve_profile(self, query: str,
+                        profiles: list[dict] | None = None) -> dict:
+        """Resolve human input with deterministic, tiered precedence.
+
+        A collision at any matched tier is ambiguous; lower-precedence fields
+        never break that tie.
+        """
+        normalized = normalize_profile_lookup(query)
+        candidates = profiles if profiles is not None else self.list_profiles()
+
+        def result(status: str, basis: str, matches: list[dict]) -> dict:
+            return {
+                "query": query,
+                "status": status,
+                "match_basis": basis,
+                "resolved_profile_id": matches[0]["id"] if status == "resolved" else None,
+                "candidates": matches,
+            }
+
+        if not normalized:
+            return result("not_found", "none", [])
+
+        exact_ids = [
+            profile for profile in candidates
+            if normalize_profile_lookup(profile["id"]) == normalized
+        ]
+        if exact_ids:
+            return result("resolved", "exact_id", exact_ids)
+
+        alias_matches = [
+            profile for profile in candidates
+            if normalized in {
+                normalize_profile_lookup(alias) for alias in profile.get("aliases", [])
+            }
+        ]
+        if alias_matches:
+            return result(
+                "resolved" if len(alias_matches) == 1 else "ambiguous",
+                "alias", alias_matches)
+
+        display_matches = [
+            profile for profile in candidates
+            if normalize_profile_lookup(profile["display_name"]) == normalized
+        ]
+        if display_matches:
+            return result(
+                "resolved" if len(display_matches) == 1 else "ambiguous",
+                "display_name", display_matches)
+
+        family_matches = [
+            profile for profile in candidates
+            if normalize_profile_lookup(profile.get("family_id", profile["id"])) == normalized
+        ]
+        if family_matches:
+            defaults = [
+                profile for profile in family_matches
+                if profile.get("is_family_default", False)
+            ]
+            if len(defaults) == 1:
+                return result("resolved", "family_default", defaults)
+            return result("ambiguous", "family_default", family_matches)
+
+        return result("not_found", "none", [])
+
+    def update_routing_metadata(
+        self,
+        profile_id: str,
+        *,
+        display_name: str | None = None,
+        aliases: list[str] | None = None,
+        family_id: str | None = None,
+        variant_label: str | None = None,
+        is_family_default: bool | None = None,
+    ) -> dict:
+        current = self.get_profile(profile_id)
+        if all(value is None for value in (
+                display_name, aliases, family_id, variant_label, is_family_default)):
+            raise MalformedRecord("at least one routing metadata field is required")
+
+        new_display = current["display_name"]
+        if display_name is not None:
+            new_display = " ".join(display_name.strip().split()) if isinstance(
+                display_name, str) else ""
+            if not new_display:
+                raise MalformedRecord("display_name must be a non-empty string")
+        new_aliases = current["aliases"] if aliases is None else _validate_aliases(aliases)
+        new_family = family_id if family_id is not None else current["family_id"]
+        if (not isinstance(new_family, str) or not new_family
+                or not new_family.replace("-", "").replace("_", "").isalnum()):
+            raise MalformedRecord("family_id must be a non-empty slug (alnum, - or _)")
+        new_variant = current["variant_label"]
+        if variant_label is not None:
+            if not isinstance(variant_label, str):
+                raise MalformedRecord("variant_label must be a string")
+            new_variant = " ".join(variant_label.strip().split())
+        new_default = (
+            current["is_family_default"]
+            if is_family_default is None else is_family_default
+        )
+        if not isinstance(new_default, bool):
+            raise MalformedRecord("is_family_default must be a boolean")
+
+        with self.db:
+            self.db.execute(
+                "UPDATE profiles SET display_name=?, aliases=?, family_id=?,"
+                " variant_label=?, is_family_default=? WHERE id=?",
+                (new_display, json.dumps(new_aliases), new_family, new_variant,
+                 int(new_default), profile_id))
+            if new_default:
+                self.db.execute(
+                    "UPDATE profiles SET is_family_default=0"
+                    " WHERE family_id=? AND id<>?", (new_family, profile_id))
+        return self.get_profile(profile_id)
 
     def delete_profile(self, profile_id: str) -> None:
         """Permanently remove a profile: registry row, state, memories,
