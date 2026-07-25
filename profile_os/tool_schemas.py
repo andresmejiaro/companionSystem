@@ -242,9 +242,9 @@ PREPARE_CLOSEOUT = {
     "properties": {
         "profile_id": {"type": "string"},
         "instructions": array_of({"type": "string"}),
-        "data_sources": JSON_OBJECT,
     },
-    "required": ["profile_id", "instructions", "data_sources"],
+    "required": ["profile_id", "instructions"],
+    "additionalProperties": False,
 }
 
 APPROVAL = {

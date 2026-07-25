@@ -181,9 +181,6 @@ class FakeBridge:
         return {
             "profile_id": profile_id,
             "instructions": ["Review records, then memories, then close out."],
-            "data_sources": {
-                "profile_stores": [], "joined_projects": [],
-            },
         }
 
     def closeout(self, profile_id, facts, texture, exchange, notes=""):
@@ -339,6 +336,7 @@ def test_initialize_and_list_tools(tmp_path, monkeypatch):
     tools = r.json()["result"]["tools"]
     names = {tool["name"] for tool in tools}
     assert len(names) == 28
+    assert {"prepare_closeout", "closeout"} <= names
     assert not names & {"whoami", "resolve_companion", "list_profiles", "boot_profile", "update_own_description", "search_memories", "create_project", "list_projects", "join_project", "leave_project", "add_project_record", "query_project_records"}
     assert not names & {"approve_store", "reject_store", "archive_store", "audit"}
     for tool in tools:
@@ -444,6 +442,7 @@ def test_mcp_tool_flow_and_logging(tmp_path, caplog):
     prepared = _call_tool(client, "prepare_closeout", {
         "profile_id": "tara",
     }).json()["result"]["structuredContent"]
+    assert set(prepared) == {"profile_id", "instructions"}
     assert prepared["profile_id"] == "tara"
 
     assert _call_tool(client, "closeout", {

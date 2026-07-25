@@ -226,7 +226,7 @@ def test_remember_search_closeout_flow(client):
     assert "Paella day logged." in client.post("/profiles/tara/boot").json()["compact_state"]
 
 
-def test_context_search_and_prepare_closeout_cover_available_sources(client):
+def test_context_search_and_prepare_closeout_omit_redundant_sources(client):
     app = client.app
     dyn = app.state.dynstores
     projects = app.state.projects
@@ -252,9 +252,9 @@ def test_context_search_and_prepare_closeout_cover_available_sources(client):
     prepared = client.post("/profiles/tara/closeout/prepare")
     assert prepared.status_code == 200
     body = prepared.json()
+    assert set(body) == {"profile_id", "instructions"}
     assert body["profile_id"] == "tara"
-    assert body["data_sources"]["profile_stores"][0]["name"] == "case_status"
-    assert body["data_sources"]["joined_projects"][0]["id"] == project["id"]
+    assert "data_sources" not in body
     assert body["instructions"] == [
         "Reconcile relevant profile stores and joined shared-project stores; query the owning source when current state matters.",
         "Update existing records for the same real thing and identify duplicates or contradictions; flag conflicts the schema cannot resolve.",
@@ -262,6 +262,14 @@ def test_context_search_and_prepare_closeout_cover_available_sources(client):
         "Complete the existing closeout form.",
         "Let the companion close in its own voice.",
     ]
+
+    session = client.post("/profiles/tara/session")
+    assert session.status_code == 200
+    sources = session.json()["data_sources"]
+    assert sources["profile_stores"][0]["name"] == "case_status"
+    assert sources["profile_stores"][0]["schema"] == schema
+    assert sources["joined_projects"][0]["id"] == project["id"]
+    assert sources["joined_projects"][0]["schema"] == schema
 
 
 def test_context_search_stays_within_the_companion_and_joined_projects(client):

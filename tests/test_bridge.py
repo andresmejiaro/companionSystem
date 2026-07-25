@@ -1,5 +1,6 @@
 import pytest
 from fastapi.testclient import TestClient
+from jsonschema import Draft202012Validator
 
 from profile_os.api import create_app
 from profile_os.bridge import TOOLS, ToolBridge, ToolBridgeError
@@ -34,7 +35,9 @@ def _exercise_all_tools(bridge, profile="tara"):
     assert any(item["source_type"] == "memory"
                for item in bridge.search_context(profile, "bridged"))
     prepared = bridge.prepare_closeout(profile)
+    assert set(prepared) == {"profile_id", "instructions"}
     assert prepared["profile_id"] == profile
+    Draft202012Validator(next(tool for tool in TOOLS if tool["name"] == "prepare_closeout")["outputSchema"]).validate(prepared)
     bridge.closeout(profile, "State after bridge demo.", "Routine bridge test.", "User: done.", "notes")
     prop = bridge.propose_store(profile, "hotel_reservations", "p", SCHEMA)
     assert prop["status"] == "pending"

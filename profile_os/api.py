@@ -790,10 +790,6 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
                 "Complete the existing closeout form.",
                 "Let the companion close in its own voice.",
             ],
-            "data_sources": {
-                "profile_stores": _wrap(dyn.list, profile_id),
-                "joined_projects": _wrap(projects.list_for, profile_id),
-            },
         }
 
     @app.post("/profiles/{profile_id}/session-inspect")
