@@ -244,8 +244,8 @@ def test_legacy_system_notifier_marker_migrates_without_using_display_name(tmp_p
     data_dir = tmp_path / "data"
     store = Store(data_dir)
     store.create_profile(
-        "legacy_sender", "Operational sender", "",
-        "You are a non-conversational system identity. Your sole permitted operation is send_message.",
+        "legacy_sender", "Operational sender", "You are a non-conversational system identity.",
+        "Your sole permitted operation is send_message.",
         allowed_tools=["send_message"],
     )
     store.close()

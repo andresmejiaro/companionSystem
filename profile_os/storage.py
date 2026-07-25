@@ -162,11 +162,13 @@ class Store:
                     "SELECT id, allowed_tools FROM profiles WHERE profile_kind='companion'").fetchall():
                 try:
                     allowed_tools = json.loads(row["allowed_tools"])
-                    role_prompt = (self.profiles_dir / row["id"] / "role_prompt.md").read_text()
+                    profile_dir = self.profiles_dir / row["id"]
+                    base_prompt = (profile_dir / "base_prompt.md").read_text()
+                    role_prompt = (profile_dir / "role_prompt.md").read_text()
                 except (OSError, json.JSONDecodeError):
                     continue
                 if (allowed_tools == ["send_message"]
-                        and "non-conversational system identity" in role_prompt
+                        and "non-conversational system identity" in base_prompt
                         and "sole permitted operation is send_message" in role_prompt):
                     self.db.execute("UPDATE profiles SET profile_kind='system' WHERE id=?",
                                     (row["id"],))
