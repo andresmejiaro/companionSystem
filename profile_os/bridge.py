@@ -139,13 +139,17 @@ TOOLS = [
                           " history), and the current server date/time (server_time)"
                           " in one call.",
           {"profile_id": _PID}, ["profile_id"]),
-    _tool("propose_prompt_edit", "Propose a change to your own base_prompt/role_prompt."
+    _tool("propose_prompt_edit", "Propose a change to your own who_you_are and/or what_you_do prompt sections."
                                 " Held pending until the human approves it with a live"
                                 " TOTP code from their authenticator app — you cannot"
                                 " approve your own edits.",
           {"profile_id": _PID,
-           "base_prompt": {"type": "string"},
-           "role_prompt": {"type": "string"}},
+           "who_you_are": {"type": "string"},
+           "what_you_do": {"type": "string"},
+           # Backward-compatible input aliases. New clients should use the
+           # canonical section names above.
+           "base_prompt": {"type": "string", "deprecated": True},
+           "role_prompt": {"type": "string", "deprecated": True}},
           ["profile_id"]),
     _tool("retract_approval", "Retract your own pending approval proposal.",
           {"approval_id": {"type": "string"}}, ["approval_id"]),
@@ -356,10 +360,21 @@ class ToolBridge:
         return self._request("POST", f"/profiles/{profile_id}/session-inspect",
                              json={"totp_code": totp_code})
 
-    def propose_prompt_edit(self, profile_id: str, base_prompt: str | None = None,
+    def propose_prompt_edit(self, profile_id: str, who_you_are: str | None = None,
+                            what_you_do: str | None = None, *,
+                            base_prompt: str | None = None,
                             role_prompt: str | None = None):
+        """Propose canonical prompt-section edits.
+
+        ``base_prompt`` and ``role_prompt`` remain input-only compatibility
+        aliases for older local callers; no duplicate prompt bodies are kept.
+        """
+        if who_you_are is None:
+            who_you_are = base_prompt
+        if what_you_do is None:
+            what_you_do = role_prompt
         return self._request("POST", f"/profiles/{profile_id}/prompt",
-                             json={"base_prompt": base_prompt, "role_prompt": role_prompt})
+                             json={"who_you_are": who_you_are, "what_you_do": what_you_do})
 
     def retract_approval(self, approval_id: str):
         return self._request("POST", f"/approvals/{approval_id}/retract")
@@ -381,7 +396,7 @@ class ToolBridge:
                              json={"approve": approve, "totp_code": totp_code})
 
     def create_profile_totp(self, profile_id: str, display_name: str,
-                            base_prompt: str, role_prompt: str, totp_code: str,
+                            who_you_are: str, what_you_do: str, totp_code: str,
                             description: str = "", signature: str = "",
                             profile_kind: str = "companion"):
         """Not an MCP tool: used by the mcp service's public /create-profile
@@ -389,7 +404,7 @@ class ToolBridge:
         the transport layer), so this bridge's own bearer is incidental."""
         return self._request("POST", "/profiles/totp-create", json={
             "id": profile_id, "display_name": display_name,
-            "base_prompt": base_prompt, "role_prompt": role_prompt,
+            "who_you_are": who_you_are, "what_you_do": what_you_do,
             "description": description, "signature": signature,
             "profile_kind": profile_kind,
             "totp_code": totp_code,

@@ -20,7 +20,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 
 from . import seed
 from .access import AccessControl, AccessError
@@ -71,8 +71,10 @@ class MessageIn(BaseModel):
 class ProfileCreateTotpIn(BaseModel):
     id: str
     display_name: str
-    base_prompt: str = ""
-    role_prompt: str = ""
+    who_you_are: str = Field(
+        default="", validation_alias=AliasChoices("who_you_are", "base_prompt"))
+    what_you_do: str = Field(
+        default="", validation_alias=AliasChoices("what_you_do", "role_prompt"))
     description: str = Field(default="", max_length=200)
     signature: str = Field(default="", max_length=5)
     allowed_tools: list[str] | None = None
@@ -134,8 +136,10 @@ class RejectIn(BaseModel):
 class ProfileCreateIn(BaseModel):
     id: str
     display_name: str
-    base_prompt: str = ""
-    role_prompt: str = ""
+    who_you_are: str = Field(
+        default="", validation_alias=AliasChoices("who_you_are", "base_prompt"))
+    what_you_do: str = Field(
+        default="", validation_alias=AliasChoices("what_you_do", "role_prompt"))
     description: str = Field(default="", max_length=200)
     signature: str = Field(default="", max_length=5)
     aliases: list[str] = Field(default_factory=list)
@@ -152,8 +156,10 @@ class EnrollIn(BaseModel):
 
 
 class PromptEditProposeIn(BaseModel):
-    base_prompt: str | None = None
-    role_prompt: str | None = None
+    who_you_are: str | None = Field(
+        default=None, validation_alias=AliasChoices("who_you_are", "base_prompt"))
+    what_you_do: str | None = Field(
+        default=None, validation_alias=AliasChoices("what_you_do", "role_prompt"))
 
 
 class DescriptionIn(BaseModel):
@@ -469,7 +475,7 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
                     403, f"principal already owns {count} profiles"
                         f" (limit {MAX_PROFILES_PER_PRINCIPAL})")
         profile = store.create_profile(
-            body.id, body.display_name, body.base_prompt, body.role_prompt,
+            body.id, body.display_name, body.who_you_are, body.what_you_do,
             description=body.description, signature=body.signature,
             aliases=body.aliases, family_id=body.family_id,
             variant_label=body.variant_label,
@@ -502,7 +508,7 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
         if body.id in {p["id"] for p in store.list_profiles()}:
             raise HTTPException(409, f"profile {body.id!r} already exists")
         profile = store.create_profile(
-            body.id, body.display_name, body.base_prompt, body.role_prompt,
+            body.id, body.display_name, body.who_you_are, body.what_you_do,
             description=body.description, signature=body.signature,
             allowed_tools=body.allowed_tools, aliases=body.aliases,
             family_id=body.family_id, variant_label=body.variant_label,
@@ -918,11 +924,11 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
     def propose_prompt_edit(profile_id: str, body: PromptEditProposeIn, request: Request):
         principal_id = _require("manage_profile", profile_id, request)
         _wrap(store.get_profile, profile_id)  # 404 if unknown
-        if body.base_prompt is None and body.role_prompt is None:
-            raise HTTPException(422, "at least one of base_prompt/role_prompt is required")
+        if body.who_you_are is None and body.what_you_do is None:
+            raise HTTPException(422, "at least one of who_you_are/what_you_do is required")
         return access.propose_approval(
             "prompt_edit", principal_id or "anonymous",
-            {"base_prompt": body.base_prompt, "role_prompt": body.role_prompt},
+            {"who_you_are": body.who_you_are, "what_you_do": body.what_you_do},
             profile_id=profile_id)
 
     @app.post("/approvals/{approval_id}/retract")
@@ -1027,7 +1033,8 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
         if body.approve and decided["kind"] == "prompt_edit":
             payload = decided["payload"]
             _wrap(store.update_prompts, decided["profile_id"],
-                 payload.get("base_prompt"), payload.get("role_prompt"))
+                 payload.get("who_you_are", payload.get("base_prompt")),
+                 payload.get("what_you_do", payload.get("role_prompt")))
         return decided
 
     @app.get("/profiles/{profile_id}/domain")

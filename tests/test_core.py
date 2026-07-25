@@ -89,11 +89,44 @@ def test_routing_metadata_trims_names_and_keeps_one_family_default(store):
 
 def test_boot_returns_prompts_state_and_memories(store):
     b = store.boot("sidra")
+    assert list(b)[1:7] == [
+        "who_you_are", "signature", "lane", "voice", "what_you_do",
+        "how_you_keep_context",
+    ]
+    assert "Sidra" in b["who_you_are"]
+    assert "lane" in b["what_you_do"].lower()
+    assert b["signature"] == b["lane"] == b["voice"] == ""
+    assert b["how_you_keep_context"] == ""
+    # Legacy reads remain aliases, not separate persisted prompt bodies.
     assert "Sidra" in b["base_prompt"]
     assert "lane" in b["role_prompt"].lower()
     assert b["compact_state"] == "No active task contract."
     assert any(m["kind"] == "failure_scar" for m in b["recent_memories"])
     assert b["profile"]["allowed_tools"]
+
+
+def test_legacy_prompt_files_are_renamed_byte_for_byte_and_new_sections_are_empty(store):
+    profile_dir = store.profiles_dir / "sidra"
+    before_who = (profile_dir / "who_you_are.md").read_bytes()
+    before_what = (profile_dir / "what_you_do.md").read_bytes()
+    (profile_dir / "who_you_are.md").replace(profile_dir / "base_prompt.md")
+    (profile_dir / "what_you_do.md").replace(profile_dir / "role_prompt.md")
+    for name in ("signature.md", "lane.md", "voice.md", "how_you_keep_context.md"):
+        (profile_dir / name).unlink()
+
+    store.close()
+    reopened = Store(store.data_dir)
+    try:
+        assert (profile_dir / "who_you_are.md").read_bytes() == before_who
+        assert (profile_dir / "what_you_do.md").read_bytes() == before_what
+        assert not (profile_dir / "base_prompt.md").exists()
+        assert not (profile_dir / "role_prompt.md").exists()
+        booted = reopened.boot("sidra")
+        assert [booted[name] for name in ("signature", "lane", "voice", "how_you_keep_context")] == ["", "", "", ""]
+        assert booted["base_prompt"] == booted["who_you_are"]
+        assert booted["role_prompt"] == booted["what_you_do"]
+    finally:
+        reopened.close()
 
 
 def test_boot_unknown_profile_fails_clearly(store):

@@ -149,6 +149,49 @@ def test_boot_endpoint(client):
     assert body["base_prompt"] and body["compact_state"]
 
 
+def test_prompt_sections_are_canonical_and_legacy_prompt_reads_are_derived(client):
+    boot = client.post("/profiles/sidra/boot")
+    assert boot.status_code == 200
+    body = boot.json()
+    assert list(body)[1:7] == [
+        "who_you_are", "signature", "lane", "voice", "what_you_do",
+        "how_you_keep_context",
+    ]
+    assert body["who_you_are"] == body["base_prompt"]
+    assert body["what_you_do"] == body["role_prompt"]
+    assert {name: body[name] for name in ("signature", "lane", "voice", "how_you_keep_context")} == {
+        "signature": "", "lane": "", "voice": "", "how_you_keep_context": "",
+    }
+
+    session = client.post("/profiles/sidra/session")
+    assert session.status_code == 200
+    started = session.json()
+    assert started["who_you_are"] == started["base_prompt"]
+    assert started["what_you_do"] == started["role_prompt"]
+    assert [started[name] for name in ("signature", "lane", "voice", "how_you_keep_context")] == ["", "", "", ""]
+
+
+def test_prompt_create_uses_canonical_fields_and_accepts_legacy_input_aliases(client):
+    created = client.post("/profiles", json={
+        "id": "canonical", "display_name": "Canonical",
+        "who_you_are": "exact identity", "what_you_do": "exact work",
+    })
+    assert created.status_code == 201
+    booted = client.post("/profiles/canonical/boot").json()
+    assert booted["who_you_are"] == "exact identity"
+    assert booted["what_you_do"] == "exact work"
+    assert [booted[name] for name in ("signature", "lane", "voice", "how_you_keep_context")] == ["", "", "", ""]
+
+    legacy = client.post("/profiles", json={
+        "id": "legacy", "display_name": "Legacy",
+        "base_prompt": "legacy identity", "role_prompt": "legacy work",
+    })
+    assert legacy.status_code == 201
+    legacy_boot = client.post("/profiles/legacy/boot").json()
+    assert legacy_boot["who_you_are"] == legacy_boot["base_prompt"] == "legacy identity"
+    assert legacy_boot["what_you_do"] == legacy_boot["role_prompt"] == "legacy work"
+
+
 def test_session_inspect_matches_start_session_shape_when_auth_is_disabled(client):
     inspected = client.post("/profiles/sidra/session-inspect", json={"totp_code": "123456"})
     assert inspected.status_code == 200

@@ -136,8 +136,12 @@ async function boot() {
   lastBoot = r.data;
   $('boot-view').innerHTML = `
     <p><b>compact state:</b> ${esc(r.data.compact_state)}</p>
-    <details><summary>base prompt</summary><pre>${esc(r.data.base_prompt)}</pre></details>
-    <details><summary>role prompt</summary><pre>${esc(r.data.role_prompt)}</pre></details>
+    <details><summary>who you are</summary><pre>${esc(r.data.who_you_are)}</pre></details>
+    <details><summary>signature</summary><pre>${esc(r.data.signature)}</pre></details>
+    <details><summary>lane</summary><pre>${esc(r.data.lane)}</pre></details>
+    <details><summary>voice</summary><pre>${esc(r.data.voice)}</pre></details>
+    <details><summary>what you do</summary><pre>${esc(r.data.what_you_do)}</pre></details>
+    <details><summary>how you keep context</summary><pre>${esc(r.data.how_you_keep_context)}</pre></details>
     <details open><summary>recent memories (${r.data.recent_memories.length})</summary>
       <pre>${esc(r.data.recent_memories.map(m => `[${m.kind}] ${m.content}`).join('\n') || '(none)')}</pre></details>`;
 }
@@ -146,7 +150,7 @@ async function copyBoot() {
   if (!lastBoot) await boot();
   if (!lastBoot) return;
   const b = lastBoot;
-  const text = `# Boot bundle: ${b.profile.id}\n\n## Base prompt\n${b.base_prompt}\n## Role prompt\n${b.role_prompt}\n## Compact state\n${b.compact_state}\n\n## Recent memories\n` +
+  const text = `# Boot bundle: ${b.profile.id}\n\n## Who you are\n${b.who_you_are}\n\n## Signature\n${b.signature}\n\n## Lane\n${b.lane}\n\n## Voice\n${b.voice}\n\n## What you do\n${b.what_you_do}\n\n## How you keep context\n${b.how_you_keep_context}\n\n## Compact state\n${b.compact_state}\n\n## Recent memories\n` +
     b.recent_memories.map(m => `- [${m.kind}] ${m.content}`).join('\n');
   await navigator.clipboard.writeText(text);
   $('boot-out').textContent = 'boot bundle copied to clipboard';

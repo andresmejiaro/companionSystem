@@ -98,6 +98,12 @@ class FakeBridge:
             raise ToolBridgeError(404, f"profile {profile_id!r} not found")
         return {
             "profile": self._profile(profile_id),
+            "who_you_are": "Base prompt.",
+            "signature": "",
+            "lane": "",
+            "voice": "",
+            "what_you_do": "Role prompt.",
+            "how_you_keep_context": "",
             "base_prompt": "Base prompt.",
             "role_prompt": "Role prompt.",
             "compact_state": "No active task.",
@@ -550,7 +556,7 @@ def test_session_inspector_renders_source_aware_and_raw_views():
         "profile_id": "sidra", "totp_code": "123456", "mode": "human",
     })
     assert human.status_code == 200
-    assert "Base prompt" in human.text
+    assert "Who you are" in human.text
     assert "Memories" in human.text
     assert "System contracts" in human.text
     assert "Canonical external identity file" in human.text
@@ -561,7 +567,7 @@ def test_session_inspector_renders_source_aware_and_raw_views():
     })
     assert raw.status_code == 200
     assert "Delivered payload" in raw.text
-    assert "&quot;base_prompt&quot;" in raw.text
+    assert "&quot;who_you_are&quot;" in raw.text
 
 
 def test_mcp_auth_origin_get_and_token_separation(tmp_path):
@@ -719,8 +725,8 @@ def test_approval_link_page_totp_only_flow():
     assert "totp_code" in page.text
     assert "admin_secret" not in page.text  # TOTP-only, no shared secret field
     assert "New text" in page.text
-    assert "base_prompt" in page.text
-    assert "role_prompt" in page.text
+    assert "who_you_are" in page.text
+    assert "what_you_do" in page.text
     assert "Proposed replacement." in page.text
     assert "No change proposed — the current value remains." in page.text
 

@@ -199,8 +199,8 @@ def _approval_page(approval: dict, error: str | None = None) -> str:
     ACCESS_CONTROL.md 'TOTP-only approval links'."""
     payload = approval.get("payload") or {}
     if approval.get("kind") == "prompt_edit":
-        def prompt_field(name: str) -> str:
-            value = payload.get(name)
+        def prompt_field(name: str, legacy_name: str) -> str:
+            value = payload.get(name, payload.get(legacy_name))
             if value is None:
                 body = '<p style="color:#555"><em>No change proposed — the current value remains.</em></p>'
             elif value == "":
@@ -210,7 +210,8 @@ def _approval_page(approval: dict, error: str | None = None) -> str:
                         f'<pre style="white-space:pre-wrap;background:#f4f4f4;padding:12px;border-radius:6px">'
                         f'{_html.escape(str(value))}</pre>')
             return f'<h4>{_html.escape(name)}</h4>{body}'
-        fields = prompt_field("base_prompt") + prompt_field("role_prompt")
+        fields = (prompt_field("who_you_are", "base_prompt")
+                  + prompt_field("what_you_do", "role_prompt"))
     else:
         fields = "".join(
             f'<h4>{_html.escape(k)}</h4><pre style="white-space:pre-wrap;background:#f4f4f4;'
@@ -280,12 +281,12 @@ def _create_profile_page(values: dict[str, str] | None = None,
 <label>Signature (optional, up to 5 characters)<br>
 <input type="text" name="signature" value="{_f('signature')}" maxlength="5"
  style="width:100%;padding:8px;margin:4px 0 16px"></label>
-<label>Base prompt (optional — can self-define later)<br>
-<textarea name="base_prompt" rows="4"
- style="width:100%;padding:8px;margin:4px 0 16px">{_f('base_prompt')}</textarea></label>
-<label>Role prompt (optional)<br>
-<textarea name="role_prompt" rows="4"
- style="width:100%;padding:8px;margin:4px 0 16px">{_f('role_prompt')}</textarea></label>
+<label>Who you are (optional — can self-define later)<br>
+<textarea name="who_you_are" rows="4"
+ style="width:100%;padding:8px;margin:4px 0 16px">{_f('who_you_are')}</textarea></label>
+<label>What you do (optional)<br>
+<textarea name="what_you_do" rows="4"
+ style="width:100%;padding:8px;margin:4px 0 16px">{_f('what_you_do')}</textarea></label>
 <label>Authenticator code<br>
 <input type="text" name="totp_code" inputmode="numeric" pattern="[0-9]*"
  autocomplete="off" required style="width:100%;padding:10px;margin:4px 0 16px;font-size:1.2em">
@@ -332,8 +333,12 @@ def _session_inspector_page(profiles: list[dict], *, selected_id: str = "",
             output = "<section><h2>Hydration packet</h2><p>This is the context delivered to the agent. Lookup IDs, tags, full history, and closeout archives are not hydrated.</p></section>"
             output += block("Profile context", "Profile registry fields that affect how this companion operates.", profile_context)
             output += block("System contracts", "Shared runtime rules injected by start_session; they do not replace this companion's identity prompt.", result.get("system_contracts"))
-            output += block("Base prompt", "Durable identity / operating constitution: profile base_prompt.", result.get("base_prompt"))
-            output += block("Role prompt", "Role or lane overlay: profile role_prompt.", result.get("role_prompt"))
+            output += block("Who you are", "Canonical prompt section.", result.get("who_you_are"))
+            output += block("Signature", "Reserved prompt section.", result.get("signature"))
+            output += block("Lane", "Reserved prompt section.", result.get("lane"))
+            output += block("Voice", "Reserved prompt section.", result.get("voice"))
+            output += block("What you do", "Canonical prompt section.", result.get("what_you_do"))
+            output += block("How you keep context", "Reserved prompt section.", result.get("how_you_keep_context"))
             output += block("Current handoff", "Current compact state, written at closeout. This is the latest session handoff.", current_state)
             output += block("Global identity (whoami)", "Canonical external identity file, when the bridge has identity:read.", result.get("identity"))
             output += block("Memories", "Mutable context, newest first. Tags and database IDs are intentionally hidden here; use the raw payload for lookup fields.", memory_context)
@@ -544,13 +549,15 @@ MCP_TOOLS = [
     _tool(
         "propose_prompt_edit",
         "Propose Prompt Edit",
-        "Propose a change to your own base_prompt and/or role_prompt. Held pending"
+        "Propose a change to your own who_you_are and/or what_you_do sections. Held pending"
         " until the human approves it with a live TOTP code from their authenticator"
         " app — you cannot approve your own edits, and there is no way around that.",
         {
             "profile_id": _PROFILE_ID,
-            "base_prompt": {"type": "string"},
-            "role_prompt": {"type": "string"},
+            "who_you_are": {"type": "string"},
+            "what_you_do": {"type": "string"},
+            "base_prompt": {"type": "string", "deprecated": True},
+            "role_prompt": {"type": "string", "deprecated": True},
         },
         ["profile_id"],
     ),
@@ -1057,8 +1064,8 @@ class MCPToolRunner:
         if name == "propose_prompt_edit":
             return self.bridge.propose_prompt_edit(
                 arguments["profile_id"],
-                base_prompt=arguments.get("base_prompt"),
-                role_prompt=arguments.get("role_prompt"),
+                arguments.get("who_you_are", arguments.get("base_prompt")),
+                arguments.get("what_you_do", arguments.get("role_prompt")),
             )
         if name == "retract_approval":
             return self.bridge.retract_approval(arguments["approval_id"])
@@ -1712,13 +1719,13 @@ def create_mcp_app(
 
         form = await request.form()
         values = {k: str(form.get(k) or "") for k in
-                 ("id", "display_name", "description", "signature", "base_prompt", "role_prompt", "profile_kind")}
+                 ("id", "display_name", "description", "signature", "who_you_are", "what_you_do", "profile_kind")}
         totp_code = str(form.get("totp_code") or "")
         try:
             created = await run_in_threadpool(
                 app.state.runner.bridge.create_profile_totp,
                 values["id"], values["display_name"],
-                values["base_prompt"], values["role_prompt"], totp_code,
+                values["who_you_are"], values["what_you_do"], totp_code,
                 values["description"], values["signature"], values["profile_kind"] or "companion")
         except ToolBridgeError as e:
             return HTMLResponse(_create_profile_page(values, error=e.detail),

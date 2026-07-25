@@ -3,12 +3,12 @@
 from . import prompts
 from .storage import Store
 
-SIDRA_BASE = prompts.load("sidra_base")
-SIDRA_ROLE = prompts.load("sidra_role")
-TARA_BASE = prompts.load("tara_base")
-TARA_ROLE = prompts.load("tara_role")
-SECRETARY_BASE = prompts.load("secretary_base")
-SECRETARY_ROLE = prompts.load("secretary_role")
+SIDRA_WHO_YOU_ARE = prompts.load("sidra_base")
+SIDRA_WHAT_YOU_DO = prompts.load("sidra_role")
+TARA_WHO_YOU_ARE = prompts.load("tara_base")
+TARA_WHAT_YOU_DO = prompts.load("tara_role")
+SECRETARY_WHO_YOU_ARE = prompts.load("secretary_base")
+SECRETARY_WHAT_YOU_DO = prompts.load("secretary_role")
 
 
 def seed(store: Store) -> None:
@@ -16,7 +16,7 @@ def seed(store: Store) -> None:
 
     if "sidra" not in existing:
         store.create_profile(
-            "sidra", "Sidra", SIDRA_BASE, SIDRA_ROLE,
+            "sidra", "Sidra", SIDRA_WHO_YOU_ARE, SIDRA_WHAT_YOU_DO,
             description="Agentic coding: task contracts, diff review, failure scars, model routing.",
             allowed_tools=["read_file", "write_file", "run_tests", "git_diff"],
             memory_policy={"kinds": ["decision", "failure_scar", "note"], "max_boot_events": 10},
@@ -36,7 +36,7 @@ def seed(store: Store) -> None:
 
     if "tara" not in existing:
         store.create_profile(
-            "tara", "Tara", TARA_BASE, TARA_ROLE,
+            "tara", "Tara", TARA_WHO_YOU_ARE, TARA_WHAT_YOU_DO,
             description="Food tracking: nutrition facts, eaten food, product calibration, meal history.",
             allowed_tools=["log_food", "query_products", "daily_summary"],
             memory_policy={"kinds": ["fact", "observation", "preference", "note"], "max_boot_events": 10},
@@ -63,7 +63,7 @@ def seed(store: Store) -> None:
         # Any structure (e.g. a todo store) must be proposed by the
         # companion itself, through tools, when the need shows itself.
         store.create_profile(
-            "secretary", "Secretary", SECRETARY_BASE, SECRETARY_ROLE,
+            "secretary", "Secretary", SECRETARY_WHO_YOU_ARE, SECRETARY_WHAT_YOU_DO,
             description="Commitments, tasks, follow-ups; grows its own structure via store proposals.",
             allowed_tools=[],
             memory_policy={"kinds": ["decision", "fact", "note",

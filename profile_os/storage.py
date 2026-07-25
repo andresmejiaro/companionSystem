@@ -3,8 +3,12 @@
 Layout (under a data directory, default ./data):
   data/
     profile_os.db                      SQLite: registry, events, state, domain records
-    profiles/<id>/base_prompt.md       base behavior prompt (plain file, inspectable)
-    profiles/<id>/role_prompt.md       role/lane prompt
+    profiles/<id>/who_you_are.md       companion identity prompt (plain file, inspectable)
+    profiles/<id>/signature.md         reserved prompt section (initially empty)
+    profiles/<id>/lane.md              reserved prompt section (initially empty)
+    profiles/<id>/voice.md             reserved prompt section (initially empty)
+    profiles/<id>/what_you_do.md       companion work prompt
+    profiles/<id>/how_you_keep_context.md  reserved prompt section (initially empty)
     profiles/<id>/closeouts.jsonl      append-only closeout log (also mirrored in DB state)
     profiles/<id>/files/<name>         plain-file scratch store (scripts, notes) —
                                         never in git, never a DB blob; see write_file()
@@ -90,6 +94,23 @@ MEMORY_KINDS = {"note", "fact", "decision", "failure_scar", "preference", "obser
 DEFAULT_BOOT_EVENTS = 10
 MAX_BOOT_EVENTS_CAP = 100
 
+# This order is the canonical prompt structure.  The first migration merely
+# renames the two legacy files and creates the four empty section files; it
+# never interprets or rewrites prompt content.
+PROMPT_SECTION_NAMES = (
+    "who_you_are",
+    "signature",
+    "lane",
+    "voice",
+    "what_you_do",
+    "how_you_keep_context",
+)
+PROMPT_SECTION_FILES = {name: f"{name}.md" for name in PROMPT_SECTION_NAMES}
+LEGACY_PROMPT_RENAMES = {
+    "base_prompt.md": "who_you_are.md",
+    "role_prompt.md": "what_you_do.md",
+}
+
 
 def normalize_profile_lookup(value: str) -> str:
     """Normalize human routing input without changing canonical profile ids."""
@@ -131,6 +152,7 @@ class Store:
         # and SQLite connections are not safe to share across threads.
         self._local = threading.local()
         self.db.executescript(SCHEMA)
+        self._migrate_prompt_sections()
         columns = {row["name"] for row in self.db.execute("PRAGMA table_info(closeouts)")}
         profile_columns = {row["name"] for row in self.db.execute("PRAGMA table_info(profiles)")}
         with self.db:
@@ -163,13 +185,13 @@ class Store:
                 try:
                     allowed_tools = json.loads(row["allowed_tools"])
                     profile_dir = self.profiles_dir / row["id"]
-                    base_prompt = (profile_dir / "base_prompt.md").read_text()
-                    role_prompt = (profile_dir / "role_prompt.md").read_text()
+                    who_you_are = (profile_dir / "who_you_are.md").read_text()
+                    what_you_do = (profile_dir / "what_you_do.md").read_text()
                 except (OSError, json.JSONDecodeError):
                     continue
                 if (allowed_tools == ["send_message"]
-                        and "non-conversational system identity" in base_prompt
-                        and "sole permitted operation is send_message" in role_prompt):
+                        and "non-conversational system identity" in who_you_are
+                        and "sole permitted operation is send_message" in what_you_do):
                     self.db.execute("UPDATE profiles SET profile_kind='system' WHERE id=?",
                                     (row["id"],))
 
@@ -189,14 +211,39 @@ class Store:
             conn.close()
             self._local.conn = None
 
+    def _migrate_prompt_sections(self) -> None:
+        """Mechanically rename legacy prompt files and add empty sections.
+
+        ``Path.replace`` is a filesystem rename: the two populated files are
+        never decoded, normalized, or regenerated.  A collision is left in
+        place rather than guessing which prompt body should win.
+        """
+        for profile_dir in self.profiles_dir.iterdir():
+            if not profile_dir.is_dir():
+                continue
+            for legacy_name, canonical_name in LEGACY_PROMPT_RENAMES.items():
+                legacy = profile_dir / legacy_name
+                canonical = profile_dir / canonical_name
+                if not legacy.exists():
+                    continue
+                if canonical.exists():
+                    if legacy.read_bytes() != canonical.read_bytes():
+                        raise MalformedRecord(
+                            f"prompt migration conflict for {profile_dir.name}/{canonical_name}")
+                    legacy.unlink()
+                    continue
+                legacy.replace(canonical)
+            for name in PROMPT_SECTION_NAMES:
+                (profile_dir / PROMPT_SECTION_FILES[name]).touch(exist_ok=True)
+
     # -- profiles ------------------------------------------------------------
 
     def create_profile(
         self,
         profile_id: str,
         display_name: str,
-        base_prompt: str,
-        role_prompt: str,
+        who_you_are: str,
+        what_you_do: str,
         description: str = "",
         signature: str = "",
         allowed_tools: list[str] | None = None,
@@ -244,8 +291,10 @@ class Store:
         pdir = self.profiles_dir / profile_id
         try:
             pdir.mkdir(parents=True, exist_ok=True)
-            (pdir / "base_prompt.md").write_text(base_prompt)
-            (pdir / "role_prompt.md").write_text(role_prompt)
+            (pdir / "who_you_are.md").write_text(who_you_are)
+            (pdir / "what_you_do.md").write_text(what_you_do)
+            for name in ("signature", "lane", "voice", "how_you_keep_context"):
+                (pdir / PROMPT_SECTION_FILES[name]).write_text("")
         except OSError:
             # Roll back the registration so we never keep a profile whose
             # prompt files are missing.
@@ -423,15 +472,15 @@ class Store:
         path = self.profiles_dir / profile_id / name
         return path.read_text() if path.exists() else ""
 
-    def update_prompts(self, profile_id: str, base_prompt: str | None = None,
-                       role_prompt: str | None = None) -> dict:
+    def update_prompts(self, profile_id: str, who_you_are: str | None = None,
+                       what_you_do: str | None = None) -> dict:
         """Overwrite one or both prompt files. None leaves that file untouched."""
         self._require_profile(profile_id)
         pdir = self.profiles_dir / profile_id
-        if base_prompt is not None:
-            (pdir / "base_prompt.md").write_text(base_prompt)
-        if role_prompt is not None:
-            (pdir / "role_prompt.md").write_text(role_prompt)
+        if who_you_are is not None:
+            (pdir / "who_you_are.md").write_text(who_you_are)
+        if what_you_do is not None:
+            (pdir / "what_you_do.md").write_text(what_you_do)
         return self.get_profile(profile_id)
 
     def update_description(self, profile_id: str, description: str | None = None,
@@ -439,7 +488,7 @@ class Store:
         """Self-service, no approval: a companion maintains its own one-line
         'what I do', so other companions can discover who to ask via
         list_profiles instead of a human hardcoding names into prompts.
-        Unlike base_prompt/role_prompt this isn't gated by TOTP — it's
+        Unlike who_you_are/what_you_do this isn't gated by TOTP — it's
         discovery metadata, not identity/behavior."""
         self._require_profile(profile_id)
         if description is None and signature is None:
@@ -520,12 +569,23 @@ class Store:
         ).fetchall()
         return {
             "profile": profile,
-            "base_prompt": self._prompt(profile_id, "base_prompt.md"),
-            "role_prompt": self._prompt(profile_id, "role_prompt.md"),
+            **self._prompt_sections(profile_id),
             "compact_state": state_row["state"] if state_row else "",
             "state_updated_at": state_row["updated_at"] if state_row else None,
             "recent_memories": [self._event_dict(e) for e in events],
         }
+
+    def _prompt_sections(self, profile_id: str) -> dict:
+        """Return canonical ordered prompt sections plus legacy read aliases."""
+        sections = {
+            name: self._prompt(profile_id, PROMPT_SECTION_FILES[name])
+            for name in PROMPT_SECTION_NAMES
+        }
+        # API compatibility only.  These are derived reads, not duplicate
+        # storage or a second prompt representation.
+        sections["base_prompt"] = sections["who_you_are"]
+        sections["role_prompt"] = sections["what_you_do"]
+        return sections
 
     def remember(self, profile_id: str, event: dict) -> dict:
         self._require_profile(profile_id)
