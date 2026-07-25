@@ -116,7 +116,8 @@ def test_routing_metadata_update_trims_display_name(client):
     assert response.json()["variant_label"] == "bookkeeping"
 
 
-def test_root_directory_and_admin_shortcuts(client):
+def test_root_directory_and_admin_shortcuts(client, monkeypatch):
+    monkeypatch.setenv("MCP_PUBLIC_BASE_URL", "https://companions.example.test/")
     root = client.get("/", follow_redirects=False)
     assert root.status_code == 307
     assert root.headers["location"] == "/directory"
@@ -126,6 +127,8 @@ def test_root_directory_and_admin_shortcuts(client):
     assert "Companion directory" in directory.text
     assert 'href="/companions/new"' in directory.text
     assert 'href="/settings"' in directory.text
+    assert 'href="https://companions.example.test/session-inspector"' in directory.text
+    assert "View the hydrated session packet for a companion." in directory.text
 
     new = client.get("/companions/new")
     assert new.status_code == 200

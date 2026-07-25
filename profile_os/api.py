@@ -434,7 +434,12 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
              include_in_schema=False)
     def directory():
         """Small human-facing index of administrative entry points."""
-        return (Path(__file__).parent / "directory.html").read_text()
+        inspector_url = (
+            os.environ.get("MCP_PUBLIC_BASE_URL", "http://127.0.0.1:8080")
+            .rstrip("/") + "/session-inspector"
+        )
+        return (Path(__file__).parent / "directory.html").read_text().replace(
+            "{{SESSION_INSPECTOR_URL}}", inspector_url)
 
     @app.get("/companions/new", include_in_schema=False)
     def new_companion():
