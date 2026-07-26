@@ -217,7 +217,7 @@ TOOLS = [
     _tool("delete_file", "Delete a file from your scratch file store.",
           {"profile_id": _PID, "filename": {"type": "string"}},
           ["profile_id", "filename"]),
-    _tool("prepare_closeout", "Use this when the user says they are done with the session. This gives instructions on how to update stores when done.",
+    _tool("prepare_closeout", "Use this when the user says they are done with the session. This gives instructions on how to update stores and use closeout when done.",
           {"profile_id": _PID}, ["profile_id"]),
     _tool("closeout", "Close a session with facts, concrete continuity texture (rapport, tone, pacing, or an unresolved concern), and a short verbatim meaningful exchange; notes are optional.",
           {"profile_id": _PID,

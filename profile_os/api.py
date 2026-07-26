@@ -796,6 +796,7 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
                 "Update existing records for the same real thing and identify duplicates or contradictions; flag conflicts the schema cannot resolve.",
                 "Write the companion-appropriate transient, front-of-mind memories.",
                 "Complete the existing closeout form.",
+                "After doing the thing, use `closeout` to finish the session.",
                 "Let the companion close in its own voice.",
             ],
         }

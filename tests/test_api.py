@@ -263,6 +263,7 @@ def test_context_search_and_prepare_closeout_omit_redundant_sources(client):
         "Update existing records for the same real thing and identify duplicates or contradictions; flag conflicts the schema cannot resolve.",
         "Write the companion-appropriate transient, front-of-mind memories.",
         "Complete the existing closeout form.",
+        "After doing the thing, use `closeout` to finish the session.",
         "Let the companion close in its own voice.",
     ]
 

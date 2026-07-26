@@ -368,7 +368,7 @@ def test_initialize_and_list_tools(tmp_path, monkeypatch):
     assert annotations["delete_file"]["destructiveHint"] is True
     assert annotations["delete_record"]["destructiveHint"] is True
     assert annotations["start_session"]["readOnlyHint"] is True
-    assert next(tool for tool in tools if tool["name"] == "prepare_closeout")["description"] == "Use this when the user says they are done with the session. This gives instructions on how to update stores when done."
+    assert next(tool for tool in tools if tool["name"] == "prepare_closeout")["description"] == "Use this when the user says they are done with the session. This gives instructions on how to update stores and use closeout when done."
 
 
 def test_list_tools_can_omit_output_schemas(tmp_path, monkeypatch):

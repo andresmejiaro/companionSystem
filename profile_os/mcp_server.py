@@ -712,7 +712,7 @@ MCP_TOOLS = [
     _tool(
         "prepare_closeout",
         "Prepare Closeout",
-        "Use this when the user says they are done with the session. This gives instructions on how to update stores when done.",
+        "Use this when the user says they are done with the session. This gives instructions on how to update stores and use closeout when done.",
         {"profile_id": _PROFILE_ID},
         ["profile_id"],
     ),
