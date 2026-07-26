@@ -1,153 +1,148 @@
-# Assistant Profile OS — slice zero
+# Companions
 
-Backend foundation for versioned, provider-agnostic Assistant Profiles
-(configuration bundles: prompts, compact state, durable memory, domain data).
-Profiles live **here**; Claude/GPT/Gemini UIs are future secondary surfaces.
+Companions is a self-hosted operating layer for persistent AI companions.
+It keeps a companion's prompts, working state, memories, files, messages, and
+structured data under your control. The service is model- and provider-neutral:
+it does not call an LLM itself. Instead, an HTTP API and a remote MCP server let
+Claude, ChatGPT, or another client use the same companion data safely.
 
-No LLM is embedded or called. `profile_os/adapters.py` ships a deterministic
-`FakeModelAdapter`; real provider adapters are a later slice.
+## What it provides
 
-> **Working on tests or investigating a hang?** Read
-> [TESTING.md](TESTING.md) first. It records the verified FastAPI `TestClient`
-> setup and the sandbox diagnostic that prevents recurring false diagnoses.
+- Profile lifecycle: create a companion, hydrate a session, save a closeout,
+  and retain its prompts and compact state.
+- Memory and workspace: searchable memories, companion-to-companion inboxes,
+  and small per-profile files stored outside Git.
+- Structured data: companions propose typed stores; approved schemas validate
+  every record. Shared projects let several companions work against a common,
+  approval-controlled record set.
+- Human control: bearer-credential access control, one-time enrollment invites,
+  and TOTP-gated approval flows for sensitive changes.
+- Integrations: a Streamable HTTP MCP server with OAuth or static bearer-token
+  authentication, plus a small browser-based administration surface.
 
-## Run locally
+Data is deliberately simple and inspectable: SQLite for application data,
+Markdown files for prompts, JSONL closeout logs, and plain files under the
+configured data directory.
+
+## Quick start: local development
+
+Requirements: Python 3.12+ (the repository environment is supported) and
+`pip`.
 
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 .venv/bin/uvicorn profile_os.api:app --reload
-# → http://127.0.0.1:8000/docs  (OpenAPI UI)
 ```
 
-First start seeds two example profiles (`sidra`, `tara`) into `./data/`.
+Open these local URLs:
 
-## Optional auth (all endpoints)
+- `http://127.0.0.1:8000/directory` — human-facing entry points
+- `http://127.0.0.1:8000/settings` — TOTP-gated settings console (once set up)
+- `http://127.0.0.1:8000/docs` — interactive OpenAPI documentation
+- `http://127.0.0.1:8000/health` — health check
 
-Auth is **disabled by default** — everything works locally with no keys, as
-before. To require credentials on every endpoint except `/health` and
-`/demo`:
+On first start, the service creates `data/` and seeds the example `sidra` and
+`tara` profiles. Set `PROFILE_OS_DATA_DIR=/path/to/data` to use a different
+location. Set `PROFILE_OS_SEED_DEMO_PROFILES=0` before first start to skip the
+example profiles.
+
+For a quick API check:
 
 ```bash
-# 1. bootstrap an admin credential (local CLI, never over HTTP; stores a hash only)
-.venv/bin/python -m profile_os.bootstrap_admin --data-dir data --secret "$SECRET"
-# 2. start the server with enforcement on
-PROFILE_OS_AUTH_ENABLED=1 .venv/bin/uvicorn profile_os.api:app
-# 3. call lifecycle endpoints with the bearer secret
-curl -X POST -H "Authorization: Bearer $SECRET" \
-  http://127.0.0.1:8000/profiles/tara/stores/<name>/approve
+curl -sS http://127.0.0.1:8000/profiles
+curl -sS -X POST http://127.0.0.1:8000/profiles/tara/session
 ```
 
-Without a valid credential, protected endpoints return 401; with a
-credential but no grant for the route's operation on that profile, 403.
-`GET /profiles` returns only profiles the principal holds any grant on
-(a `*` wildcard grant sees all). The full route → operation map is in
-[ACCESS_CONTROL.md](ACCESS_CONTROL.md). The /demo page has an optional API
-key field for this.
-Credentials belong to principals (apps, bridges, humans, admins), never to
-profiles — see [ACCESS_CONTROL.md](ACCESS_CONTROL.md).
+Local authentication is off by default. That is convenient for development,
+but it is not a production configuration.
 
-## Tool bridge (for external hosted assistants)
+## Secure backend setup
 
-`profile_os/bridge.py` exposes the operational endpoints as named tools
-(boot, remember, search_memories, closeout, propose_store, list_stores,
-get_store, add_record, query_records, audit) for Claude/ChatGPT/Gemini-hosted
-assistants. It is a pure HTTP client — the backend keeps doing all
-authorization — configured via `PROFILE_OS_BRIDGE_BASE_URL` and
-`PROFILE_OS_BRIDGE_BEARER`. See [TOOL_BRIDGE.md](TOOL_BRIDGE.md), including
-how local runners reuse the same bridge.
+Enable access control before exposing the backend or using it with a remote
+client. First create an admin credential locally; only its salted hash is
+stored.
 
-## Remote MCP server (Claude.ai custom connectors)
+```bash
+export ADMIN_SECRET='use-a-long-random-secret'
+.venv/bin/python -m profile_os.bootstrap_admin --data-dir data --secret "$ADMIN_SECRET"
+.venv/bin/python -m profile_os.enroll_totp --data-dir data
+# Scan or enter the printed otpauth URI in an authenticator, then:
+.venv/bin/python -m profile_os.enroll_totp --data-dir data --confirm 123456
 
-`profile_os/mcp_server.py` is a deployable remote MCP server over Streamable
-HTTP:
+PROFILE_OS_AUTH_ENABLED=1 .venv/bin/uvicorn profile_os.api:app
+```
 
-- `POST /mcp` and `GET /mcp` on one endpoint
-- MCP tools: `list_profiles`, `boot_profile`, `remember`, `search_memories`,
-  `closeout`, `list_stores`, `propose_store`, `query_records`, `add_record`
-- Claude-facing auth handled by the MCP service; backend auth handled by a
-  separate bridge credential from env
-- no admin approve/reject/archive tools exposed
+Use the bearer secret for protected API calls:
 
-Run backend + MCP locally with Docker:
+```bash
+curl -H "Authorization: Bearer $ADMIN_SECRET" \
+  http://127.0.0.1:8000/profiles
+```
+
+When enabled, all API routes except health and explicitly public,
+TOTP/invite-based entry points require a credential with the appropriate
+grant. Credentials belong to principals (people, applications, and
+bridges), not to the companions themselves. See [ACCESS_CONTROL.md](ACCESS_CONTROL.md)
+for the operation map, signed agent credentials, approvals, and enrollment.
+
+## Docker and remote MCP
+
+The Compose stack runs a private backend and an MCP service. Copy the template,
+replace every `change-me-*` value with a long random secret, then start it:
 
 ```bash
 cp .env.example .env
-# edit .env and replace every change-me value
 docker compose up --build
 ```
 
-See [MCP_CONNECTOR.md](MCP_CONNECTOR.md) for OAuth, tunnel/deployment notes,
-and the Claude.ai custom connector setup flow.
+The backend is exposed on port 8000 and MCP on port 8080 by default. The stack
+enables backend authentication and bootstraps a least-privilege bridge
+credential automatically. For any public deployment, bind ports to loopback or
+place the MCP service behind HTTPS; do not expose the backend administration
+surface publicly.
 
-For an optional real-model provider-validation experiment (not hosted,
-public, or part of the product runtime), run
-`python -m profile_os.openai_smoke`. It requires `OPENAI_API_KEY` and, when
-backend auth is enabled, a bridge bearer. Details are in TOOL_BRIDGE.md.
+The MCP endpoint is `POST`/`GET /mcp`. It supports OAuth (recommended) and a
+static connector token for clients that cannot complete OAuth. Configure a
+public HTTPS origin in `MCP_PUBLIC_BASE_URL` before connecting Claude.ai,
+ChatGPT, or another remote MCP client.
 
-## Demo console
+See [MCP_CONNECTOR.md](MCP_CONNECTOR.md) for the environment variables, OAuth
+flow, tunnel/HTTPS setup, smoke commands, and the complete tool list.
 
-With the server running, open **http://127.0.0.1:8000/demo** — a single static
-HTML page (no framework, no build step) for inspecting and exercising the
-backend by hand.
+## Core concepts
 
-2-minute demo script:
+| Concept | Purpose |
+| --- | --- |
+| Profile | A companion's identity, prompts, policy, compact state, and owned data. |
+| Session | A bounded hydration packet for a companion's first turn: prompts, state, relevant memory, identity (when allowed), inbox indicator, and server time. |
+| Memory | Searchable free-text events such as facts, preferences, decisions, and observations. |
+| Closeout | Caller-supplied handoff data (`facts`, `texture`, `exchange`, and notes). The backend stores it; it never asks an LLM to summarize. |
+| Dynamic store | A profile-scoped, typed record collection. Schemas are proposed then approved; writes are validated. |
+| Project | A shared, approval-controlled typed record collection that multiple companions can join. |
+| Approval | A pending prompt, store, or project decision. Sensitive approvals can require a live, single-use TOTP code. |
 
-1. **Profiles** — click "List profiles"; pick `tara` in the dropdown.
-2. **Boot** — click `boot(profile)`: compact state, collapsed base/role
-   prompts, recent memories. "Copy boot bundle" puts a paste-anywhere
-   plaintext bundle on the clipboard.
-3. **Memory** — remember a note ("tried the demo"), then search for "demo".
-4. **Closeout** — enter a new_state ("Demo day logged."), submit, click
-   `boot()` again: the compact state changed. (The backend never summarizes —
-   you supplied that state.)
-5. **Tara flow** — click "Run Tara hotel demo": proposes
-   `hotel_reservations`, approves it, adds a reservation, queries it, and
-   shows the audit trail, printing each HTTP step.
-6. **Validation** — in section 5, click "add INVALID record": the backend
-   rejects unknown fields and the impossible date `2026-02-30` with a 422.
+The main HTTP workflow is: create or choose a profile, call `POST
+/profiles/{id}/session`, let the connected assistant work, then save memories,
+files, records, and a `POST /profiles/{id}/closeout` before ending the session.
 
-What the demo is intentionally **not**: the final UI (see UI_SPEC.md), a
-chatbot, an LLM integration, or a polished admin panel. Approve/reject/
-archive (and every other endpoint) are enforced when
-`PROFILE_OS_AUTH_ENABLED=1`; the default local mode stays open.
-Override the data directory with `PROFILE_OS_DATA_DIR=/path`.
+## Testing
 
-Everything is inspectable on disk:
-
-- `data/profile_os.db` — SQLite (registry, memory events, compact state, domain records, closeouts)
-- `data/profiles/<id>/base_prompt.md`, `role_prompt.md` — plain markdown prompts
-- `data/profiles/<id>/closeouts.jsonl` — append-only closeout log
-
-Slice two adds **dynamic stores**: profiles propose durable structured data
-stores (name + purpose + field schema); the user/admin approves, rejects, or
-archives them; the backend validates every record against the approved schema
-and audits all lifecycle changes. The platform never hardcodes what a profile
-may store. All endpoints are grant-protected when auth is enabled — see
-ACCESS_CONTROL.md.
-
-Note on closeout: the backend does not summarize sessions. The caller supplies
-the new compact state (`new_state`); the backend validates and stores it
-verbatim. This keeps the backend free of LLM calls.
-
-## Tests
+Read [TESTING.md](TESTING.md) before diagnosing or changing tests. In
+particular, use the repository interpreter:
 
 ```bash
 .venv/bin/python -m pytest tests -q
 ```
 
-Local only; no network, no API keys, no LLM calls.
+Tests are local only: no network, LLM call, or API key is required.
 
-## Docs
+## Documentation
 
-- [ARCHITECTURE.md](ARCHITECTURE.md) — reuse/build decision, design, security plan
-- [API.md](API.md) — HTTP API / tool contract
-- [UI_SPEC.md](UI_SPEC.md) — spec for the later web/mobile client
-
-## Docker
-
-```bash
-docker build -t profile-os . && docker run -p 8000:8000 -v $PWD/data:/app/data profile-os
-```
-
-For the deployable backend + MCP stack, use `docker compose up --build`.
+- [API.md](API.md) — HTTP endpoints, request shapes, lifecycle, and data-store contract
+- [ACCESS_CONTROL.md](ACCESS_CONTROL.md) — principals, grants, credentials, enrollment, TOTP, and approvals
+- [MCP_CONNECTOR.md](MCP_CONNECTOR.md) — remote MCP transport, OAuth, connector configuration, and security boundary
+- [TOOL_BRIDGE.md](TOOL_BRIDGE.md) — Python HTTP tool bridge for hosted assistants
+- [ARCHITECTURE.md](ARCHITECTURE.md) — persistence and design decisions
+- [UI_SPEC.md](UI_SPEC.md) — intended user-facing client experience
+- [DEPLOY.md](DEPLOY.md) — current single-server deployment runbook
