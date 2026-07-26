@@ -17,6 +17,7 @@ import time
 
 from datetime import datetime, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -734,6 +735,8 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
             "server_time": {
                 "unix": now,
                 "iso": datetime.fromtimestamp(now, tz=timezone.utc).isoformat(),
+                "madrid_iso": datetime.fromtimestamp(
+                    now, tz=ZoneInfo("Europe/Madrid")).isoformat(),
             },
         }
 

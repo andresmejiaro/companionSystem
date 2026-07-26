@@ -136,7 +136,7 @@ TOOLS = [
                           " of boot: returns identity (whoami), prompts, compact_state,"
                           " the global companion contract for conversational profiles,"
                           " a bounded semantic memory slice (no IDs, tags, or full"
-                          " history), and the current server date/time (server_time)"
+                          " history), and the current server date/time (server_time, including Madrid time)"
                           " in one call.",
           {"profile_id": _PID}, ["profile_id"]),
     _tool("propose_prompt_edit", "Propose a change to your own canonical prompt sections."

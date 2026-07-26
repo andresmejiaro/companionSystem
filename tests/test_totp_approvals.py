@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 import pyotp
 import pytest
@@ -445,6 +446,8 @@ def test_start_session_bundles_identity_and_semantic_boot_memories(tmp_path, mon
         assert body["you_got_mail"] is False
         assert body["server_time"]["iso"].startswith(
             datetime.now(timezone.utc).strftime("%Y-%m-%d"))
+        assert body["server_time"]["madrid_iso"].startswith(
+            datetime.now(ZoneInfo("Europe/Madrid")).strftime("%Y-%m-%d"))
 
 
 def test_start_session_omits_identity_without_grant(tmp_path, monkeypatch):

@@ -197,8 +197,9 @@ START_SESSION = {
             "properties": {
                 "unix": {"type": "number"},
                 "iso": {"type": "string"},
+                "madrid_iso": {"type": "string"},
             },
-            "required": ["unix", "iso"],
+            "required": ["unix", "iso", "madrid_iso"],
         },
     },
     "required": [

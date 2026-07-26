@@ -542,7 +542,7 @@ MCP_TOOLS = [
         " memory slice, and the global companion contract for conversational profiles;"
         " the memory slice has no IDs, tags, or full history. It also returns up to four recent"
         " texture/exchange examples for continuity, and the current server"
-        " date/time (server_time) in one call.",
+        " date/time (server_time, including Madrid time) in one call.",
         {"profile_id": _PROFILE_ID},
         ["profile_id"],
     ),

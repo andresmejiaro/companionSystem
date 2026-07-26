@@ -42,7 +42,7 @@ operation map below.
 hydration packet: `whoami` identity content (if the caller has
 `identity:read`), current prompts and `compact_state`, a bounded boot-memory
 slice reduced to semantic `kind`/`content`, and `server_time` (`unix` epoch
-seconds + `iso` UTC timestamp). It does not inject storage IDs, tags,
+seconds + `iso` UTC timestamp + `madrid_iso` Europe/Madrid timestamp). It does not inject storage IDs, tags,
 timestamps, full memory history, or closeout archives. Those are retrieved
 through the appropriate lookup tools only when useful. It is gated by the
 same `boot` grant as the plain `boot`/`boot_profile` tool. Intended so a

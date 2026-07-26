@@ -137,7 +137,11 @@ class FakeBridge:
             "data_sources": {
                 "profile_stores": [], "joined_projects": [],
             },
-            "server_time": {"unix": 1, "iso": "1970-01-01T00:00:01+00:00"},
+            "server_time": {
+                "unix": 1,
+                "iso": "1970-01-01T00:00:01+00:00",
+                "madrid_iso": "1970-01-01T01:00:01+01:00",
+            },
         }
 
     def inspect_session(self, profile_id, totp_code):
@@ -156,7 +160,11 @@ class FakeBridge:
                 "settled": True,
             },
             "routing_guidance": "Selection is settled.",
-            "server_time": {"unix": 1, "iso": "1970-01-01T00:00:01+00:00"},
+            "server_time": {
+                "unix": 1,
+                "iso": "1970-01-01T00:00:01+00:00",
+                "madrid_iso": "1970-01-01T01:00:01+01:00",
+            },
         }
 
     def remember(self, profile_id, kind, content, tags=None):

@@ -62,7 +62,8 @@ subset of these operations over `POST /mcp` and `GET /mcp`; see
   state, `identity` (the `whoami` file content, or `null` without
   `identity:read`), a bounded boot-memory slice reduced to `kind` and
   `content`, and `server_time` (`{"unix": 1751640000.0,
-  "iso": "2026-07-10T12:00:00+00:00"}`). It deliberately omits memory IDs,
+  "iso": "2026-07-10T12:00:00+00:00", "madrid_iso":
+  "2026-07-10T14:00:00+02:00"}`). It deliberately omits memory IDs,
   tags, timestamps, full history, and closeout archives. `selection` names
   the active profile/family/variant and sets `settled: true`; sibling
   variants are omitted from `routing_guidance` so the model does not reopen
