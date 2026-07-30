@@ -30,6 +30,12 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from starlette.concurrency import run_in_threadpool
 
 from .bridge import ToolBridge, ToolBridgeError
+from .request_limits import (
+    RequestBodyTooLarge,
+    configured_max_request_bytes,
+    read_request_body,
+    replay_request_body,
+)
 from .tool_schemas import (
     APPROVAL,
     BOOT,
@@ -1482,11 +1488,25 @@ def create_mcp_app(
         state_file=os.environ.get("MCP_OAUTH_STATE_FILE"))
     app.state.runner = MCPToolRunner(bridge or ToolBridge())
     app.state.admin_verify = admin_verify or default_admin_verify
+    _max_request_bytes = configured_max_request_bytes()
     _authorize_hits: dict[str, list[float]] = {}
     _approval_hits: dict[str, list[float]] = {}
     _create_profile_hits: dict[str, list[float]] = {}
     _session_inspector_hits: dict[str, list[float]] = {}
     _oauth_register_hits: dict[str, list[float]] = {}
+
+    @app.middleware("http")
+    async def _bounded_body(request: Request, call_next):
+        try:
+            body = await read_request_body(request, _max_request_bytes)
+        except RequestBodyTooLarge:
+            return JSONResponse(
+                {"error": "request_too_large",
+                 "max_request_bytes": _max_request_bytes},
+                status_code=413,
+            )
+        replay_request_body(request, body)
+        return await call_next(request)
 
     @app.get("/health", name="health")
     async def health():

@@ -20,7 +20,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field, field_validator
 
 from . import seed
@@ -28,6 +28,12 @@ from .access import AccessControl, AccessError
 from .dynstores import DynamicStores
 from .projects import Projects
 from .prompts import companion_contract
+from .request_limits import (
+    RequestBodyTooLarge,
+    configured_max_request_bytes,
+    read_request_body,
+    replay_request_body,
+)
 from .enroll import Enrollment, InviteConsumed, InviteInvalid
 from .errors import (DynStoreConflict, DynStoreNotFound, FileNotFoundInStore,
                      MalformedMemoryEvent, MalformedMessage, MalformedRecord,
@@ -268,6 +274,7 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
     _settings_hits: dict[str, list[float]] = {}
     _settings_session_key = secrets.token_bytes(32)
     _settings_session_seconds = 15 * 60
+    _max_request_bytes = configured_max_request_bytes()
 
     def _rate_limited(bucket: dict[str, list[float]], key: str,
                       limit: int = 5, window: float = 60) -> bool:
@@ -296,15 +303,16 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
 
     @app.middleware("http")
     async def _buffer_body(request: Request, call_next):
-        """Read the body once and replay it so both signature auth and
-        pydantic parsing see the same bytes (needed for sha256(body))."""
-        body = await request.body()
+        """Bound and replay the body for signature auth and Pydantic."""
+        try:
+            body = await read_request_body(request, _max_request_bytes)
+        except RequestBodyTooLarge:
+            return JSONResponse(
+                {"detail": f"request body exceeds {_max_request_bytes} bytes"},
+                status_code=413,
+            )
         request.state.raw_body = body
-
-        async def receive():
-            return {"type": "http.request", "body": body, "more_body": False}
-
-        request._receive = receive
+        replay_request_body(request, body)
         return await call_next(request)
 
     def _check_signature(request: Request, authorization: str) -> str | None:

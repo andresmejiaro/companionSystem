@@ -11,6 +11,7 @@ from profile_os.bootstrap_bridge import BRIDGE_OPS, bootstrap
 from profile_os.access import AccessControl
 from profile_os.bridge import ToolBridge, ToolBridgeError
 from profile_os.mcp_server import MCPSettings, MCP_TOOLS, OAuthState, create_mcp_app
+from profile_os.request_limits import DEFAULT_MAX_REQUEST_BYTES
 from profile_os.storage import Store
 
 
@@ -21,6 +22,21 @@ PUBLIC_BASE = "https://profiles.example"
 
 
 ThreadedASGIClient = TestClient
+
+
+def test_public_mcp_rejects_oversized_body():
+    client = ThreadedASGIClient(create_mcp_app(bridge=FakeBridge()))
+
+    def chunks():
+        yield b"x" * (DEFAULT_MAX_REQUEST_BYTES // 2)
+        yield b"x" * (DEFAULT_MAX_REQUEST_BYTES // 2 + 1)
+
+    response = client.post(
+        "/oauth/token",
+        content=chunks(),
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    assert response.status_code == 413
 
 
 def _b64url(data: bytes) -> str:

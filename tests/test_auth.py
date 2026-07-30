@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from profile_os.api import create_app
 from profile_os.bootstrap_admin import bootstrap
+from profile_os.request_limits import DEFAULT_MAX_REQUEST_BYTES
 
 SCHEMA = {"fields": {"hotel_name": {"type": "string"}}}
 
@@ -53,6 +54,16 @@ def test_auth_enabled_requires_credential(auth_client):
                     json={"reason": "x"})
     assert r.status_code == 401
     assert client.post("/profiles/tara/stores/hotel_reservations/archive").status_code == 401
+
+
+def test_backend_rejects_oversized_body_before_auth(auth_client):
+    client, _ = auth_client
+    response = client.post(
+        "/admin/verify-totp",
+        content=b"x" * (DEFAULT_MAX_REQUEST_BYTES + 1),
+        headers={"Content-Type": "application/json"},
+    )
+    assert response.status_code == 413
 
 
 def test_valid_credential_without_grant_is_403(auth_client):

@@ -349,13 +349,13 @@ class AccessControl:
         counter = self._totp_matched_counter(totp, code)
         if counter is None:
             return False
-        if row["last_used_counter"] is not None and counter <= row["last_used_counter"]:
-            return False
         with self.db:
-            self.db.execute(
-                "UPDATE access_totp SET last_used_counter=? WHERE principal_id=?",
-                (counter, principal_id))
-        return True
+            updated = self.db.execute(
+                "UPDATE access_totp SET last_used_counter=?"
+                " WHERE principal_id=? AND confirmed_at IS NOT NULL"
+                " AND (last_used_counter IS NULL OR last_used_counter < ?)",
+                (counter, principal_id, counter))
+        return updated.rowcount == 1
 
     def has_totp(self, principal_id: str) -> bool:
         row = self.db.execute(

@@ -1,4 +1,6 @@
 from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor
+import threading
 from zoneinfo import ZoneInfo
 
 import pyotp
@@ -69,6 +71,26 @@ def test_totp_code_is_single_use(auth_client, clock):
     code = clock.next_code(totp)
     assert access.verify_totp(admin_id, code)
     assert not access.verify_totp(admin_id, code)  # replay rejected
+
+
+def test_totp_code_is_atomically_single_use(auth_client, clock, monkeypatch):
+    client, access, admin_id = auth_client
+    totp = _enroll_and_confirm(access, admin_id, clock)
+    code = clock.next_code(totp)
+    original = access._totp_matched_counter
+    barrier = threading.Barrier(2)
+
+    def synchronized_match(totp_instance, candidate, window=1):
+        counter = original(totp_instance, candidate, window)
+        barrier.wait()
+        return counter
+
+    monkeypatch.setattr(access, "_totp_matched_counter", synchronized_match)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        accepted = list(pool.map(
+            lambda _: access.verify_totp(admin_id, code), range(2)))
+    assert accepted.count(True) == 1
+    assert accepted.count(False) == 1
 
 
 def test_totp_wrong_code_fails(auth_client, clock):

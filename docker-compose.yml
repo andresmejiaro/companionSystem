@@ -22,7 +22,7 @@ services:
       - profile-os-data:/app/data
       - ${PROFILE_OS_IDENTITY_HOST_PATH:-/dev/null}:/app/identity.md:ro
     ports:
-      - "${PROFILE_OS_BACKEND_PORT:-8000}:8000"
+      - "${PROFILE_OS_BACKEND_PORT:-127.0.0.1:8000}:8000"
     healthcheck:
       test:
         - CMD
@@ -66,7 +66,7 @@ services:
     volumes:
       - profile-os-mcp-oauth-state:/app/oauth-state
     ports:
-      - "${PROFILE_OS_MCP_PORT:-8080}:8080"
+      - "${PROFILE_OS_MCP_PORT:-127.0.0.1:8080}:8080"
     healthcheck:
       test:
         - CMD
