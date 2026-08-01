@@ -396,6 +396,69 @@ DYNAMIC_RECORD = {
     "required": ["id", "store", "schema_version", "data", "created_at", "updated_at"],
 }
 
+QUESTION_OPTION = {
+    "type": "object",
+    "properties": {"label": {"type": "string"}, "text": {"type": "string"}},
+    "required": ["label", "text"],
+}
+
+QUESTION_DRAW_ITEM = {
+    "type": "object",
+    "properties": {
+        "position": {"type": "integer"},
+        "question_ref": {"type": "string"},
+        "domain": {"type": "string"},
+        "prompt": {"type": "string"},
+        "options": array_of(QUESTION_OPTION),
+    },
+    "required": ["position", "question_ref", "domain", "prompt", "options"],
+}
+
+QUESTION_DRAW = {
+    "type": "object",
+    "properties": {
+        "attempt_code": {"type": "string"},
+        "expires_at": {"type": "number"},
+        "markdown": {"type": "string"},
+        "questions": array_of(QUESTION_DRAW_ITEM),
+    },
+    "required": ["attempt_code", "expires_at", "markdown", "questions"],
+}
+
+QUESTION_GRADE_RESULT = {
+    "type": "object",
+    "properties": {
+        "position": {"type": "integer"},
+        "status": {"type": "string", "enum": ["correct", "wrong", "nullified"]},
+        "markdown": {"type": "string"},
+    },
+    "required": ["position", "status", "markdown"],
+}
+
+QUESTION_GRADE = {
+    "type": "object",
+    "properties": {
+        "attempt_code": {"type": "string"},
+        "markdown": {"type": "string"},
+        "results": array_of(QUESTION_GRADE_RESULT),
+    },
+    "required": ["attempt_code", "markdown", "results"],
+}
+
+QUESTION_REVISION = {
+    "type": "object",
+    "properties": {
+        "question_ref": {"type": "string"},
+        "action": {"type": "string"},
+        "answer_status": {"type": "string"},
+        "weight": {"type": "number"},
+        "correct_count": {"type": "integer"},
+        "wrong_count": {"type": "integer"},
+    },
+    "required": ["question_ref", "action", "answer_status", "weight",
+                 "correct_count", "wrong_count"],
+}
+
 PROJECT_MEMBER = {
     "type": "object",
     "properties": {"profile_id": {"type": "string"}, "role": {"type": "string"},

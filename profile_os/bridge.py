@@ -56,6 +56,9 @@ from .tool_schemas import (
     PROFILE,
     PROFILE_RESOLUTION,
     PREPARE_CLOSEOUT,
+    QUESTION_DRAW,
+    QUESTION_GRADE,
+    QUESTION_REVISION,
     START_SESSION,
     array_of,
 )
@@ -116,7 +119,9 @@ BRIDGE_OUTPUT_SCHEMAS = {
     "bulk_add_records": array_of(DYNAMIC_RECORD),
     "query_records": array_of(DYNAMIC_RECORD),
     "filter_records": array_of(DYNAMIC_RECORD),
-    "draw_weighted_records": array_of(DYNAMIC_RECORD),
+    "draw_exam_questions": QUESTION_DRAW,
+    "grade_exam_questions": QUESTION_GRADE,
+    "revise_exam_question_answer": QUESTION_REVISION,
     "get_record": DYNAMIC_RECORD,
     "update_record": DYNAMIC_RECORD,
     "delete_record": {"type": "object"},
@@ -265,11 +270,19 @@ TOOLS = [
            "where": {"type": "object"}, "fields": {"type": "array", "items": {"type": "string"}},
            "order_by": {"type": "string"}, "descending": {"type": "boolean"},
            "limit": {"type": "integer", "default": 50}}, ["profile_id", "store_name"]),
-    _tool("draw_weighted_records", "Draw distinct records with probability proportional to a numeric weight field.",
-          {"profile_id": _PID, "store_name": {"type": "string"},
-           "weight_field": {"type": "string"}, "where": {"type": "object"},
-           "count": {"type": "integer", "default": 1}},
-          ["profile_id", "store_name", "weight_field"]),
+    _tool("draw_exam_questions", "Draw weighted LT Rita exam questions as ready-to-send Markdown.",
+          {"companion_name": {"type": "string"}, "where": {"type": "object"},
+           "count": {"type": "integer", "default": 1}}, ["companion_name"]),
+    _tool("grade_exam_questions", "Grade every question in a live exam-question attempt.",
+          {"companion_name": {"type": "string"}, "attempt_code": {"type": "string"},
+           "answers": {"type": "array", "items": {"type": "object"}}},
+          ["companion_name", "attempt_code", "answers"]),
+    _tool("revise_exam_question_answer", "Override, nullify, or restore a drawn question answer key.",
+          {"companion_name": {"type": "string"}, "attempt_code": {"type": "string"},
+           "position": {"type": "integer"}, "action": {"type": "string"},
+           "selected": {"type": "array", "items": {"type": "string"}},
+           "reason": {"type": "string"}},
+          ["companion_name", "attempt_code", "position", "action", "reason"]),
     _tool("get_record", "Read one dynamic record, optionally selecting fields.",
           {"profile_id": _PID, "store_name": {"type": "string"}, "record_id": {"type": "string"},
            "fields": {"type": "array", "items": {"type": "string"}}},
@@ -536,6 +549,26 @@ class ToolBridge:
         return self._request(
             "POST", f"/profiles/{profile_id}/stores/{store_name}/records/draw",
             json={"weight_field": weight_field, "where": where or {}, "count": count})
+
+    def draw_exam_questions(self, companion_name: str, where: dict | None = None,
+                            count: int = 1):
+        return self._request("POST", "/questions/draw",
+                             json={"companion_name": companion_name,
+                                   "where": where or {}, "count": count})
+
+    def grade_exam_questions(self, companion_name: str, attempt_code: str,
+                             answers: list[dict]):
+        return self._request("POST", "/questions/grade",
+                             json={"companion_name": companion_name,
+                                   "attempt_code": attempt_code, "answers": answers})
+
+    def revise_exam_question_answer(self, companion_name: str, attempt_code: str,
+                                    position: int, action: str, reason: str,
+                                    selected: list[str] | None = None):
+        return self._request("POST", "/questions/revise-answer",
+                             json={"companion_name": companion_name,
+                                   "attempt_code": attempt_code, "position": position,
+                                   "action": action, "selected": selected, "reason": reason})
 
     def get_record(self, profile_id: str, store_name: str, record_id: str,
                    fields: list[str] | None = None):

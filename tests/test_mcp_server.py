@@ -246,6 +246,23 @@ class FakeBridge:
     def draw_weighted_records(self, profile_id, store_name, weight_field, where=None, count=1):
         return self.query_records(profile_id, store_name, limit=count)
 
+    def draw_exam_questions(self, companion_name, where=None, count=1):
+        return {
+            "attempt_code": "attempt-1", "expires_at": 86401, "markdown": "### Question 1",
+            "questions": [{"position": 1, "question_ref": "q_1", "domain": "Tools",
+                           "prompt": "Question?", "options": [
+                               {"label": "A", "text": "Yes"}, {"label": "B", "text": "No"}]}],
+        }
+
+    def grade_exam_questions(self, companion_name, attempt_code, answers):
+        return {"attempt_code": attempt_code, "markdown": "OK",
+                "results": [{"position": 1, "status": "correct", "markdown": "OK"}]}
+
+    def revise_exam_question_answer(self, companion_name, attempt_code, position,
+                                    action, reason, selected=None):
+        return {"question_ref": "q_1", "action": action, "answer_status": "nullified",
+                "weight": 4, "correct_count": 0, "wrong_count": 0}
+
     def add_record(self, profile_id, store_name, data):
         if not self.store_approved:
             raise ToolBridgeError(409, "store has no approved version")
@@ -362,7 +379,7 @@ def test_initialize_and_list_tools(tmp_path, monkeypatch):
     assert r.status_code == 200
     tools = r.json()["result"]["tools"]
     names = {tool["name"] for tool in tools}
-    assert len(names) == 29
+    assert len(names) == 31
     assert {"prepare_closeout", "closeout"} <= names
     assert not names & {"whoami", "resolve_companion", "list_profiles", "boot_profile", "update_own_description", "search_memories", "create_project", "list_projects", "join_project", "leave_project", "add_project_record", "query_project_records"}
     assert not names & {"approve_store", "reject_store", "archive_store", "audit"}
@@ -396,7 +413,7 @@ def test_list_tools_can_omit_output_schemas(tmp_path, monkeypatch):
     r = client.post("/mcp", json=_rpc("tools/list"), headers=_bearer())
     assert r.status_code == 200
     tools = r.json()["result"]["tools"]
-    assert len(tools) == 29
+    assert len(tools) == 31
     for tool in tools:
         assert set(tool) == {"name", "title", "description", "inputSchema", "annotations"}
 
@@ -510,10 +527,20 @@ def test_mcp_tool_flow_and_logging(tmp_path, caplog):
     }).json()["result"]["structuredContent"]["items"]
     assert records[0]["data"]["hotel_name"] == "Inn"
 
-    drawn = _call_tool(client, "draw_weighted_records", {
-        "profile_id": "tara", "store_name": "hotel_reservations", "weight_field": "weight",
+    drawn = _call_tool(client, "draw_exam_questions", {
+        "companion_name": "lt_rita",
     }).json()["result"]
     assert drawn["isError"] is False
+    graded = _call_tool(client, "grade_exam_questions", {
+        "companion_name": "lt_rita", "attempt_code": "attempt-1",
+        "answers": [{"position": 1, "selected": ["A"]}],
+    }).json()["result"]
+    assert graded["structuredContent"]["markdown"] == "OK"
+    revised = _call_tool(client, "revise_exam_question_answer", {
+        "companion_name": "lt_rita", "attempt_code": "attempt-1", "position": 1,
+        "action": "nullify", "reason": "bad key",
+    }).json()["result"]
+    assert revised["structuredContent"]["answer_status"] == "nullified"
 
 
 def test_start_session_uses_exact_id_before_resolution_and_falls_back_on_404():
@@ -559,8 +586,14 @@ def test_successful_structured_content_matches_declared_output_schema():
     bridge.store_approved = True
     call_and_validate("add_record", {"profile_id": "tara", "store_name": "items", "data": {"name": "x"}})
     call_and_validate("query_records", {"profile_id": "tara", "store_name": "items"})
-    call_and_validate("draw_weighted_records", {"profile_id": "tara", "store_name": "items",
-                                                  "weight_field": "weight"})
+    call_and_validate("draw_exam_questions", {"companion_name": "lt_rita"})
+    call_and_validate("grade_exam_questions", {"companion_name": "lt_rita",
+                                                 "attempt_code": "attempt-1",
+                                                 "answers": [{"position": 1, "selected": ["A"]}]})
+    call_and_validate("revise_exam_question_answer", {"companion_name": "lt_rita",
+                                                        "attempt_code": "attempt-1",
+                                                        "position": 1, "action": "nullify",
+                                                        "reason": "bad key"})
 
 
 def test_session_inspector_renders_source_aware_and_raw_views():

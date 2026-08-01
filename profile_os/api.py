@@ -28,6 +28,7 @@ from .access import AccessControl, AccessError
 from .dynstores import DynamicStores
 from .projects import Projects
 from .prompts import companion_contract
+from .questions import QUESTION_PROFILE, QuestionPractice
 from .request_limits import (
     RequestBodyTooLarge,
     configured_max_request_bytes,
@@ -126,6 +127,32 @@ class WeightedDrawIn(BaseModel):
     weight_field: str
     where: dict = Field(default_factory=dict)
     count: int = Field(default=1, ge=1, le=200)
+
+
+class ExamQuestionDrawIn(BaseModel):
+    companion_name: str
+    where: dict = Field(default_factory=dict)
+    count: int = Field(default=1, ge=1, le=20)
+
+
+class ExamQuestionAnswerIn(BaseModel):
+    position: int = Field(ge=1, le=20)
+    selected: list[str]
+
+
+class ExamQuestionGradeIn(BaseModel):
+    companion_name: str
+    attempt_code: str
+    answers: list[ExamQuestionAnswerIn]
+
+
+class ExamQuestionRevisionIn(BaseModel):
+    companion_name: str
+    attempt_code: str
+    position: int = Field(ge=1, le=20)
+    action: str
+    selected: list[str] | None = None
+    reason: str
 
 
 class PendingStoreUpdateIn(BaseModel):
@@ -266,6 +293,8 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
 
     dyn = DynamicStores(store)
     app.state.dynstores = dyn
+    questions = QuestionPractice(store, dyn)
+    app.state.questions = questions
     projects = Projects(store)
     app.state.projects = projects
     access = AccessControl(store)
@@ -278,6 +307,7 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
     _verify_hits: dict[str, list[float]] = {}
     _profile_totp_hits: dict[str, list[float]] = {}
     _settings_hits: dict[str, list[float]] = {}
+    _question_practice_hits: dict[str, list[float]] = {}
     _settings_session_key = secrets.token_bytes(32)
     _settings_session_seconds = 15 * 60
     _max_request_bytes = configured_max_request_bytes()
@@ -298,6 +328,17 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
 
     def _has_settings_session(request: Request) -> bool:
         token = request.cookies.get("profile_os_settings", "")
+        try:
+            expires_at, signature = token.split(".", 1)
+            expected = hmac.new(_settings_session_key, expires_at.encode(),
+                                hashlib.sha256).hexdigest()
+            return int(expires_at) >= time.time() and hmac.compare_digest(
+                signature, expected)
+        except (TypeError, ValueError):
+            return False
+
+    def _has_question_session(request: Request) -> bool:
+        token = request.cookies.get("profile_os_questions", "")
         try:
             expires_at, signature = token.split(".", 1)
             expected = hmac.new(_settings_session_key, expires_at.encode(),
@@ -455,6 +496,53 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
         )
         return (Path(__file__).parent / "directory.html").read_text().replace(
             "{{SESSION_INSPECTOR_URL}}", inspector_url)
+
+    @app.get("/question-practice", response_class=HTMLResponse,
+             include_in_schema=False)
+    def question_practice_page(request: Request):
+        page = ("question_practice.html" if _has_question_session(request)
+                else "question_practice_login.html")
+        return (Path(__file__).parent / page).read_text()
+
+    @app.post("/question-practice/unlock", include_in_schema=False)
+    async def unlock_question_practice(request: Request):
+        client_ip = request.client.host if request.client else "unknown"
+        if _rate_limited(_question_practice_hits, client_ip):
+            raise HTTPException(429, "too many attempts; try again later")
+        form = await request.form()
+        admin_id = access.find_totp_admin_principal_id()
+        if admin_id is None or not access.verify_totp(
+                admin_id, str(form.get("totp_code") or "")):
+            return HTMLResponse(
+                (Path(__file__).parent / "question_practice_login.html").read_text()
+                .replace("<!-- ERROR -->", "<p class=\"error\">Invalid or expired authenticator code.</p>"),
+                status_code=401)
+        response = RedirectResponse(url="/question-practice", status_code=303)
+        response.set_cookie("profile_os_questions", _settings_session_token(),
+                            max_age=_settings_session_seconds, httponly=True,
+                            secure=True, samesite="strict", path="/question-practice")
+        return response
+
+    def _require_question_session(request: Request) -> None:
+        if not _has_question_session(request):
+            raise HTTPException(401, "question-practice session is locked")
+
+    @app.post("/question-practice/api/draw", include_in_schema=False)
+    def question_practice_draw(body: ExamQuestionDrawIn, request: Request):
+        _require_question_session(request)
+        return _wrap(questions.draw, body.companion_name, body.where, body.count)
+
+    @app.post("/question-practice/api/grade", include_in_schema=False)
+    def question_practice_grade(body: ExamQuestionGradeIn, request: Request):
+        _require_question_session(request)
+        return _wrap(questions.grade, body.companion_name, body.attempt_code,
+                     [answer.model_dump() for answer in body.answers])
+
+    @app.post("/question-practice/api/revise", include_in_schema=False)
+    def question_practice_revise(body: ExamQuestionRevisionIn, request: Request):
+        _require_question_session(request)
+        return _wrap(questions.revise_answer, body.companion_name, body.attempt_code,
+                     body.position, body.action, body.selected, body.reason)
 
     @app.get("/companions/new", include_in_schema=False)
     def new_companion():
@@ -1242,6 +1330,23 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
         _require("records:read", profile_id, request)
         return _wrap(dyn.filter_records, profile_id, name, body.where, body.fields,
                      body.order_by, body.descending, body.limit)
+
+    @app.post("/questions/draw")
+    def draw_exam_questions(body: ExamQuestionDrawIn, request: Request):
+        _require("records:read", QUESTION_PROFILE, request)
+        return _wrap(questions.draw, body.companion_name, body.where, body.count)
+
+    @app.post("/questions/grade")
+    def grade_exam_questions(body: ExamQuestionGradeIn, request: Request):
+        _require("records:write", QUESTION_PROFILE, request)
+        return _wrap(questions.grade, body.companion_name, body.attempt_code,
+                     [answer.model_dump() for answer in body.answers])
+
+    @app.post("/questions/revise-answer")
+    def revise_exam_question_answer(body: ExamQuestionRevisionIn, request: Request):
+        _require("records:write", QUESTION_PROFILE, request)
+        return _wrap(questions.revise_answer, body.companion_name, body.attempt_code,
+                     body.position, body.action, body.selected, body.reason)
 
     @app.post("/profiles/{profile_id}/stores/{name}/records/draw")
     def draw_weighted_store_records(profile_id: str, name: str, body: WeightedDrawIn,

@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LT Rita question practice</title>
+<style>
+body { max-width:58rem; margin:2rem auto; padding:0 1rem; font:17px/1.5 system-ui,sans-serif; color:#18212b; background:#fafbfc; }
+form,.card,.result { background:white; border:1px solid #d9e0e6; border-radius:10px; padding:1rem; margin:1rem 0; }
+label { display:block; margin:.7rem 0; } input,button { font:inherit; padding:.55rem; } input[type=number] { width:5rem; }
+button { border:0; border-radius:6px; background:#1769aa; color:white; cursor:pointer; margin:.3rem .4rem .3rem 0; }
+button.warn { background:#9b4b16; } button.danger { background:#9b1c1c; }
+.option { display:flex; gap:.6rem; align-items:flex-start; font-weight:400; }
+.option input { margin-top:.4rem; } .muted { color:#596775; } .error { color:#a11; font-weight:600; }
+pre { white-space:pre-wrap; overflow-wrap:anywhere; background:#f3f6f8; padding:1rem; border-radius:7px; }
+</style>
+<main>
+  <p><a href="/directory">← Companion directory</a></p>
+  <h1>LT Rita question practice</h1>
+  <form id="draw-form">
+    <label>Questions <input id="count" type="number" min="1" max="20" value="1" required></label>
+    <label>Topic/domain contains (optional) <input id="topic" placeholder="e.g. Tools"></label>
+    <button type="submit">Generate questions</button>
+  </form>
+  <p id="message" role="status"></p>
+  <form id="answer-form" hidden><div id="questions"></div><button type="submit">Check answers</button></form>
+  <section id="grade" class="result" hidden><h2>Result</h2><pre></pre></section>
+</main>
+<script>
+const message = document.querySelector('#message');
+const answerForm = document.querySelector('#answer-form');
+const questionsBox = document.querySelector('#questions');
+const gradeBox = document.querySelector('#grade');
+let attempt = null;
+
+async function post(path, body) {
+  const response = await fetch(path, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+  const data = await response.json().catch(() => ({}));
+  if (response.status === 401) { location.reload(); throw new Error('Practice session expired.'); }
+  if (!response.ok) throw new Error(data.detail || `Request failed (${response.status})`);
+  return data;
+}
+
+document.querySelector('#draw-form').addEventListener('submit', async event => {
+  event.preventDefault(); message.className=''; message.textContent='Drawing…'; gradeBox.hidden=true;
+  const topic = document.querySelector('#topic').value.trim();
+  try {
+    attempt = await post('/question-practice/api/draw', {
+      companion_name:'lt_rita', count:Number(document.querySelector('#count').value),
+      where:topic ? {domain:{contains:topic}} : {}
+    });
+    questionsBox.replaceChildren();
+    for (const question of attempt.questions) {
+      const card=document.createElement('section'); card.className='card'; card.dataset.position=question.position;
+      const h=document.createElement('h2'); h.textContent=`Question ${question.position} of ${attempt.questions.length}`; card.append(h);
+      const domain=document.createElement('p'); domain.className='muted'; domain.textContent=question.domain; card.append(domain);
+      const prompt=document.createElement('p'); prompt.textContent=question.prompt; card.append(prompt);
+      for (const option of question.options) {
+        const label=document.createElement('label'); label.className='option';
+        const input=document.createElement('input'); input.type='checkbox'; input.name=`q${question.position}`; input.value=option.label;
+        const text=document.createElement('span'); text.textContent=`${option.label}. ${option.text}`; label.append(input,text); card.append(label);
+      }
+      const reason=document.createElement('input'); reason.placeholder='Reason for answer-key correction'; reason.className='revision-reason'; card.append(reason);
+      const override=document.createElement('button'); override.type='button'; override.className='warn'; override.textContent='Override key with selected';
+      override.onclick=()=>revise(card,'override'); card.append(override);
+      const nullify=document.createElement('button'); nullify.type='button'; nullify.className='danger'; nullify.textContent='Nullify question';
+      nullify.onclick=()=>revise(card,'nullify'); card.append(nullify);
+      questionsBox.append(card);
+    }
+    answerForm.hidden=false; message.textContent=`Attempt ${attempt.attempt_code} is valid for 24 hours.`;
+  } catch (error) { message.className='error'; message.textContent=error.message; }
+});
+
+answerForm.addEventListener('submit', async event => {
+  event.preventDefault();
+  try {
+    const answers=[...questionsBox.querySelectorAll('.card')].map(card=>({
+      position:Number(card.dataset.position), selected:[...card.querySelectorAll('input[type=checkbox]:checked')].map(i=>i.value)
+    }));
+    const result=await post('/question-practice/api/grade',{companion_name:'lt_rita',attempt_code:attempt.attempt_code,answers});
+    gradeBox.querySelector('pre').textContent=result.markdown; gradeBox.hidden=false;
+  } catch (error) { message.className='error'; message.textContent=error.message; }
+});
+
+async function revise(card, action) {
+  const reason=card.querySelector('.revision-reason').value.trim();
+  if (!reason) { message.className='error'; message.textContent='Enter a correction reason first.'; return; }
+  const selected=[...card.querySelectorAll('input[type=checkbox]:checked')].map(i=>i.value);
+  try {
+    const result=await post('/question-practice/api/revise',{
+      companion_name:'lt_rita', attempt_code:attempt.attempt_code, position:Number(card.dataset.position),
+      action, selected:action==='override'?selected:null, reason
+    });
+    message.className=''; message.textContent=`Answer ${result.action}; status ${result.answer_status}.`;
+  } catch (error) { message.className='error'; message.textContent=error.message; }
+}
+</script>

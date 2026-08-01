@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Unlock question practice</title>
+<style>
+body { max-width:30rem; margin:4rem auto; padding:0 1rem; font:17px/1.45 system-ui,sans-serif; color:#18212b; }
+input,button { display:block; box-sizing:border-box; width:100%; margin-top:.6rem; padding:.7rem; font:inherit; }
+.error { color:#9b1c1c; }
+</style>
+<main>
+  <p><a href="/directory">← Companion directory</a></p>
+  <h1>Unlock LT Rita question practice</h1>
+  <p>Enter a current administrator authenticator code. The browser session lasts 15 minutes; unanswered attempt codes remain valid for 24 hours.</p>
+  <!-- ERROR -->
+  <form method="post" action="/question-practice/unlock">
+    <label>Authenticator code <input name="totp_code" required inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6,8}" autofocus></label>
+    <button type="submit">Unlock practice</button>
+  </form>
+</main>

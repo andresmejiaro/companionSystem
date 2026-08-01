@@ -127,6 +127,7 @@ def test_root_directory_and_admin_shortcuts(client, monkeypatch):
     assert "Companion directory" in directory.text
     assert 'href="/companions/new"' in directory.text
     assert 'href="/settings"' in directory.text
+    assert 'href="/question-practice"' in directory.text
     assert 'href="https://companions.example.test/session-inspector"' in directory.text
     assert "View the hydrated session packet for a companion." in directory.text
 
@@ -140,6 +141,9 @@ def test_root_directory_and_admin_shortcuts(client, monkeypatch):
     settings = client.get("/settings")
     assert settings.status_code == 200
     assert "Unlock settings" in settings.text
+    practice = client.get("/question-practice")
+    assert practice.status_code == 200
+    assert "Unlock LT Rita question practice" in practice.text
     legacy_demo = client.get("/demo", follow_redirects=False)
     assert legacy_demo.status_code == 307
     assert legacy_demo.headers["location"] == "/settings"

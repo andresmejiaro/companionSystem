@@ -56,6 +56,9 @@ from .tool_schemas import (
     PROFILE,
     PROFILE_RESOLUTION,
     PREPARE_CLOSEOUT,
+    QUESTION_DRAW,
+    QUESTION_GRADE,
+    QUESTION_REVISION,
     PROJECT,
     PROJECT_WITH_APPROVAL,
     PROJECT_RECORD,
@@ -453,7 +456,9 @@ MCP_OUTPUT_SCHEMAS = {
     "withdraw_pending_store": DYNAMIC_STORE,
     "query_records": mcp_items(DYNAMIC_RECORD),
     "filter_records": mcp_items(DYNAMIC_RECORD),
-    "draw_weighted_records": mcp_items(DYNAMIC_RECORD),
+    "draw_exam_questions": QUESTION_DRAW,
+    "grade_exam_questions": QUESTION_GRADE,
+    "revise_exam_question_answer": QUESTION_REVISION,
     "get_record": DYNAMIC_RECORD,
     "update_record": DYNAMIC_RECORD,
     "delete_record": DELETED_RECORD,
@@ -472,7 +477,7 @@ _READ_ONLY_TOOLS = {
     "whoami", "resolve_companion", "discover_companions", "list_profiles",
     "boot_profile", "start_session", "search_memories", "search_context",
     "read_inbox", "list_files", "read_file", "list_stores", "query_records",
-    "filter_records", "draw_weighted_records", "get_record", "list_projects", "query_project_records",
+    "filter_records", "draw_exam_questions", "get_record", "list_projects", "query_project_records",
     "prepare_closeout",
 }
 _OPEN_WORLD_TOOLS = {"send_message", "join_project", "leave_project",
@@ -803,10 +808,9 @@ MCP_TOOLS = [
         ["profile_id", "store_name"],
     ),
     _tool(
-        "draw_weighted_records", "Draw Weighted Records",
-        "Draw distinct records without replacement. The companion chooses the store and numeric weight field; filters use the normal structured conditions.",
-        {"profile_id": _PROFILE_ID, "store_name": {"type": "string"},
-         "weight_field": {"type": "string"},
+        "draw_exam_questions", "Draw Exam Questions",
+        "LT Rita only. Draw weighted exam questions without replacement and return ready-to-send Markdown plus a 24-hour attempt code.",
+        {"companion_name": {"type": "string", "enum": ["lt_rita"]},
          "where": {"type": "object", "default": {}, "additionalProperties": {
              "anyOf": [
                  {"not": {"type": "object"}}, {"type": "object", "properties": {
@@ -814,8 +818,33 @@ MCP_TOOLS = [
                      "contains": {}, "in": {"type": "array"},
                  }, "additionalProperties": False, "minProperties": 1, "maxProperties": 1}
              ]}},
-         "count": {"type": "integer", "minimum": 1, "maximum": 200, "default": 1}},
-        ["profile_id", "store_name", "weight_field"],
+         "count": {"type": "integer", "minimum": 1, "maximum": 20, "default": 1}},
+        ["companion_name"],
+    ),
+    _tool(
+        "grade_exam_questions", "Grade Exam Questions",
+        "LT Rita only. Grade every question in a live attempt. Correct answers return OK and reduce weight; wrong answers return targeted and full explanations and increase weight.",
+        {"companion_name": {"type": "string", "enum": ["lt_rita"]},
+         "attempt_code": {"type": "string"},
+         "answers": {"type": "array", "minItems": 1, "items": {
+             "type": "object", "properties": {
+                 "position": {"type": "integer", "minimum": 1, "maximum": 20},
+                 "selected": {"type": "array", "minItems": 1,
+                              "items": {"type": "string", "enum": ["A", "B", "C", "D", "E"]}},
+             }, "required": ["position", "selected"], "additionalProperties": False}},
+        },
+        ["companion_name", "attempt_code", "answers"],
+    ),
+    _tool(
+        "revise_exam_question_answer", "Revise Exam Question Answer",
+        "LT Rita only. Auditably override, nullify, or restore the answer key for a question from an attempt and recompute its learning statistics.",
+        {"companion_name": {"type": "string", "enum": ["lt_rita"]},
+         "attempt_code": {"type": "string"},
+         "position": {"type": "integer", "minimum": 1, "maximum": 20},
+         "action": {"type": "string", "enum": ["override", "nullify", "restore_extracted"]},
+         "selected": {"type": "array", "items": {"type": "string", "enum": ["A", "B", "C", "D", "E"]}},
+         "reason": {"type": "string"}},
+        ["companion_name", "attempt_code", "position", "action", "reason"],
     ),
     _tool(
         "get_record", "Get Record",
@@ -1189,10 +1218,18 @@ class MCPToolRunner:
                 order_by=arguments.get("order_by"),
                 descending=bool(arguments.get("descending", True)),
                 limit=int(arguments.get("limit", 50)))
-        if name == "draw_weighted_records":
-            return self.bridge.draw_weighted_records(
-                arguments["profile_id"], arguments["store_name"], arguments["weight_field"],
-                where=arguments.get("where"), count=int(arguments.get("count", 1)))
+        if name == "draw_exam_questions":
+            return self.bridge.draw_exam_questions(
+                arguments["companion_name"], where=arguments.get("where"),
+                count=int(arguments.get("count", 1)))
+        if name == "grade_exam_questions":
+            return self.bridge.grade_exam_questions(
+                arguments["companion_name"], arguments["attempt_code"], arguments["answers"])
+        if name == "revise_exam_question_answer":
+            return self.bridge.revise_exam_question_answer(
+                arguments["companion_name"], arguments["attempt_code"],
+                int(arguments["position"]), arguments["action"], arguments["reason"],
+                arguments.get("selected"))
         if name == "get_record":
             return self.bridge.get_record(arguments["profile_id"], arguments["store_name"],
                                           arguments["record_id"], arguments.get("fields"))
