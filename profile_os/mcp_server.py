@@ -453,6 +453,7 @@ MCP_OUTPUT_SCHEMAS = {
     "withdraw_pending_store": DYNAMIC_STORE,
     "query_records": mcp_items(DYNAMIC_RECORD),
     "filter_records": mcp_items(DYNAMIC_RECORD),
+    "draw_weighted_records": mcp_items(DYNAMIC_RECORD),
     "get_record": DYNAMIC_RECORD,
     "update_record": DYNAMIC_RECORD,
     "delete_record": DELETED_RECORD,
@@ -471,7 +472,7 @@ _READ_ONLY_TOOLS = {
     "whoami", "resolve_companion", "discover_companions", "list_profiles",
     "boot_profile", "start_session", "search_memories", "search_context",
     "read_inbox", "list_files", "read_file", "list_stores", "query_records",
-    "filter_records", "get_record", "list_projects", "query_project_records",
+    "filter_records", "draw_weighted_records", "get_record", "list_projects", "query_project_records",
     "prepare_closeout",
 }
 _OPEN_WORLD_TOOLS = {"send_message", "join_project", "leave_project",
@@ -800,6 +801,21 @@ MCP_TOOLS = [
          "order_by": {"type": "string"}, "descending": {"type": "boolean", "default": True},
          "limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50}},
         ["profile_id", "store_name"],
+    ),
+    _tool(
+        "draw_weighted_records", "Draw Weighted Records",
+        "Draw distinct records without replacement. The companion chooses the store and numeric weight field; filters use the normal structured conditions.",
+        {"profile_id": _PROFILE_ID, "store_name": {"type": "string"},
+         "weight_field": {"type": "string"},
+         "where": {"type": "object", "default": {}, "additionalProperties": {
+             "anyOf": [
+                 {"not": {"type": "object"}}, {"type": "object", "properties": {
+                     "eq": {}, "ne": {}, "gt": {}, "gte": {}, "lt": {}, "lte": {},
+                     "contains": {}, "in": {"type": "array"},
+                 }, "additionalProperties": False, "minProperties": 1, "maxProperties": 1}
+             ]}},
+         "count": {"type": "integer", "minimum": 1, "maximum": 200, "default": 1}},
+        ["profile_id", "store_name", "weight_field"],
     ),
     _tool(
         "get_record", "Get Record",
@@ -1173,6 +1189,10 @@ class MCPToolRunner:
                 order_by=arguments.get("order_by"),
                 descending=bool(arguments.get("descending", True)),
                 limit=int(arguments.get("limit", 50)))
+        if name == "draw_weighted_records":
+            return self.bridge.draw_weighted_records(
+                arguments["profile_id"], arguments["store_name"], arguments["weight_field"],
+                where=arguments.get("where"), count=int(arguments.get("count", 1)))
         if name == "get_record":
             return self.bridge.get_record(arguments["profile_id"], arguments["store_name"],
                                           arguments["record_id"], arguments.get("fields"))

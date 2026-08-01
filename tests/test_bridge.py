@@ -5,7 +5,7 @@ from jsonschema import Draft202012Validator
 from profile_os.api import create_app
 from profile_os.bridge import TOOLS, ToolBridge, ToolBridgeError
 
-SCHEMA = {"fields": {"hotel_name": {"type": "string"}}}
+SCHEMA = {"fields": {"hotel_name": {"type": "string"}, "weight": {"type": "integer"}}}
 
 OPERATIONAL_GRANTS = ["boot", "remember", "search", "closeout",
                       "stores:propose", "records:read", "records:write",
@@ -47,10 +47,11 @@ def _exercise_all_tools(bridge, profile="tara"):
     # approval is admin-only and NOT a bridge tool: use the service layer
     bridge._client.app.state.dynstores.approve(profile, "hotel_reservations")
     rec = bridge.add_record(profile, "hotel_reservations",
-                            {"hotel_name": "Inn"})
+                            {"hotel_name": "Inn", "weight": 1})
     assert rec["data"]["hotel_name"] == "Inn"
     assert bridge.query_records(profile, "hotel_reservations",
                                 contains="Inn")
+    assert bridge.draw_weighted_records(profile, "hotel_reservations", "weight")
     assert bridge.audit(profile)
     assert bridge.audit(profile, "hotel_reservations")
 
@@ -140,6 +141,8 @@ def test_no_tool_bypasses_api_authorization(tmp_path):
         "bulk_add_records": {"profile_id": "tara", "store_name": "n1", "records": []},
             "query_records": {"profile_id": "tara", "store_name": "n1"},
             "filter_records": {"profile_id": "tara", "store_name": "n1"},
+            "draw_weighted_records": {"profile_id": "tara", "store_name": "n1",
+                                        "weight_field": "weight"},
             "get_record": {"profile_id": "tara", "store_name": "n1", "record_id": "r1"},
             "update_record": {"profile_id": "tara", "store_name": "n1", "record_id": "r1",
                               "patch": {"x": "y"}},

@@ -28,6 +28,8 @@ No data migrations are performed.
 from __future__ import annotations
 
 import json
+import math
+import random
 import re
 import time
 import uuid
@@ -375,6 +377,63 @@ class DynamicStores:
             records = [{**r, "data": {k: r["data"][k] for k in fields
                                        if k in r["data"]}} for r in records]
         return records[:limit]
+
+    def draw_weighted_records(self, profile_id: str, name: str, weight_field: str,
+                              where: dict | None = None, count: int = 1) -> list[dict]:
+        """Draw distinct matching records, with chance proportional to a numeric field.
+
+        Zero-weight records are eligible for filtering but cannot be drawn.
+        A draw is without replacement, so asking for several questions never
+        returns the same record twice.
+        """
+        schema = self._require_queryable(profile_id, name)
+        field_defs = schema["fields"]
+        if weight_field not in field_defs:
+            raise SchemaError(f"unknown weight field: {weight_field!r}")
+        if field_defs[weight_field]["type"] not in {"number", "integer"}:
+            raise SchemaError("weight_field must be a number or integer field")
+        if not isinstance(count, int) or isinstance(count, bool) or not 1 <= count <= 200:
+            raise SchemaError("count must be an integer between 1 and 200")
+
+        where = where or {}
+        if not isinstance(where, dict):
+            raise SchemaError("where must be an object")
+        unknown = set(where) - set(field_defs)
+        if unknown:
+            raise SchemaError(f"unknown query fields: {sorted(unknown)}")
+        rows = self.db.execute(
+            "SELECT * FROM dynamic_records WHERE profile_id=? AND store_name=?",
+            (profile_id, name)).fetchall()
+        candidates = [self._record_dict(row) for row in rows]
+        candidates = [record for record in candidates
+                      if self._matches(record["data"], where)]
+
+        weighted: list[tuple[dict, float]] = []
+        for record in candidates:
+            weight = record["data"].get(weight_field)
+            if isinstance(weight, bool) or not isinstance(weight, (int, float)):
+                raise SchemaError(f"record {record['id']} has a non-numeric weight")
+            numeric_weight = float(weight)
+            if not math.isfinite(numeric_weight) or numeric_weight < 0:
+                raise SchemaError(f"record {record['id']} has an invalid weight")
+            if numeric_weight > 0:
+                weighted.append((record, numeric_weight))
+        if count > len(weighted):
+            raise SchemaError("not enough positive-weight records for requested count")
+
+        chooser = random.SystemRandom()
+        selected: list[dict] = []
+        while len(selected) < count:
+            total = sum(weight for _, weight in weighted)
+            threshold = chooser.random() * total
+            running = 0.0
+            for index, (record, weight) in enumerate(weighted):
+                running += weight
+                if threshold < running:
+                    selected.append(record)
+                    weighted.pop(index)
+                    break
+        return selected
 
     # -- introspection -----------------------------------------------------------
 

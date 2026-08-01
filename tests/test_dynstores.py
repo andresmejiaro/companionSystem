@@ -1,6 +1,7 @@
 import pytest
 
 from profile_os import seed
+import profile_os.dynstores as dynstores_module
 from profile_os.dynstores import DynamicStores, validate_schema
 from profile_os.errors import DynStoreConflict, DynStoreNotFound, ProfileNotFound, SchemaError
 from profile_os.storage import Store
@@ -266,6 +267,32 @@ def test_filter_sort_and_project_records(dyn):
     assert len(dyn.filter_records("tara", "applications", {"title": {"in": ["Gamma"]}})) == 1
     with pytest.raises(SchemaError):
         dyn.filter_records("tara", "applications", {"missing": "x"})
+
+
+def test_weighted_draw_filters_and_returns_distinct_records(dyn, monkeypatch):
+    schema = {"fields": {"question": {"type": "string"},
+                         "topic": {"type": "string"},
+                         "weight": {"type": "integer"}}}
+    dyn.propose("tara", "questions", "practice questions", "tara", schema)
+    dyn.approve("tara", "questions")
+    dyn.add_record("tara", "questions", {"question": "low", "topic": "math", "weight": 1})
+    dyn.add_record("tara", "questions", {"question": "high", "topic": "math", "weight": 3})
+    dyn.add_record("tara", "questions", {"question": "other", "topic": "history", "weight": 9})
+
+    class FixedRandom:
+        def random(self):
+            return .9
+
+    monkeypatch.setattr(dynstores_module.random, "SystemRandom", FixedRandom)
+    drawn = dyn.draw_weighted_records("tara", "questions", "weight",
+                                      {"topic": "math"}, count=2)
+    assert [record["data"]["question"] for record in drawn] == ["high", "low"]
+    assert len({record["id"] for record in drawn}) == 2
+
+    with pytest.raises(SchemaError, match="positive-weight"):
+        dyn.draw_weighted_records("tara", "questions", "weight", count=4)
+    with pytest.raises(SchemaError, match="weight_field"):
+        dyn.draw_weighted_records("tara", "questions", "topic")
 
 
 def test_archived_store_blocks_record_mutation(dyn):

@@ -122,6 +122,12 @@ class RecordQueryIn(BaseModel):
     limit: int = 50
 
 
+class WeightedDrawIn(BaseModel):
+    weight_field: str
+    where: dict = Field(default_factory=dict)
+    count: int = Field(default=1, ge=1, le=200)
+
+
 class PendingStoreUpdateIn(BaseModel):
     purpose: str
     schema_def: dict = Field(alias="schema")
@@ -1236,6 +1242,13 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
         _require("records:read", profile_id, request)
         return _wrap(dyn.filter_records, profile_id, name, body.where, body.fields,
                      body.order_by, body.descending, body.limit)
+
+    @app.post("/profiles/{profile_id}/stores/{name}/records/draw")
+    def draw_weighted_store_records(profile_id: str, name: str, body: WeightedDrawIn,
+                                    request: Request):
+        _require("records:read", profile_id, request)
+        return _wrap(dyn.draw_weighted_records, profile_id, name,
+                     body.weight_field, body.where, body.count)
 
     @app.get("/profiles/{profile_id}/stores/{name}/records/{record_id}")
     def get_store_record(profile_id: str, name: str, record_id: str,

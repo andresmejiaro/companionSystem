@@ -116,6 +116,7 @@ BRIDGE_OUTPUT_SCHEMAS = {
     "bulk_add_records": array_of(DYNAMIC_RECORD),
     "query_records": array_of(DYNAMIC_RECORD),
     "filter_records": array_of(DYNAMIC_RECORD),
+    "draw_weighted_records": array_of(DYNAMIC_RECORD),
     "get_record": DYNAMIC_RECORD,
     "update_record": DYNAMIC_RECORD,
     "delete_record": {"type": "object"},
@@ -264,6 +265,11 @@ TOOLS = [
            "where": {"type": "object"}, "fields": {"type": "array", "items": {"type": "string"}},
            "order_by": {"type": "string"}, "descending": {"type": "boolean"},
            "limit": {"type": "integer", "default": 50}}, ["profile_id", "store_name"]),
+    _tool("draw_weighted_records", "Draw distinct records with probability proportional to a numeric weight field.",
+          {"profile_id": _PID, "store_name": {"type": "string"},
+           "weight_field": {"type": "string"}, "where": {"type": "object"},
+           "count": {"type": "integer", "default": 1}},
+          ["profile_id", "store_name", "weight_field"]),
     _tool("get_record", "Read one dynamic record, optionally selecting fields.",
           {"profile_id": _PID, "store_name": {"type": "string"}, "record_id": {"type": "string"},
            "fields": {"type": "array", "items": {"type": "string"}}},
@@ -523,7 +529,13 @@ class ToolBridge:
                        descending: bool = True, limit: int = 50):
         return self._request("POST", f"/profiles/{profile_id}/stores/{store_name}/records/query",
                              json={"where": where or {}, "fields": fields, "order_by": order_by,
-                                   "descending": descending, "limit": limit})
+                             "descending": descending, "limit": limit})
+
+    def draw_weighted_records(self, profile_id: str, store_name: str, weight_field: str,
+                              where: dict | None = None, count: int = 1):
+        return self._request(
+            "POST", f"/profiles/{profile_id}/stores/{store_name}/records/draw",
+            json={"weight_field": weight_field, "where": where or {}, "count": count})
 
     def get_record(self, profile_id: str, store_name: str, record_id: str,
                    fields: list[str] | None = None):
