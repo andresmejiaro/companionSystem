@@ -392,7 +392,8 @@ def _metadata_url(settings: "MCPSettings", request: Request) -> str:
 
 
 def _json_text(value: Any) -> str:
-    return json.dumps(value, indent=2, sort_keys=True)
+    """Render tool text as readable Unicode rather than ASCII escape sequences."""
+    return json.dumps(value, indent=2, sort_keys=True, ensure_ascii=False)
 
 
 def _tool(

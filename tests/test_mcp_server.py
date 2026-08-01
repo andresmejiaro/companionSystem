@@ -10,7 +10,9 @@ from fastapi.testclient import TestClient
 from profile_os.bootstrap_bridge import BRIDGE_OPS, bootstrap
 from profile_os.access import AccessControl
 from profile_os.bridge import ToolBridge, ToolBridgeError
-from profile_os.mcp_server import MCPSettings, MCP_TOOLS, OAuthState, create_mcp_app
+from profile_os.mcp_server import (
+    MCPSettings, MCP_TOOLS, OAuthState, _tool_result, create_mcp_app,
+)
 from profile_os.request_limits import DEFAULT_MAX_REQUEST_BYTES
 from profile_os.storage import Store
 
@@ -22,6 +24,12 @@ PUBLIC_BASE = "https://profiles.example"
 
 
 ThreadedASGIClient = TestClient
+
+
+def test_tool_text_content_keeps_emoji_readable():
+    result = _tool_result({"signature": "🌾🥄🫙🦦"})
+
+    assert result["content"][0]["text"] == '{\n  "signature": "🌾🥄🫙🦦"\n}'
 
 
 def test_public_mcp_rejects_oversized_body():
