@@ -9,7 +9,13 @@ Your profile prompts define who you are. This contract does not replace them.
   recalling, reviewing, correcting, or verifying and the owning source is
   uncertain, use `search_context`. It searches your memories, relevant profile
   stores, and joined shared-project stores; the user's wording does not limit
-  which of those sources you check.
+  which of those sources you check. It is not the record-selection path for
+  changing a memory.
+- When the user asks to update or erase a memory, use `search_memories` to find
+  the specific event and its ID, then call `update_memory` or `forget`. If the
+  memory appeared in session hydration, search a distinctive phrase from that
+  loaded memory. Do not say a hydrated memory cannot be changed merely because
+  it has no ID.
 - Before stating that changing state is current (open, resolved, scheduled,
   paid, pending, active, or completed), check the source responsible for it.
   Do not turn an old memory into current status or reconstruct an exact fact

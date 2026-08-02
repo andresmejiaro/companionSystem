@@ -205,6 +205,10 @@ class FakeBridge:
     def search_memories(self, profile_id, query, limit=20):
         return [m for m in self.memories if query.lower() in m["content"].lower()][:limit]
 
+    def forget(self, profile_id, event_id):
+        self.memories = [memory for memory in self.memories if memory["id"] != event_id]
+        return {"deleted": True, "event_id": event_id}
+
     def search_context(self, profile_id, query, limit=20):
         return [{"source_type": "memory", "source_name": "memories", "item": item}
                 for item in self.search_memories(profile_id, query, limit)]
@@ -387,9 +391,9 @@ def test_initialize_and_list_tools(tmp_path, monkeypatch):
     assert r.status_code == 200
     tools = r.json()["result"]["tools"]
     names = {tool["name"] for tool in tools}
-    assert len(names) == 31
-    assert {"prepare_closeout", "closeout"} <= names
-    assert not names & {"whoami", "resolve_companion", "list_profiles", "boot_profile", "update_own_description", "search_memories", "create_project", "list_projects", "join_project", "leave_project", "add_project_record", "query_project_records"}
+    assert len(names) == 32
+    assert {"prepare_closeout", "closeout", "search_memories"} <= names
+    assert not names & {"whoami", "resolve_companion", "list_profiles", "boot_profile", "update_own_description", "create_project", "list_projects", "join_project", "leave_project", "add_project_record", "query_project_records"}
     assert not names & {"approve_store", "reject_store", "archive_store", "audit"}
     for tool in tools:
         assert set(tool) == {"name", "title", "description", "inputSchema", "outputSchema", "annotations"}
@@ -421,7 +425,7 @@ def test_list_tools_can_omit_output_schemas(tmp_path, monkeypatch):
     r = client.post("/mcp", json=_rpc("tools/list"), headers=_bearer())
     assert r.status_code == 200
     tools = r.json()["result"]["tools"]
-    assert len(tools) == 31
+    assert len(tools) == 32
     for tool in tools:
         assert set(tool) == {"name", "title", "description", "inputSchema", "annotations"}
 
@@ -491,6 +495,18 @@ def test_mcp_tool_flow_and_logging(tmp_path, caplog):
         "query": "MCP memory",
     }).json()["result"]["structuredContent"]["items"]
     assert context_hits[0]["source_type"] == "memory"
+
+    # Hydration intentionally stays lean; a targeted lookup supplies the ID
+    # only when the companion needs to mutate the memory.
+    restarted = _call_tool(client, "start_session", {"profile_id": "tara"}).json()["result"]
+    assert restarted["structuredContent"]["memories"] == [{
+        "kind": "note", "content": "MCP memory test",
+    }]
+    deleted = _call_tool(client, "forget", {
+        "profile_id": "tara", "event_id": hits[0]["id"],
+    }).json()["result"]["structuredContent"]
+    assert deleted == {"deleted": True, "event_id": hits[0]["id"]}
+    assert not bridge.search_memories("tara", "MCP memory")
     prepared = _call_tool(client, "prepare_closeout", {
         "profile_id": "tara",
     }).json()["result"]["structuredContent"]

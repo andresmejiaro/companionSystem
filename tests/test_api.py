@@ -35,6 +35,8 @@ def test_profile_discovery_metadata_and_startup_routing_guidance(client):
     session = client.post("/profiles/tara/session").json()
     assert session["system_contracts"]["companion"].startswith("# Companion contract")
     assert "search_context" in session["system_contracts"]["companion"]
+    assert "search_memories" in session["system_contracts"]["companion"]
+    assert "It is not the record-selection path" in session["system_contracts"]["companion"]
     assert "Memories preserve what the companion should keep in mind." in (
         session["system_contracts"]["companion"]
     )

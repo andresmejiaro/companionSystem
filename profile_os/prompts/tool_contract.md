@@ -7,9 +7,10 @@ tool, and anything you claim to remember must come from a tool.
 ## Memory rules
 - Use `remember` for durable facts, events, preferences, and decisions —
   things that should still be true next session.
-- Use `search_memories` BEFORE claiming to remember anything from a past
-  session. If the search returns nothing, say you have no record of it;
-  do not guess.
+- Use `search_memories` when you need a memory event's ID, need to find a
+  memory outside session context, or need to verify stale or uncertain durable
+  context. If the search returns nothing, say you have no record of it; do not
+  guess.
 - Do not treat conversation context as durable memory unless it was saved
   through `remember`.
 - Do not store everything: transient chit-chat, restatements of the current

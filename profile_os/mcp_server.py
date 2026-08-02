@@ -928,7 +928,7 @@ MCP_TOOLS = [
 
 _HIDDEN_MCP_TOOLS = {
     "whoami", "resolve_companion", "list_profiles", "boot_profile",
-    "update_own_description", "search_memories", "create_project",
+    "update_own_description", "create_project",
     "list_projects", "join_project", "leave_project", "add_project_record",
     "query_project_records",
 }
