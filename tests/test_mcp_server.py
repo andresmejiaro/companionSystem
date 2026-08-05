@@ -601,7 +601,7 @@ def test_start_session_uses_exact_id_before_resolution_and_falls_back_on_404():
 
 
 def test_successful_structured_content_matches_declared_output_schema():
-    """Exercise representative real calls across each changed output family."""
+    """Exercise each currently exposed LT Rita tool plus shared output families."""
     bridge = FakeBridge()
     client = _mcp_client(bridge)
     tools = {tool["name"]: tool for tool in MCP_TOOLS}
@@ -631,6 +631,11 @@ def test_successful_structured_content_matches_declared_output_schema():
     call_and_validate("grade_exam_questions", {"companion_name": "lt_rita",
                                                  "attempt_code": "attempt-1",
                                                  "answers": [{"position": 1, "selected": ["A"]}]})
+    call_and_validate("regrade_exam_questions", {"companion_name": "lt_rita",
+                                                   "attempt_code": "attempt-1",
+                                                   "answers": [{"position": 1, "selected": ["A"]}],
+                                                   "reason": "transcription correction"})
+    call_and_validate("diagnose_exam_weaknesses", {"companion_name": "lt_rita"})
     call_and_validate("revise_exam_question_answer", {"companion_name": "lt_rita",
                                                         "attempt_code": "attempt-1",
                                                         "position": 1, "action": "nullify",

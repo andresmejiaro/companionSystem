@@ -4,12 +4,14 @@ import pytest
 
 from profile_os.dynstores import DynamicStores
 from profile_os.errors import DynStoreConflict, SchemaError
-from profile_os.questions import (INITIAL_WEIGHT, QUESTION_PROFILE, QuestionPractice,
+from profile_os.questions import (INITIAL_WEIGHT, LEGACY_QUESTION_SCHEMA, QUESTION_PROFILE,
+                                  QUESTION_SCHEMA, QUESTION_SCHEMA_PURPOSE, QuestionPractice,
                                   load_question_files, question_record)
 from profile_os.storage import Store
 
 
-def _raw_question(number=1, correct=(0,), option_count=4, explanations=True):
+def _raw_question(number=1, correct=(0,), option_count=4, explanations=True,
+                  sub_skill=None):
     options = []
     for index in range(option_count):
         options.append({
@@ -26,10 +28,13 @@ def _raw_question(number=1, correct=(0,), option_count=4, explanations=True):
                    " option is right. Incorrect options:")
         overall += "".join(f"{option['text']} Why this option is wrong." for option in wrong)
         overall += "References:https://example.test"
-    return {
+    question = {
         "question_number": number, "status": "Skipped", "prompt": prompt,
         "options": options, "overall_explanation": overall, "domain": "Tools",
     }
+    if sub_skill is not None:
+        question["sub_skill"] = sub_skill
+    return question
 
 
 @pytest.fixture
@@ -124,9 +129,9 @@ def test_regrade_requires_an_audit_reason_and_a_graded_attempt(practice):
                          [{"position": 1, "selected": ["A"]}], " ")
 
 
-def test_weaknesses_aggregate_domain_and_unknown_sub_skill(practice):
-    first = _raw_question(number=1)
-    second = _raw_question(number=2)
+def test_weaknesses_aggregate_domain_and_sub_skill(practice):
+    first = _raw_question(number=1, sub_skill="prompt templates")
+    second = _raw_question(number=2, sub_skill="vector search")
     second["domain"] = "Identity"
     practice.import_records([question_record(first, "sundog1"), question_record(second, "sundog1")])
     draw = practice.draw("lt_rita", {"domain": "Tools"})
@@ -134,9 +139,26 @@ def test_weaknesses_aggregate_domain_and_unknown_sub_skill(practice):
 
     report = practice.weaknesses("lt_rita")
     assert report["items"][0] == {
-        "domain": "Tools", "sub_skill": None, "wrong_count": 1,
+        "domain": "Tools", "sub_skill": "prompt templates", "wrong_count": 1,
         "times_shown": 1, "question_count": 1,
     }
+
+
+def test_legacy_question_store_is_migrated_to_optional_sub_skill(practice):
+    legacy = practice._dyn.propose(
+        QUESTION_PROFILE, "exam_questions", QUESTION_SCHEMA_PURPOSE, "operator",
+        LEGACY_QUESTION_SCHEMA)
+    practice._dyn.approve(QUESTION_PROFILE, "exam_questions", actor="operator")
+    data = question_record(_raw_question(sub_skill=None), "sundog1")
+    data.pop("sub_skill", None)
+    practice._dyn.add_record(QUESTION_PROFILE, "exam_questions", data)
+
+    migrated = practice.ensure_store()
+
+    assert migrated["version"] == legacy["version"] + 1
+    assert migrated["schema"] == QUESTION_SCHEMA
+    record = practice._dyn.query_records(QUESTION_PROFILE, "exam_questions")[0]
+    assert record["schema_version"] == migrated["version"]
 
 
 def test_nullified_question_is_not_drawn(practice):

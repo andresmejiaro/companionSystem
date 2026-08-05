@@ -34,6 +34,7 @@ QUESTION_SCHEMA = {"fields": {
     "question_key": {"type": "string"},
     "source_refs": {"type": "object_list"},
     "domain": {"type": "string"},
+    "sub_skill": {"type": "string", "required": False},
     "prompt": {"type": "string"},
     "option_a_id": {"type": "string"},
     "option_a_text": {"type": "string"},
@@ -59,6 +60,14 @@ QUESTION_SCHEMA = {"fields": {
     "weight": {"type": "number"},
     "correct_count": {"type": "integer"},
     "wrong_count": {"type": "integer"},
+}}
+
+# The first shipped bank had domains but not sub-skill tags.  This exact
+# definition lets ``ensure_store`` recognize and migrate that known version
+# without accepting arbitrary incompatible schemas.
+LEGACY_QUESTION_SCHEMA = {"fields": {
+    name: spec for name, spec in QUESTION_SCHEMA["fields"].items()
+    if name != "sub_skill"
 }}
 
 QUESTION_SCHEMA_PURPOSE = (
@@ -196,6 +205,9 @@ def question_record(question: dict, source_name: str) -> dict:
         "correct_count": 0,
         "wrong_count": 0,
     }
+    sub_skill = repair_extracted_text(question.get("sub_skill", ""))
+    if sub_skill:
+        data["sub_skill"] = sub_skill
     for index, label in enumerate(OPTION_LABELS[:len(options)]):
         prefix = f"option_{label.lower()}"
         data[f"{prefix}_id"] = option_ids[index]
@@ -251,7 +263,22 @@ class QuestionPractice:
                 QUESTION_PROFILE, QUESTION_STORE, QUESTION_SCHEMA_PURPOSE,
                 proposed_by, QUESTION_SCHEMA)
             definition = self._dyn.approve(QUESTION_PROFILE, QUESTION_STORE, actor=proposed_by)
-        if definition["schema"] != QUESTION_SCHEMA:
+        if definition["schema"] == LEGACY_QUESTION_SCHEMA:
+            # This is a system-owned store with a known additive migration.
+            # Archive/re-propose preserves the generic store lifecycle and
+            # makes v2 explicit; records are then validated by the v2 schema.
+            self._dyn.archive(QUESTION_PROFILE, QUESTION_STORE, actor=proposed_by)
+            definition = self._dyn.propose(
+                QUESTION_PROFILE, QUESTION_STORE, QUESTION_SCHEMA_PURPOSE,
+                proposed_by, QUESTION_SCHEMA)
+            definition = self._dyn.approve(QUESTION_PROFILE, QUESTION_STORE,
+                                           actor=proposed_by)
+            with self.db:
+                self.db.execute(
+                    "UPDATE dynamic_records SET schema_version=?"
+                    " WHERE profile_id=? AND store_name=?",
+                    (definition["version"], QUESTION_PROFILE, QUESTION_STORE))
+        elif definition["schema"] != QUESTION_SCHEMA:
             raise DynStoreConflict("exam_questions exists with an incompatible schema")
         if definition["status"] != "approved":
             raise DynStoreConflict("exam_questions is not approved")
