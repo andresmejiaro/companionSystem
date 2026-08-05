@@ -59,6 +59,7 @@ from .tool_schemas import (
     QUESTION_DRAW,
     QUESTION_GRADE,
     QUESTION_REVISION,
+    QUESTION_WEAKNESS_REPORT,
     START_SESSION,
     array_of,
 )
@@ -121,6 +122,8 @@ BRIDGE_OUTPUT_SCHEMAS = {
     "filter_records": array_of(DYNAMIC_RECORD),
     "draw_exam_questions": QUESTION_DRAW,
     "grade_exam_questions": QUESTION_GRADE,
+    "regrade_exam_questions": QUESTION_GRADE,
+    "diagnose_exam_weaknesses": QUESTION_WEAKNESS_REPORT,
     "revise_exam_question_answer": QUESTION_REVISION,
     "get_record": DYNAMIC_RECORD,
     "update_record": DYNAMIC_RECORD,
@@ -277,6 +280,12 @@ TOOLS = [
           {"companion_name": {"type": "string"}, "attempt_code": {"type": "string"},
            "answers": {"type": "array", "items": {"type": "object"}}},
           ["companion_name", "attempt_code", "answers"]),
+    _tool("regrade_exam_questions", "Correct a consumed graded attempt and replay its learning statistics.",
+          {"companion_name": {"type": "string"}, "attempt_code": {"type": "string"},
+           "answers": {"type": "array", "items": {"type": "object"}},
+           "reason": {"type": "string"}}, ["companion_name", "attempt_code", "answers", "reason"]),
+    _tool("diagnose_exam_weaknesses", "Rank LT Rita question-bank weaknesses by domain and sub-skill.",
+          {"companion_name": {"type": "string"}}, ["companion_name"]),
     _tool("revise_exam_question_answer", "Override, nullify, or restore a drawn question answer key.",
           {"companion_name": {"type": "string"}, "attempt_code": {"type": "string"},
            "position": {"type": "integer"}, "action": {"type": "string"},
@@ -561,6 +570,17 @@ class ToolBridge:
         return self._request("POST", "/questions/grade",
                              json={"companion_name": companion_name,
                                    "attempt_code": attempt_code, "answers": answers})
+
+    def regrade_exam_questions(self, companion_name: str, attempt_code: str,
+                               answers: list[dict], reason: str):
+        return self._request("POST", "/questions/regrade",
+                             json={"companion_name": companion_name,
+                                   "attempt_code": attempt_code, "answers": answers,
+                                   "reason": reason})
+
+    def diagnose_exam_weaknesses(self, companion_name: str):
+        return self._request("POST", "/questions/weaknesses",
+                             json={"companion_name": companion_name})
 
     def revise_exam_question_answer(self, companion_name: str, attempt_code: str,
                                     position: int, action: str, reason: str,

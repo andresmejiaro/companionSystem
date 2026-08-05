@@ -146,6 +146,14 @@ class ExamQuestionGradeIn(BaseModel):
     answers: list[ExamQuestionAnswerIn]
 
 
+class ExamQuestionRegradeIn(ExamQuestionGradeIn):
+    reason: str
+
+
+class ExamQuestionDiagnosisIn(BaseModel):
+    companion_name: str
+
+
 class ExamQuestionRevisionIn(BaseModel):
     companion_name: str
     attempt_code: str
@@ -1341,6 +1349,17 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
         _require("records:write", QUESTION_PROFILE, request)
         return _wrap(questions.grade, body.companion_name, body.attempt_code,
                      [answer.model_dump() for answer in body.answers])
+
+    @app.post("/questions/regrade")
+    def regrade_exam_questions(body: ExamQuestionRegradeIn, request: Request):
+        _require("records:write", QUESTION_PROFILE, request)
+        return _wrap(questions.regrade, body.companion_name, body.attempt_code,
+                     [answer.model_dump() for answer in body.answers], body.reason)
+
+    @app.post("/questions/weaknesses")
+    def diagnose_exam_question_weaknesses(body: ExamQuestionDiagnosisIn, request: Request):
+        _require("records:read", QUESTION_PROFILE, request)
+        return _wrap(questions.weaknesses, body.companion_name)
 
     @app.post("/questions/revise-answer")
     def revise_exam_question_answer(body: ExamQuestionRevisionIn, request: Request):

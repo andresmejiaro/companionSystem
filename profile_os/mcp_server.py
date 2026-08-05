@@ -59,6 +59,7 @@ from .tool_schemas import (
     QUESTION_DRAW,
     QUESTION_GRADE,
     QUESTION_REVISION,
+    QUESTION_WEAKNESS_REPORT,
     PROJECT,
     PROJECT_WITH_APPROVAL,
     PROJECT_RECORD,
@@ -459,6 +460,8 @@ MCP_OUTPUT_SCHEMAS = {
     "filter_records": mcp_items(DYNAMIC_RECORD),
     "draw_exam_questions": QUESTION_DRAW,
     "grade_exam_questions": QUESTION_GRADE,
+    "regrade_exam_questions": QUESTION_GRADE,
+    "diagnose_exam_weaknesses": QUESTION_WEAKNESS_REPORT,
     "revise_exam_question_answer": QUESTION_REVISION,
     "get_record": DYNAMIC_RECORD,
     "update_record": DYNAMIC_RECORD,
@@ -478,7 +481,7 @@ _READ_ONLY_TOOLS = {
     "whoami", "resolve_companion", "discover_companions", "list_profiles",
     "boot_profile", "start_session", "search_memories", "search_context",
     "read_inbox", "list_files", "read_file", "list_stores", "query_records",
-    "filter_records", "draw_exam_questions", "get_record", "list_projects", "query_project_records",
+    "filter_records", "draw_exam_questions", "diagnose_exam_weaknesses", "get_record", "list_projects", "query_project_records",
     "prepare_closeout",
 }
 _OPEN_WORLD_TOOLS = {"send_message", "join_project", "leave_project",
@@ -835,6 +838,25 @@ MCP_TOOLS = [
              }, "required": ["position", "selected"], "additionalProperties": False}},
         },
         ["companion_name", "attempt_code", "answers"],
+    ),
+    _tool(
+        "regrade_exam_questions", "Regrade Exam Questions",
+        "LT Rita only. Correct a consumed graded attempt, with an audit reason, and replay its learning statistics.",
+        {"companion_name": {"type": "string", "enum": ["lt_rita"]},
+         "attempt_code": {"type": "string"},
+         "answers": {"type": "array", "minItems": 1, "items": {
+             "type": "object", "properties": {
+                 "position": {"type": "integer", "minimum": 1, "maximum": 20},
+                 "selected": {"type": "array", "minItems": 1,
+                              "items": {"type": "string", "enum": ["A", "B", "C", "D", "E"]}},
+             }, "required": ["position", "selected"], "additionalProperties": False}},
+         "reason": {"type": "string"}},
+        ["companion_name", "attempt_code", "answers", "reason"],
+    ),
+    _tool(
+        "diagnose_exam_weaknesses", "Diagnose Exam Weaknesses",
+        "LT Rita only. Aggregate wrong counts and times shown by domain and sub-skill, ranked by accumulated misses.",
+        {"companion_name": {"type": "string", "enum": ["lt_rita"]}}, ["companion_name"],
     ),
     _tool(
         "revise_exam_question_answer", "Revise Exam Question Answer",
@@ -1226,6 +1248,12 @@ class MCPToolRunner:
         if name == "grade_exam_questions":
             return self.bridge.grade_exam_questions(
                 arguments["companion_name"], arguments["attempt_code"], arguments["answers"])
+        if name == "regrade_exam_questions":
+            return self.bridge.regrade_exam_questions(
+                arguments["companion_name"], arguments["attempt_code"], arguments["answers"],
+                arguments["reason"])
+        if name == "diagnose_exam_weaknesses":
+            return self.bridge.diagnose_exam_weaknesses(arguments["companion_name"])
         if name == "revise_exam_question_answer":
             return self.bridge.revise_exam_question_answer(
                 arguments["companion_name"], arguments["attempt_code"],

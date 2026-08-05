@@ -93,6 +93,17 @@ CREATE TABLE IF NOT EXISTS question_answer_audit (
 );
 CREATE INDEX IF NOT EXISTS idx_question_answer_audit_record
 ON question_answer_audit(profile_id, question_record_id, created_at);
+CREATE TABLE IF NOT EXISTS question_grade_audit (
+    id TEXT PRIMARY KEY,
+    profile_id TEXT NOT NULL,
+    attempt_code TEXT NOT NULL,
+    before_answers TEXT NOT NULL,
+    after_answers TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    created_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_question_grade_audit_attempt
+ON question_grade_audit(profile_id, attempt_code, created_at);
 """
 
 
@@ -387,6 +398,10 @@ class QuestionPractice:
               answers: list[dict]) -> dict:
         profile_id = self._profile_id(companion_name)
         attempt = self._attempt(attempt_code, profile_id, require_pending=True)
+        prepared = self._prepare_answers(attempt, profile_id, answers)
+        return self._apply_grade(attempt_code, prepared)
+
+    def _prepare_answers(self, attempt, profile_id: str, answers: list[dict]):
         draw = json.loads(attempt["draw"])
         if not isinstance(answers, list):
             raise SchemaError("answers must be an array")
@@ -419,7 +434,9 @@ class QuestionPractice:
             correct = (data.get("answer_status") in {"active", "overridden"}
                        and set(selected_ids) == set(data["effective_correct_option_ids"]))
             prepared.append((item, row, data, normalized_labels, selected_ids, correct))
+        return prepared
 
+    def _apply_grade(self, attempt_code: str, prepared: list[tuple]) -> dict:
         results = []
         answer_history = []
         with self.db:
@@ -446,6 +463,73 @@ class QuestionPractice:
                 (json.dumps(answer_history), time.time(), attempt_code))
         markdown = "\n\n".join(result["markdown"] for result in results)
         return {"attempt_code": attempt_code, "markdown": markdown, "results": results}
+
+    def regrade(self, companion_name: str, attempt_code: str,
+                answers: list[dict], reason: str) -> dict:
+        """Correct a consumed grading attempt and replay affected learning stats.
+
+        Answer-key revisions and grading corrections are deliberately separate
+        audit trails: this changes the learner's submitted selections, never
+        the source question's answer key.
+        """
+        profile_id = self._profile_id(companion_name)
+        if not isinstance(reason, str) or not reason.strip():
+            raise SchemaError("reason is required")
+        attempt = self._attempt(attempt_code, profile_id)
+        if attempt["status"] != "graded":
+            raise DynStoreConflict("attempt_code must already be graded before correction")
+        prepared = self._prepare_answers(attempt, profile_id, answers)
+        answer_history = [{"position": item["position"], "record_id": row["id"],
+                           "selected_option_ids": selected_ids}
+                          for item, row, _, _, selected_ids, _ in prepared]
+        affected_record_ids = {row["id"] for _, row, _, _, _, _ in prepared}
+        now = time.time()
+        with self.db:
+            # Keep the original graded_at: learning weight is order-dependent,
+            # and a correction must not pretend the attempt happened later.
+            self.db.execute(
+                "UPDATE question_attempts SET answers=? WHERE code=?",
+                (json.dumps(answer_history), attempt_code))
+            self.db.execute(
+                "INSERT INTO question_grade_audit"
+                " (id, profile_id, attempt_code, before_answers, after_answers, reason, created_at)"
+                " VALUES (?,?,?,?,?,?,?)",
+                (str(uuid.uuid4()), profile_id, attempt_code, attempt["answers"] or "[]",
+                 json.dumps(answer_history), reason.strip(), now))
+            for record_id in affected_record_ids:
+                self._recompute_stats(record_id)
+        results = [self._grade_result(item["position"], data, labels, selected_ids, correct,
+                                      data.get("answer_status") in {"active", "overridden"})
+                   for item, _, data, labels, selected_ids, correct in prepared]
+        return {"attempt_code": attempt_code, "markdown": "\n\n".join(
+            result["markdown"] for result in results), "results": results, "corrected": True}
+
+    def weaknesses(self, companion_name: str) -> dict:
+        """Return a compact, ranked diagnostic view without exporting the bank."""
+        profile_id = self._profile_id(companion_name)
+        rows = self.db.execute(
+            "SELECT data FROM dynamic_records WHERE profile_id=? AND store_name=?",
+            (profile_id, QUESTION_STORE)).fetchall()
+        grouped: dict[tuple[str, str | None], dict] = {}
+        for row in rows:
+            data = json.loads(row["data"])
+            domain = str(data.get("domain") or "Unspecified").strip() or "Unspecified"
+            # Existing banks predate sub-skill tagging. Keeping it nullable
+            # makes the report useful now and automatically more granular
+            # once a future schema migration supplies that field.
+            sub_skill = data.get("sub_skill")
+            sub_skill = str(sub_skill).strip() if sub_skill else None
+            bucket = grouped.setdefault((domain, sub_skill), {
+                "domain": domain, "sub_skill": sub_skill,
+                "wrong_count": 0, "times_shown": 0, "question_count": 0,
+            })
+            bucket["wrong_count"] += int(data.get("wrong_count", 0))
+            bucket["times_shown"] += int(data.get("correct_count", 0)) + int(data.get("wrong_count", 0))
+            bucket["question_count"] += 1
+        items = sorted(grouped.values(), key=lambda item: (
+            -item["wrong_count"], -item["times_shown"], item["domain"],
+            item["sub_skill"] or ""))
+        return {"items": items}
 
     def _grade_result(self, position: int, data: dict, labels: list[str],
                       selected_ids: list[str], correct: bool, active: bool) -> dict:
@@ -550,7 +634,6 @@ class QuestionPractice:
                         wrong_count += 1
                         weight = min(MAX_WEIGHT, weight * 2)
         data.update(weight=weight, correct_count=correct_count, wrong_count=wrong_count)
-        with self.db:
-            self.db.execute(
-                "UPDATE dynamic_records SET data=?, updated_at=? WHERE id=?",
-                (json.dumps(data), time.time(), record_id))
+        self.db.execute(
+            "UPDATE dynamic_records SET data=?, updated_at=? WHERE id=?",
+            (json.dumps(data), time.time(), record_id))

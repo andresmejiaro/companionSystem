@@ -270,6 +270,14 @@ class FakeBridge:
         return {"attempt_code": attempt_code, "markdown": "OK",
                 "results": [{"position": 1, "status": "correct", "markdown": "OK"}]}
 
+    def regrade_exam_questions(self, companion_name, attempt_code, answers, reason):
+        return {"attempt_code": attempt_code, "markdown": "OK",
+                "results": [{"position": 1, "status": "correct", "markdown": "OK"}]}
+
+    def diagnose_exam_weaknesses(self, companion_name):
+        return {"items": [{"domain": "Tools", "sub_skill": None, "wrong_count": 3,
+                           "times_shown": 4, "question_count": 2}]}
+
     def revise_exam_question_answer(self, companion_name, attempt_code, position,
                                     action, reason, selected=None):
         return {"question_ref": "q_1", "action": action, "answer_status": "nullified",
@@ -391,7 +399,7 @@ def test_initialize_and_list_tools(tmp_path, monkeypatch):
     assert r.status_code == 200
     tools = r.json()["result"]["tools"]
     names = {tool["name"] for tool in tools}
-    assert len(names) == 32
+    assert len(names) == 34
     assert {"prepare_closeout", "closeout", "search_memories"} <= names
     assert not names & {"whoami", "resolve_companion", "list_profiles", "boot_profile", "update_own_description", "create_project", "list_projects", "join_project", "leave_project", "add_project_record", "query_project_records"}
     assert not names & {"approve_store", "reject_store", "archive_store", "audit"}
@@ -425,7 +433,7 @@ def test_list_tools_can_omit_output_schemas(tmp_path, monkeypatch):
     r = client.post("/mcp", json=_rpc("tools/list"), headers=_bearer())
     assert r.status_code == 200
     tools = r.json()["result"]["tools"]
-    assert len(tools) == 32
+    assert len(tools) == 34
     for tool in tools:
         assert set(tool) == {"name", "title", "description", "inputSchema", "annotations"}
 
@@ -560,6 +568,15 @@ def test_mcp_tool_flow_and_logging(tmp_path, caplog):
         "answers": [{"position": 1, "selected": ["A"]}],
     }).json()["result"]
     assert graded["structuredContent"]["markdown"] == "OK"
+    regraded = _call_tool(client, "regrade_exam_questions", {
+        "companion_name": "lt_rita", "attempt_code": "attempt-1",
+        "answers": [{"position": 1, "selected": ["A"]}], "reason": "transcription fix",
+    }).json()["result"]
+    assert regraded["structuredContent"]["markdown"] == "OK"
+    diagnosis = _call_tool(client, "diagnose_exam_weaknesses", {
+        "companion_name": "lt_rita",
+    }).json()["result"]
+    assert diagnosis["structuredContent"]["items"][0]["wrong_count"] == 3
     revised = _call_tool(client, "revise_exam_question_answer", {
         "companion_name": "lt_rita", "attempt_code": "attempt-1", "position": 1,
         "action": "nullify", "reason": "bad key",

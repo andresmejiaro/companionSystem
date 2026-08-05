@@ -93,6 +93,52 @@ def test_correct_grade_returns_ok_and_halves_weight(practice):
     assert record["data"]["weight"] == 2
 
 
+def test_regrade_corrects_a_consumed_attempt_and_audits_it(practice):
+    practice.import_records([question_record(_raw_question(), "sundog1")])
+    draw = practice.draw("lt_rita")
+    practice.grade("lt_rita", draw["attempt_code"], [{"position": 1, "selected": ["B"]}])
+
+    corrected = practice.regrade(
+        "lt_rita", draw["attempt_code"], [{"position": 1, "selected": ["A"]}],
+        "Rita transcribed B; Andrés selected A.")
+
+    assert corrected["corrected"] is True
+    assert corrected["results"][0]["status"] == "correct"
+    record = practice._dyn.query_records("lt_rita", "exam_questions")[0]
+    assert record["data"]["correct_count"] == 1
+    assert record["data"]["wrong_count"] == 0
+    assert record["data"]["weight"] == INITIAL_WEIGHT / 2
+    audit = practice.db.execute("SELECT * FROM question_grade_audit").fetchone()
+    assert audit["reason"] == "Rita transcribed B; Andrés selected A."
+
+
+def test_regrade_requires_an_audit_reason_and_a_graded_attempt(practice):
+    practice.import_records([question_record(_raw_question(), "sundog1")])
+    draw = practice.draw("lt_rita")
+    with pytest.raises(DynStoreConflict, match="must already be graded"):
+        practice.regrade("lt_rita", draw["attempt_code"],
+                         [{"position": 1, "selected": ["A"]}], "premature")
+    practice.grade("lt_rita", draw["attempt_code"], [{"position": 1, "selected": ["A"]}])
+    with pytest.raises(SchemaError, match="reason is required"):
+        practice.regrade("lt_rita", draw["attempt_code"],
+                         [{"position": 1, "selected": ["A"]}], " ")
+
+
+def test_weaknesses_aggregate_domain_and_unknown_sub_skill(practice):
+    first = _raw_question(number=1)
+    second = _raw_question(number=2)
+    second["domain"] = "Identity"
+    practice.import_records([question_record(first, "sundog1"), question_record(second, "sundog1")])
+    draw = practice.draw("lt_rita", {"domain": "Tools"})
+    practice.grade("lt_rita", draw["attempt_code"], [{"position": 1, "selected": ["B"]}])
+
+    report = practice.weaknesses("lt_rita")
+    assert report["items"][0] == {
+        "domain": "Tools", "sub_skill": None, "wrong_count": 1,
+        "times_shown": 1, "question_count": 1,
+    }
+
+
 def test_nullified_question_is_not_drawn(practice):
     practice.import_records([question_record(_raw_question(), "sundog1")])
     draw = practice.draw("lt_rita")

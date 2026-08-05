@@ -445,6 +445,24 @@ QUESTION_GRADE = {
     "required": ["attempt_code", "markdown", "results"],
 }
 
+QUESTION_WEAKNESS = {
+    "type": "object",
+    "properties": {
+        "domain": {"type": "string"},
+        "sub_skill": STRING_OR_NULL,
+        "wrong_count": {"type": "integer"},
+        "times_shown": {"type": "integer"},
+        "question_count": {"type": "integer"},
+    },
+    "required": ["domain", "sub_skill", "wrong_count", "times_shown", "question_count"],
+}
+
+QUESTION_WEAKNESS_REPORT = {
+    "type": "object",
+    "properties": {"items": array_of(QUESTION_WEAKNESS)},
+    "required": ["items"],
+}
+
 QUESTION_REVISION = {
     "type": "object",
     "properties": {
