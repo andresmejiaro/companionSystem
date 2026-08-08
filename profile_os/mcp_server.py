@@ -9,6 +9,7 @@ from env. Incoming Claude/client tokens are never forwarded to Profile OS.
 from __future__ import annotations
 
 import base64
+from copy import deepcopy
 import hashlib
 import hmac
 import json
@@ -1128,13 +1129,16 @@ class MCPToolRunner:
             requested = arguments["profile_id"]
             try:
                 # Canonical ids are decisive and incur no directory lookup.
-                return self.bridge.start_session(requested)
+                session = self.bridge.start_session(requested)
             except ToolBridgeError as error:
                 if error.status_code != 404:
                     raise
+            else:
+                return self._with_tool_probe_catalog(session)
             resolution = self.bridge.resolve_companion(requested)
             if resolution["status"] == "resolved":
-                return self.bridge.start_session(resolution["resolved_profile_id"])
+                session = self.bridge.start_session(resolution["resolved_profile_id"])
+                return self._with_tool_probe_catalog(session)
             ids = [profile["id"] for profile in resolution["candidates"]]
             if resolution["status"] == "ambiguous":
                 raise ToolBridgeError(
@@ -1294,6 +1298,28 @@ class MCPToolRunner:
                 arguments["profile_id"], arguments["project_id"],
                 arguments.get("contains", ""), arguments.get("limit", 50))
         raise ValueError(f"unknown tool {name!r}")
+
+    @staticmethod
+    def _with_tool_probe_catalog(session: dict[str, Any]) -> dict[str, Any]:
+        """Attach both server tool surfaces only to the diagnostic profile."""
+        if session.get("selection", {}).get("profile_id") != "tool_probe":
+            return session
+        advertised = _advertised_tools()
+        return {
+            **session,
+            "server_tool_catalog": {
+                # This is the complete registry accepted by tools/call, not
+                # the cropped tools/list response supplied to an MCP host.
+                "registered_tools": deepcopy(MCP_TOOLS),
+                "registered_tool_names": sorted(MCP_TOOL_NAMES),
+                "mcp_advertised_tools": deepcopy(advertised),
+                "mcp_advertised_tool_names": [tool["name"] for tool in advertised],
+                "notes": (
+                    "registered_tools is the complete server-side tools/call registry. "
+                    "mcp_advertised_tools is this server's exact tools/list response."
+                ),
+            },
+        }
 
 
 def _rpc_result(request_id: Any, result: Any) -> dict[str, Any]:

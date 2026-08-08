@@ -88,7 +88,7 @@ class FakeBridge:
 
     def list_profiles(self):
         return [
-            self._profile("sidra"), self._profile("tara"),
+            self._profile("sidra"), self._profile("tara"), self._profile("tool_probe"),
         ]
 
     @staticmethod
@@ -118,7 +118,7 @@ class FakeBridge:
         }
 
     def boot_profile(self, profile_id: str):
-        if profile_id not in {"sidra", "tara"}:
+        if profile_id not in {"sidra", "tara", "tool_probe"}:
             raise ToolBridgeError(404, f"profile {profile_id!r} not found")
         return {
             "profile": self._profile(profile_id),
@@ -476,6 +476,14 @@ def test_mcp_tool_flow_and_logging(tmp_path, caplog):
     assert started["structuredContent"]["selection"]["settled"] is True
     assert bridge.start_session_calls == ["tara"]
     assert bridge.resolve_calls == ["Tara"]  # exact startup did not resolve
+
+    probe = _call_tool(client, "start_session", {"profile_id": "tool_probe"}).json()["result"]
+    catalog = probe["structuredContent"]["server_tool_catalog"]
+    assert {tool["name"] for tool in catalog["registered_tools"]} == {
+        tool["name"] for tool in MCP_TOOLS
+    }
+    assert set(catalog["mcp_advertised_tool_names"]) < set(catalog["registered_tool_names"])
+    assert catalog["notes"].startswith("registered_tools is the complete")
 
     with caplog.at_level(logging.INFO, logger="profile_os.mcp_server"):
         boot = _call_tool(client, "boot_profile", {"profile_id": "sidra"}).json()

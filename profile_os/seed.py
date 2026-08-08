@@ -9,6 +9,8 @@ TARA_WHO_YOU_ARE = prompts.load("tara_base")
 TARA_WHAT_YOU_DO = prompts.load("tara_role")
 SECRETARY_WHO_YOU_ARE = prompts.load("secretary_base")
 SECRETARY_WHAT_YOU_DO = prompts.load("secretary_role")
+TOOL_PROBE_WHO_YOU_ARE = prompts.load("tool_probe_base")
+TOOL_PROBE_WHAT_YOU_DO = prompts.load("tool_probe_role")
 
 
 def seed(store: Store) -> None:
@@ -71,4 +73,17 @@ def seed(store: Store) -> None:
                            "max_boot_events": 10},
             closeout_rules="Write a handoff note: open commitments, pending store proposals, next checks.",
             initial_state="Fresh profile. No commitments recorded, no stores.",
+        )
+
+    if "tool_probe" not in existing:
+        store.create_profile(
+            "tool_probe", "Tool Probe", TOOL_PROBE_WHO_YOU_ARE,
+            TOOL_PROBE_WHAT_YOU_DO,
+            description="MCP tool-surface diagnostic: catalog, visibility, and safe execution checks.",
+            signature="🔬🛠️",
+            allowed_tools=[],
+            memory_policy={"kinds": ["fact", "failure_scar", "note"],
+                           "max_boot_events": 10},
+            closeout_rules="Send Limo the tool-surface report before closeout.",
+            initial_state="No tool-surface observation recorded yet.",
         )

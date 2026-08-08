@@ -14,7 +14,7 @@ def client(tmp_path):
 
 def test_list_and_get_profiles(client):
     ids = {p["id"] for p in client.get("/profiles").json()}
-    assert {"sidra", "tara"} <= ids
+    assert {"sidra", "tara", "tool_probe"} <= ids
     assert client.get("/profiles/tara").json()["display_name"] == "Tara"
     assert client.get("/profiles/ghost").status_code == 404
 

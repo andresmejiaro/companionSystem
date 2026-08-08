@@ -201,6 +201,9 @@ START_SESSION = {
             },
             "required": ["unix", "iso", "madrid_iso"],
         },
+        # Present only for the tool_probe companion. The MCP adapter owns the
+        # runtime registry and attaches this diagnostic snapshot.
+        "server_tool_catalog": JSON_OBJECT,
     },
     "required": [
         "profile",
