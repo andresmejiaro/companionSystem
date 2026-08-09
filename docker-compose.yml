@@ -77,6 +77,45 @@ services:
       timeout: 3s
       retries: 6
 
+  life-mcp:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      LIFE_MCP_DATA_DIR: /app/data
+      LIFE_MCP_PUBLIC_BASE_URL: ${LIFE_MCP_PUBLIC_BASE_URL:-http://127.0.0.1:8091}
+      LIFE_MCP_AUTH_REQUIRED: ${LIFE_MCP_AUTH_REQUIRED:-1}
+      LIFE_MCP_CONNECTOR_TOKEN: ${LIFE_MCP_CONNECTOR_TOKEN:-}
+      LIFE_MCP_CONNECTOR_TOKENS: ${LIFE_MCP_CONNECTOR_TOKENS:-}
+      LIFE_MCP_OAUTH_SIGNING_KEY: ${LIFE_MCP_OAUTH_SIGNING_KEY:-}
+      LIFE_MCP_ADMIN_SECRET: ${LIFE_MCP_ADMIN_SECRET:-}
+      LIFE_MCP_ALLOWED_ORIGINS: ${LIFE_MCP_ALLOWED_ORIGINS:-https://claude.ai,https://*.claude.ai,https://chatgpt.com,https://*.chatgpt.com,https://openai.com,https://*.openai.com}
+      LIFE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS: ${LIFE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS:-claude.ai,*.claude.ai,chatgpt.com,*.chatgpt.com,openai.com,*.openai.com}
+    command:
+      - uvicorn
+      - life_mcp.app:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8091"
+      - --proxy-headers
+      - --forwarded-allow-ips=*
+    volumes:
+      - life-mcp-data:/app/data
+    ports:
+      - "${LIFE_MCP_PORT:-127.0.0.1:8091}:8091"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8091/health', timeout=2).read()"
+      interval: 10s
+      timeout: 3s
+      retries: 6
+
 volumes:
   profile-os-data:
   profile-os-mcp-oauth-state:
+  life-mcp-data:

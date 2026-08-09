@@ -3,6 +3,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY profile_os ./profile_os
+COPY life_mcp ./life_mcp
 ENV PROFILE_OS_DATA_DIR=/app/data
-EXPOSE 8000 8080
+EXPOSE 8000 8080 8091
 CMD ["uvicorn", "profile_os.api:app", "--host", "0.0.0.0", "--port", "8000"]
