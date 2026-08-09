@@ -101,6 +101,7 @@ def test_boot_returns_prompts_state_and_memories(store):
     assert b["compact_state"] == "No active task contract."
     assert any(m["kind"] == "failure_scar" for m in b["recent_memories"])
     assert b["profile"]["allowed_tools"]
+    assert "description" not in b["profile"]
 
 
 def test_legacy_prompt_files_are_renamed_byte_for_byte_and_new_sections_are_empty(store):

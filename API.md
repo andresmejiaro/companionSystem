@@ -57,6 +57,8 @@ subset of these operations over `POST /mcp` and `GET /mcp`; see
    "compact_state": "No meals logged today.", "state_updated_at": 1751640000.0,
    "recent_memories": [ {memory event}, ... ]}
   ```
+  The nested `profile` omits legacy registry `description`; `lane` is the
+  canonical model-facing scope field.
 - `POST /profiles/{id}/session` — one-call **hydration packet** for a
   companion's first turn (MCP tool `start_session`): prompts, current compact
   state, `identity` (the `whoami` file content, or `null` without
@@ -67,8 +69,10 @@ subset of these operations over `POST /mcp` and `GET /mcp`; see
   tags, timestamps, full history, and closeout archives. `selection` names
   the active profile/family/variant and sets `settled: true`; sibling
   variants are omitted from `routing_guidance` so the model does not reopen
-  an already-resolved choice. Canonical ids are normalized for case and
-  surrounding whitespace. Requires the same `boot` grant.
+  an already-resolved choice. Its compact `profile` object omits the legacy
+  registry `description`; the canonical `lane` prompt section is the sole
+  hydrated statement of companion scope. Canonical ids are normalized for
+  case and surrounding whitespace. Requires the same `boot` grant.
 - `POST /profiles/{id}/prompt` accepts any canonical prompt sections → 201, a
   pending approval record. Requires `manage_profile` on that profile.
   Companions can propose an edit to their own prompts; it only takes effect

@@ -68,6 +68,37 @@ PROFILE = {
                  "variant_label", "is_family_default", "created_at"],
 }
 
+# Session hydration only carries registry fields that can affect the active
+# companion. ``description`` is legacy discovery metadata superseded by the
+# canonical ``lane`` prompt section; exposing it here gives the model a second,
+# potentially stale statement of scope.
+HYDRATION_PROFILE = {
+    "type": "object",
+    "properties": {
+        key: PROFILE["properties"][key]
+        for key in (
+            "id", "display_name", "signature", "profile_kind", "allowed_tools",
+            "memory_policy", "closeout_rules", "aliases", "family_id",
+            "variant_label", "is_family_default",
+        )
+    },
+    "required": [
+        "id", "display_name", "signature", "profile_kind", "allowed_tools",
+        "memory_policy", "closeout_rules", "aliases", "family_id",
+        "variant_label", "is_family_default",
+    ],
+}
+
+BOOT_PROFILE = {
+    "type": "object",
+    "properties": {
+        key: PROFILE["properties"][key]
+        for key in PROFILE["properties"]
+        if key != "description"
+    },
+    "required": [key for key in PROFILE["required"] if key != "description"],
+}
+
 PROFILE_RESOLUTION = {
     "type": "object",
     "properties": {
@@ -128,7 +159,7 @@ CLOSEOUT = {
 BOOT = {
     "type": "object",
     "properties": {
-        "profile": PROFILE,
+        "profile": BOOT_PROFILE,
         "who_you_are": {"type": "string"},
         "signature": {"type": "string"},
         "lane": {"type": "string"},
@@ -147,7 +178,7 @@ BOOT = {
 START_SESSION = {
     "type": "object",
     "properties": {
-        "profile": PROFILE,
+        "profile": HYDRATION_PROFILE,
         "who_you_are": {"type": "string"},
         "signature": {"type": "string"},
         "lane": {"type": "string"},

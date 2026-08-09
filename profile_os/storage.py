@@ -616,7 +616,11 @@ class Store:
             (profile_id, recent_events),
         ).fetchall()
         return {
-            "profile": profile,
+            # ``description`` is legacy registry metadata superseded by the
+            # canonical lane prompt. Keep it available to admin/profile APIs,
+            # but never hydrate it into a companion through boot or session.
+            "profile": {key: value for key, value in profile.items()
+                        if key != "description"},
             **self._prompt_sections(profile_id),
             "compact_state": state_row["state"] if state_row else "",
             "state_updated_at": state_row["updated_at"] if state_row else None,

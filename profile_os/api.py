@@ -769,7 +769,7 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
         profile = booted["profile"]
         booted["profile"] = {
             key: profile[key] for key in
-            ("id", "display_name", "description", "signature", "allowed_tools",
+            ("id", "display_name", "signature", "allowed_tools",
              "memory_policy", "closeout_rules", "aliases", "family_id", "profile_kind",
              "variant_label", "is_family_default")
             if key in profile

@@ -424,6 +424,8 @@ def test_initialize_and_list_tools(tmp_path, monkeypatch):
     assert annotations["delete_file"]["destructiveHint"] is True
     assert annotations["delete_record"]["destructiveHint"] is True
     assert annotations["start_session"]["readOnlyHint"] is True
+    start_session = next(tool for tool in tools if tool["name"] == "start_session")
+    assert "description" not in start_session["outputSchema"]["properties"]["profile"]["properties"]
     assert next(tool for tool in tools if tool["name"] == "prepare_closeout")["description"] == "Use this when the user says they are done with the session. This gives instructions on how to update stores and use closeout when done."
 
 
@@ -469,13 +471,22 @@ def test_mcp_tool_flow_and_logging(tmp_path, caplog):
     assert any(item["id"] == "sidra" for item in profiles["structuredContent"]["items"])
     discovered = _call_tool(client, "discover_companions", {}).json()["result"]
     assert any(item["id"] == "tara" for item in discovered["structuredContent"]["items"])
-    resolved = _call_tool(client, "resolve_companion", {"query": "Tara"}).json()["result"]
-    assert resolved["structuredContent"]["resolved_profile_id"] == "tara"
+    removed = _call_tool(client, "resolve_companion", {"query": "Tara"}).json()
+    assert removed["error"]["code"] == -32602
 
     started = _call_tool(client, "start_session", {"profile_id": "tara"}).json()["result"]
     assert started["structuredContent"]["selection"]["settled"] is True
     assert bridge.start_session_calls == ["tara"]
-    assert bridge.resolve_calls == ["Tara"]  # exact startup did not resolve
+    assert bridge.resolve_calls == []  # exact startup did not resolve
+
+    resolved_start = _call_tool(client, "start_session", {"profile_id": "Tara"}).json()["result"]
+    assert resolved_start["structuredContent"]["selection"]["profile_id"] == "tara"
+    assert bridge.resolve_calls == ["Tara"]
+
+    removed = _call_tool(client, "update_own_description", {
+        "profile_id": "tara", "description": "legacy",
+    }).json()
+    assert removed["error"]["code"] == -32602
 
     probe = _call_tool(client, "start_session", {"profile_id": "tool_probe"}).json()["result"]
     catalog = probe["structuredContent"]["server_tool_catalog"]
@@ -622,7 +633,6 @@ def test_successful_structured_content_matches_declared_output_schema():
 
     call_and_validate("list_profiles", {})
     call_and_validate("discover_companions", {})
-    call_and_validate("resolve_companion", {"query": "tara"})
     call_and_validate("boot_profile", {"profile_id": "sidra"})
     call_and_validate("start_session", {"profile_id": "tara"})
     call_and_validate("remember", {"profile_id": "tara", "kind": "note", "content": "x"})

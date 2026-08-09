@@ -333,7 +333,7 @@ def _session_inspector_page(profiles: list[dict], *, selected_id: str = "",
                         f'{_html.escape(source)}</p><pre>{text}</pre></section>')
             profile = result.get("profile") or {}
             profile_context = {
-                key: profile[key] for key in ("display_name", "description", "allowed_tools", "closeout_rules")
+                key: profile[key] for key in ("display_name", "allowed_tools", "closeout_rules")
                 if profile.get(key) not in (None, "", [])
             }
             current_state = result.get("compact_state") or ""
@@ -431,14 +431,16 @@ _MEMORY_KINDS = MEMORY_KINDS
 
 MCP_OUTPUT_SCHEMAS = {
     "whoami": IDENTITY,
-    "resolve_companion": PROFILE_RESOLUTION,
+    # Kept as an internal start_session fallback, not a callable MCP tool.
+    # "resolve_companion": PROFILE_RESOLUTION,
     "discover_companions": mcp_items(PROFILE),
     "list_profiles": mcp_items(PROFILE),
     "boot_profile": BOOT,
     "start_session": START_SESSION,
     "propose_prompt_edit": APPROVAL,
     "retract_approval": APPROVAL,
-    "update_own_description": PROFILE,
+    # Legacy backend/admin operation; no companion-callable MCP path.
+    # "update_own_description": PROFILE,
     "remember": MEMORY_EVENT,
     "search_memories": mcp_items(MEMORY_EVENT),
     "search_context": mcp_items(CONTEXT_RESULT),
@@ -510,17 +512,9 @@ MCP_TOOLS = [
         {},
         [],
     ),
-    _tool(
-        "resolve_companion",
-        "Resolve Companion",
-        "Resolve a non-canonical companion name on the server. Matching precedence"
-        " is normalized exact canonical id, unique alias, unique display name,"
-        " then family default; otherwise the result is ambiguous or not_found."
-        " Usually start_session should be called first because it already tries"
-        " an exact canonical id before falling back to this resolver.",
-        {"query": {"type": "string", "description": "Companion id, alias, display name, or family id."}},
-        ["query"],
-    ),
+    # resolve_companion intentionally omitted. start_session keeps its private
+    # resolver fallback, so routing behavior remains unchanged without a raw
+    # profile-resolution read surface.
     _tool(
         "discover_companions",
         "Discover Companions",
@@ -587,15 +581,8 @@ MCP_TOOLS = [
         {"approval_id": {"type": "string"}},
         ["approval_id"],
     ),
-    _tool(
-        "update_own_description",
-        "Update Own Description",
-        "Update your own discovery description (max 200 characters) and optional"
-        " emoji signature (max 5 characters) — self-service, no approval.",
-        {"profile_id": _PROFILE_ID, "description": {"type": "string", "maxLength": 200},
-         "signature": {"type": "string", "maxLength": 5}},
-        ["profile_id"],
-    ),
+    # update_own_description intentionally omitted. The implementation stays
+    # for legacy administrative callers, but is not registered with MCP.
     _tool(
         "remember",
         "Remember",
@@ -950,8 +937,7 @@ MCP_TOOLS = [
 ]
 
 _HIDDEN_MCP_TOOLS = {
-    "whoami", "resolve_companion", "list_profiles", "boot_profile",
-    "update_own_description", "create_project",
+    "whoami", "list_profiles", "boot_profile", "create_project",
     "list_projects", "join_project", "leave_project", "add_project_record",
     "query_project_records",
 }
@@ -1119,8 +1105,8 @@ class MCPToolRunner:
     def call(self, name: str, arguments: dict[str, Any]) -> Any:
         if name == "whoami":
             return self.bridge.whoami()
-        if name == "resolve_companion":
-            return self.bridge.resolve_companion(arguments["query"])
+        # No direct resolve_companion dispatch: resolution is private to the
+        # start_session fallback below.
         if name in {"discover_companions", "list_profiles"}:
             return self.bridge.list_profiles()
         if name == "boot_profile":
@@ -1153,10 +1139,8 @@ class MCPToolRunner:
             return self.bridge.propose_prompt_edit(arguments["profile_id"], **prompt_args)
         if name == "retract_approval":
             return self.bridge.retract_approval(arguments["approval_id"])
-        if name == "update_own_description":
-            return self.bridge.update_own_description(
-                arguments["profile_id"], arguments.get("description"),
-                arguments.get("signature"))
+        # No update_own_description dispatch: legacy implementation retained
+        # outside the companion-callable MCP registry.
         if name == "remember":
             return self.bridge.remember(
                 arguments["profile_id"],

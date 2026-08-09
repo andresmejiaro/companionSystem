@@ -32,6 +32,9 @@ def test_profile_discovery_metadata_and_startup_routing_guidance(client):
     assert updated.json()["description"] == "Plans trips."
     assert updated.json()["signature"] == "✈️"
 
+    booted = client.post("/profiles/travel/boot").json()
+    assert "description" not in booted["profile"]
+
     session = client.post("/profiles/tara/session").json()
     assert session["system_contracts"]["companion"].startswith("# Companion contract")
     assert "search_context" in session["system_contracts"]["companion"]
@@ -206,6 +209,7 @@ def test_session_inspect_matches_start_session_shape_when_auth_is_disabled(clien
             "memories", "recent_exchanges", "you_got_mail", "server_time",
             "system_contracts", "companion_directory", "data_sources"} <= set(body)
     assert body["you_got_mail"] is False
+    assert "description" not in body["profile"]
     assert "last_closeouts" not in body
 
 

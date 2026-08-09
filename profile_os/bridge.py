@@ -91,12 +91,16 @@ _PID = {"type": "string", "description": "assistant profile id, e.g. 'tara'"}
 
 BRIDGE_OUTPUT_SCHEMAS = {
     "whoami": IDENTITY,
-    "resolve_companion": PROFILE_RESOLUTION,
+    # Legacy implementation retained for start_session's internal fallback;
+    # it is intentionally no longer registered as a companion-callable tool.
+    # "resolve_companion": PROFILE_RESOLUTION,
     "boot": BOOT,
     "start_session": START_SESSION,
     "propose_prompt_edit": APPROVAL,
     "retract_approval": APPROVAL,
-    "update_own_description": PROFILE,
+    # Legacy admin compatibility remains on ToolBridge, but companions no
+    # longer receive a callable path to the obsolete description field.
+    # "update_own_description": PROFILE,
     "remember": MEMORY_EVENT,
     "search_memories": array_of(MEMORY_EVENT),
     "search_context": array_of(CONTEXT_RESULT),
@@ -136,9 +140,8 @@ TOOLS = [
                     " your memory on conflict — file wins, drift gets logged"
                     " by the human. Call this when unsure about personal facts.",
           {}, []),
-    _tool("resolve_companion",
-          "Resolve a companion query using exact id, alias, display name, then family default.",
-          {"query": {"type": "string"}}, ["query"]),
+    # resolve_companion intentionally not exposed. start_session performs the
+    # same resolution internally after an exact canonical-id miss.
     _tool("boot", "Boot a profile: compact state, prompts, recent memories.",
           {"profile_id": _PID}, ["profile_id"]),
     _tool("start_session", "Call this on your first response in a conversation instead"
@@ -160,11 +163,8 @@ TOOLS = [
           ["profile_id"]),
     _tool("retract_approval", "Retract your own pending approval proposal.",
           {"approval_id": {"type": "string"}}, ["approval_id"]),
-    _tool("update_own_description", "Update your own discovery description (max 200 characters)"
-                                   " and optional emoji signature (max 5 characters)"
-                                   " — self-service, no approval.",
-          {"profile_id": _PID, "description": {"type": "string"},
-           "signature": {"type": "string"}}, ["profile_id"]),
+    # update_own_description intentionally not exposed. The legacy method and
+    # backend route remain available to administrative clients.
     _tool("remember", "Append a memory event to a profile.",
           {"profile_id": _PID,
            "kind": {"type": "string", "enum": MEMORY_KINDS,
