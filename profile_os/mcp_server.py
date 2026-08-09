@@ -491,6 +491,11 @@ _OPEN_WORLD_TOOLS = {"send_message", "join_project", "leave_project",
                      "add_project_record", "query_project_records"}
 _DESTRUCTIVE_TOOLS = {"forget", "delete_file", "delete_record"}
 _IDEMPOTENT_TOOLS = {"mark_message_read", "leave_project"}
+_SHARED_PROJECT_TOOLS = {
+    "create_project", "list_projects", "join_project", "leave_project",
+    "add_project_record", "query_project_records",
+}
+_SHARED_PROJECT_PROFILES = {"vertice", "red_vertice", "lumenis"}
 TOOL_ANNOTATIONS = {
     name: {
         "readOnlyHint": name in _READ_ONLY_TOOLS,
@@ -897,38 +902,38 @@ MCP_TOOLS = [
     ),
     _tool(
         "create_project", "Create Shared Project",
-        "Propose a shared schema-enforced project. Human TOTP approval is required; return the approval link.",
+        "Vertice, Red Vertice, and Lumenis only. Propose a shared schema-enforced project. Human TOTP approval is required; return the approval link.",
         {"profile_id": _PROFILE_ID, "name": {"type": "string"},
          "purpose": {"type": "string"}, "schema": {"$ref": "#/$defs/DynamicSchema"}},
         ["profile_id", "name", "purpose", "schema"],
     ),
     _tool(
         "list_projects", "List Shared Projects",
-        "List projects this companion belongs to, or all available projects it may request to join.",
+        "Vertice, Red Vertice, and Lumenis only. List projects this companion belongs to, or all available projects it may request to join.",
         {"profile_id": _PROFILE_ID, "available": {"type": "boolean", "default": False}},
         ["profile_id"],
     ),
     _tool(
         "join_project", "Join Shared Project",
-        "Request membership in a project. Human TOTP approval is required; return the approval link.",
+        "Vertice, Red Vertice, and Lumenis only. Request membership in a project. Human TOTP approval is required; return the approval link.",
         {"profile_id": _PROFILE_ID, "project_id": {"type": "string"}},
         ["profile_id", "project_id"],
     ),
     _tool(
         "leave_project", "Leave Shared Project",
-        "Leave a shared project immediately; no TOTP approval is required.",
+        "Vertice, Red Vertice, and Lumenis only. Leave a shared project immediately; no TOTP approval is required.",
         {"profile_id": _PROFILE_ID, "project_id": {"type": "string"}},
         ["profile_id", "project_id"],
     ),
     _tool(
         "add_project_record", "Add Shared Project Record",
-        "Add a schema-validated record to a project this companion belongs to.",
+        "Vertice, Red Vertice, and Lumenis only. Add a schema-validated record to a project this companion belongs to.",
         {"profile_id": _PROFILE_ID, "project_id": {"type": "string"},
          "data": {"type": "object"}}, ["profile_id", "project_id", "data"],
     ),
     _tool(
         "query_project_records", "Query Shared Project Records",
-        "Query records in a project this companion belongs to.",
+        "Vertice, Red Vertice, and Lumenis only. Query records in a project this companion belongs to.",
         {"profile_id": _PROFILE_ID, "project_id": {"type": "string"},
          "contains": {"type": "string", "default": ""},
          "limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50}},
@@ -937,9 +942,9 @@ MCP_TOOLS = [
 ]
 
 _HIDDEN_MCP_TOOLS = {
-    "whoami", "list_profiles", "boot_profile", "create_project",
-    "list_projects", "join_project", "leave_project", "add_project_record",
-    "query_project_records",
+    "whoami", "list_profiles", "boot_profile",
+    # Shared-project tools are intentionally advertised. Their profile
+    # allowlist is enforced in MCPToolRunner.call, not by allowed_tools hints.
 }
 MCP_TOOL_NAMES = {tool["name"] for tool in MCP_TOOLS}
 
@@ -1103,6 +1108,13 @@ class MCPToolRunner:
         self.bridge = bridge
 
     def call(self, name: str, arguments: dict[str, Any]) -> Any:
+        if (name in _SHARED_PROJECT_TOOLS
+                and arguments.get("profile_id") not in _SHARED_PROJECT_PROFILES):
+            allowed = ", ".join(sorted(_SHARED_PROJECT_PROFILES))
+            raise ToolBridgeError(
+                403,
+                f"{name} is enabled only for profiles: {allowed}",
+            )
         if name == "whoami":
             return self.bridge.whoami()
         # No direct resolve_companion dispatch: resolution is private to the

@@ -194,6 +194,14 @@ definition and re-propose the same name — version increments and the new
 schema needs its own approval. No data migrations; old records keep their
 `schema_version`.
 
+## Shared project stores
+
+The remote MCP advertises `create_project`, `list_projects`, `join_project`,
+`leave_project`, `add_project_record`, and `query_project_records`. These tools
+are server-side restricted to the `vertice`, `red_vertice`, and `lumenis`
+profiles. Project creation and joining require human TOTP approval; record
+access additionally requires active project membership.
+
 ## Domain stores (legacy, slice zero — schemaless; superseded by dynamic stores)
 
 - `GET /profiles/{id}/domain` → list of store names, e.g. `["meals","products"]`
