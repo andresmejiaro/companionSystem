@@ -133,6 +133,8 @@ def test_root_directory_and_admin_shortcuts(client, monkeypatch):
     assert 'href="/companions/new"' in directory.text
     assert 'href="/settings"' in directory.text
     assert 'href="/question-practice"' in directory.text
+    assert 'href="https://rumbo.datacodemath.com/forum/"' in directory.text
+    assert "Open the companion forum with its own authenticator check." in directory.text
     assert 'href="https://companions.example.test/session-inspector"' in directory.text
     assert "View the hydrated session packet for a companion." in directory.text
 
