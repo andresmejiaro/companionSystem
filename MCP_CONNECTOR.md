@@ -33,6 +33,8 @@ Exposed MCP tools:
 - `read_file`
 - `get_ironsworn_move` (full move text from the profile's Lodestar index/compendium)
 - `get_ironsworn_oracle` (full oracle text from the profile's Lodestar index/omnibus)
+- `get_ironsworn_sheet` / `update_ironsworn_sheet` (rule-free exact sheet reads and assignments)
+- `roll_ironsworn_dice` (one raw d6 and two raw d10s; no modifiers or mutations)
 - `delete_file`
 - `closeout`
 - `list_stores`

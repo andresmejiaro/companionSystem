@@ -53,6 +53,8 @@ from .tool_schemas import (
     IDENTITY,
     IRONSWORN_MOVE,
     IRONSWORN_ORACLE,
+    IRONSWORN_SHEET,
+    IRONSWORN_DICE,
     MEMORY_EVENT,
     MEMORY_KINDS,
     MESSAGE,
@@ -456,6 +458,9 @@ MCP_OUTPUT_SCHEMAS = {
     "read_file": FILE_CONTENT,
     "get_ironsworn_move": IRONSWORN_MOVE,
     "get_ironsworn_oracle": IRONSWORN_ORACLE,
+    "get_ironsworn_sheet": IRONSWORN_SHEET,
+    "update_ironsworn_sheet": IRONSWORN_SHEET,
+    "roll_ironsworn_dice": IRONSWORN_DICE,
     "delete_file": DELETED_FILE,
     "closeout": CLOSEOUT,
     "prepare_closeout": PREPARE_CLOSEOUT,
@@ -489,6 +494,7 @@ _READ_ONLY_TOOLS = {
     "boot_profile", "start_session", "search_memories", "search_context",
     "read_inbox", "list_files", "read_file", "get_ironsworn_move",
     "get_ironsworn_oracle", "list_stores", "query_records",
+    "get_ironsworn_sheet", "roll_ironsworn_dice",
     "filter_records", "draw_exam_questions", "diagnose_exam_weaknesses", "get_record", "list_projects", "query_project_records",
     "prepare_closeout",
 }
@@ -745,6 +751,36 @@ MCP_TOOLS = [
             },
         },
         ["profile_id", "oracle_name"],
+    ),
+    _tool(
+        "get_ironsworn_sheet",
+        "Get Ironsworn Sheet",
+        "Read Oak's complete editable JSON sheet. This tool applies no game rules.",
+        {"profile_id": _PROFILE_ID},
+        ["profile_id"],
+    ),
+    _tool(
+        "update_ironsworn_sheet",
+        "Update Ironsworn Sheet",
+        "Set exact existing sheet values by dotted path. Every value is editable."
+        " Applies no arithmetic, caps, burn behavior, move outcomes, or other rules.",
+        {
+            "profile_id": _PROFILE_ID,
+            "updates": {
+                "type": "object",
+                "additionalProperties": True,
+                "description": "Exact assignments such as {'momentum': 3, 'vows.find_joy.ticks': 2}.",
+            },
+        },
+        ["profile_id", "updates"],
+    ),
+    _tool(
+        "roll_ironsworn_dice",
+        "Roll Ironsworn Dice",
+        "Roll and report one raw d6 and two raw d10s. Returns no modifiers,"
+        " score, hit category, burn advice, or sheet mutation.",
+        {"profile_id": _PROFILE_ID},
+        ["profile_id"],
     ),
     _tool(
         "delete_file",
@@ -1268,6 +1304,13 @@ class MCPToolRunner:
         if name == "get_ironsworn_oracle":
             return self.bridge.get_ironsworn_oracle(
                 arguments["profile_id"], arguments["oracle_name"])
+        if name == "get_ironsworn_sheet":
+            return self.bridge.get_ironsworn_sheet(arguments["profile_id"])
+        if name == "update_ironsworn_sheet":
+            return self.bridge.update_ironsworn_sheet(
+                arguments["profile_id"], arguments["updates"])
+        if name == "roll_ironsworn_dice":
+            return self.bridge.roll_ironsworn_dice(arguments["profile_id"])
         if name == "delete_file":
             return self.bridge.delete_file(arguments["profile_id"], arguments["filename"])
         if name == "closeout":

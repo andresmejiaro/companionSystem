@@ -28,6 +28,9 @@ The optional Ironsworn rules surface exposes indexed Lodestar move and oracle
 text through the read-only `get_ironsworn_move` and `get_ironsworn_oracle` MCP
 tools. The generated Markdown corpus lives in the companion's persistent file
 store and is intentionally ignored by git.
+Oak's optional JSON sheet is likewise exposed as exact reads and dotted-path
+assignments. It intentionally encodes no caps, burns, move outcomes, or other
+Ironsworn rules; the raw dice tool returns only one d6 and two d10s.
 
 ## Quick start: local development
 

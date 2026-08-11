@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import json
 import os
 import re
 import secrets
@@ -22,6 +23,7 @@ from zoneinfo import ZoneInfo
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field, field_validator
+from typing import Any
 
 from . import seed
 from .access import AccessControl, AccessError
@@ -95,6 +97,11 @@ class ProfileCreateTotpIn(BaseModel):
 
 class FileWriteIn(BaseModel):
     content: str
+
+
+class IronswornSheetUpdateIn(BaseModel):
+    """Exact, rule-free assignments keyed by dotted sheet paths."""
+    updates: dict[str, Any]
 
 
 class CloseoutIn(BaseModel):
@@ -1056,6 +1063,60 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
             raise HTTPException(404, str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(503, f"Ironsworn oracle source unavailable: {exc}") from exc
+
+    def _read_ironsworn_sheet(profile_id: str) -> tuple[dict, dict]:
+        stored = _wrap(store.read_file, profile_id, "oak-sheet.json")
+        try:
+            sheet = json.loads(stored["content"])
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise HTTPException(503, f"Oak sheet is not valid JSON: {exc}") from exc
+        if not isinstance(sheet, dict):
+            raise HTTPException(503, "Oak sheet root must be a JSON object")
+        return sheet, stored
+
+    @app.get("/profiles/{profile_id}/ironsworn/sheet")
+    def get_ironsworn_sheet(profile_id: str, request: Request):
+        """Read the editable sheet. This endpoint applies no game rules."""
+        _require("search", profile_id, request)
+        sheet, stored = _read_ironsworn_sheet(profile_id)
+        return {"filename": stored["filename"], "updated_at": stored["updated_at"],
+                "sheet": sheet}
+
+    @app.patch("/profiles/{profile_id}/ironsworn/sheet")
+    def update_ironsworn_sheet(profile_id: str, body: IronswornSheetUpdateIn,
+                               request: Request):
+        """Set exact dotted paths without caps, arithmetic, or rule effects."""
+        _require("remember", profile_id, request)
+        sheet, _ = _read_ironsworn_sheet(profile_id)
+        if not body.updates:
+            raise HTTPException(422, "updates must not be empty")
+        for dotted_path, value in body.updates.items():
+            parts = dotted_path.split(".")
+            if not all(parts):
+                raise HTTPException(422, f"invalid sheet path {dotted_path!r}")
+            target = sheet
+            for part in parts[:-1]:
+                child = target.get(part)
+                if not isinstance(child, dict):
+                    raise HTTPException(422, f"sheet path {dotted_path!r} is not editable")
+                target = child
+            if parts[-1] not in target:
+                raise HTTPException(422, f"unknown sheet path {dotted_path!r}")
+            target[parts[-1]] = value
+        stored = _wrap(store.write_file, profile_id, "oak-sheet.json",
+                       json.dumps(sheet, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+        return {"filename": stored["filename"], "updated_at": stored["updated_at"],
+                "sheet": sheet}
+
+    @app.post("/profiles/{profile_id}/ironsworn/dice")
+    def roll_ironsworn_dice(profile_id: str, request: Request):
+        """Roll raw Ironsworn dice. No modifiers, interpretation, or mutation."""
+        _require("search", profile_id, request)
+        _wrap(store.get_profile, profile_id)
+        return {
+            "action_die": secrets.randbelow(6) + 1,
+            "challenge_dice": [secrets.randbelow(10) + 1, secrets.randbelow(10) + 1],
+        }
 
     @app.delete("/profiles/{profile_id}/files/{filename}", status_code=204)
     def delete_file(profile_id: str, filename: str, request: Request):

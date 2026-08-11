@@ -151,6 +151,28 @@ IRONSWORN_ORACLE = {
     "required": ["oracle", "use_for", "text", "source"],
 }
 
+IRONSWORN_SHEET = {
+    "type": "object",
+    "properties": {
+        "filename": {"type": "string"},
+        "updated_at": {"type": "number"},
+        "sheet": {"type": "object"},
+    },
+    "required": ["filename", "updated_at", "sheet"],
+}
+
+IRONSWORN_DICE = {
+    "type": "object",
+    "properties": {
+        "action_die": {"type": "integer", "minimum": 1, "maximum": 6},
+        "challenge_dice": {
+            "type": "array", "minItems": 2, "maxItems": 2,
+            "items": {"type": "integer", "minimum": 1, "maximum": 10},
+        },
+    },
+    "required": ["action_die", "challenge_dice"],
+}
+
 # Session hydration is model context, not a storage export. IDs, tags,
 # timestamps, and profile ids stay on memory lookup/mutation tools.
 HYDRATION_MEMORY = {

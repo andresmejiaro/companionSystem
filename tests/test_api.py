@@ -495,6 +495,50 @@ Interpret the result.
     assert "### Story: Plot Twist" not in response.json()["text"]
 
 
+def test_ironsworn_sheet_is_rule_free_and_fully_editable(client):
+    sheet = {
+        "stats": {"edge": 1, "heart": 2},
+        "health": 5,
+        "momentum": 5,
+        "momentum_reset": 3,
+        "vows": {"find_joy": {"rank": "extreme", "ticks": 1}},
+    }
+    assert client.put("/profiles/tara/files/oak-sheet.json",
+                      json={"content": __import__("json").dumps(sheet)}).status_code == 201
+
+    before = client.get("/profiles/tara/ironsworn/sheet").json()["sheet"]
+    assert before == sheet
+    updated = client.patch("/profiles/tara/ironsworn/sheet", json={"updates": {
+        "stats.edge": 9,
+        "momentum": -23,
+        "momentum_reset": 17,
+        "vows.find_joy.rank": "custom",
+        "vows.find_joy.ticks": 101,
+    }})
+    assert updated.status_code == 200
+    changed = updated.json()["sheet"]
+    assert changed["stats"]["edge"] == 9
+    assert changed["momentum"] == -23  # no implicit cap
+    assert changed["momentum_reset"] == 17
+    assert changed["vows"]["find_joy"] == {"rank": "custom", "ticks": 101}
+
+    unknown = client.patch("/profiles/tara/ironsworn/sheet",
+                           json={"updates": {"rules.auto_burn": True}})
+    assert unknown.status_code == 422
+
+
+def test_ironsworn_dice_are_raw_and_do_not_mutate_sheet(client):
+    client.put("/profiles/tara/files/oak-sheet.json",
+               json={"content": '{"momentum": 5}\n'})
+    rolled = client.post("/profiles/tara/ironsworn/dice")
+    assert rolled.status_code == 200
+    assert set(rolled.json()) == {"action_die", "challenge_dice"}
+    assert 1 <= rolled.json()["action_die"] <= 6
+    assert len(rolled.json()["challenge_dice"]) == 2
+    assert all(1 <= die <= 10 for die in rolled.json()["challenge_dice"])
+    assert client.get("/profiles/tara/ironsworn/sheet").json()["sheet"] == {"momentum": 5}
+
+
 def test_file_store_size_limit(client):
     from profile_os.storage import Store
     too_big = "x" * (Store.MAX_FILE_BYTES + 1)

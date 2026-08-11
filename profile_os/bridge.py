@@ -52,6 +52,8 @@ from .tool_schemas import (
     IDENTITY,
     IRONSWORN_MOVE,
     IRONSWORN_ORACLE,
+    IRONSWORN_SHEET,
+    IRONSWORN_DICE,
     MEMORY_EVENT,
     MEMORY_KINDS,
     MESSAGE,
@@ -116,6 +118,9 @@ BRIDGE_OUTPUT_SCHEMAS = {
     "read_file": FILE_CONTENT,
     "get_ironsworn_move": IRONSWORN_MOVE,
     "get_ironsworn_oracle": IRONSWORN_ORACLE,
+    "get_ironsworn_sheet": IRONSWORN_SHEET,
+    "update_ironsworn_sheet": IRONSWORN_SHEET,
+    "roll_ironsworn_dice": IRONSWORN_DICE,
     "delete_file": DELETED_FILE,
     "closeout": CLOSEOUT,
     "prepare_closeout": PREPARE_CLOSEOUT,
@@ -239,6 +244,20 @@ TOOLS = [
           {"profile_id": _PID,
            "oracle_name": {"type": "string", "description": "Exact oracle name from the index"}},
           ["profile_id", "oracle_name"]),
+    _tool("get_ironsworn_sheet", "Read Oak's editable JSON character sheet."
+                                 " This applies no game rules.",
+          {"profile_id": _PID}, ["profile_id"]),
+    _tool("update_ironsworn_sheet", "Set exact existing fields on Oak's sheet by"
+                                    " dotted path. No arithmetic, caps, burns, move"
+                                    " outcomes, or other rules are applied.",
+          {"profile_id": _PID,
+           "updates": {"type": "object", "additionalProperties": True,
+                       "description": "Exact assignments, e.g. {'momentum': 3, 'vows.find_joy.ticks': 2}"}},
+          ["profile_id", "updates"]),
+    _tool("roll_ironsworn_dice", "Roll one raw d6 action die and two raw d10"
+                                  " challenge dice. Returns no modifiers, score, hit"
+                                  " category, or state change.",
+          {"profile_id": _PID}, ["profile_id"]),
     _tool("delete_file", "Delete a file from your scratch file store.",
           {"profile_id": _PID, "filename": {"type": "string"}},
           ["profile_id", "filename"]),
@@ -496,6 +515,16 @@ class ToolBridge:
     def get_ironsworn_oracle(self, profile_id: str, oracle_name: str):
         return self._request("GET", f"/profiles/{profile_id}/ironsworn/oracle",
                              params={"name": oracle_name})
+
+    def get_ironsworn_sheet(self, profile_id: str):
+        return self._request("GET", f"/profiles/{profile_id}/ironsworn/sheet")
+
+    def update_ironsworn_sheet(self, profile_id: str, updates: dict):
+        return self._request("PATCH", f"/profiles/{profile_id}/ironsworn/sheet",
+                             json={"updates": updates})
+
+    def roll_ironsworn_dice(self, profile_id: str):
+        return self._request("POST", f"/profiles/{profile_id}/ironsworn/dice")
 
     def delete_file(self, profile_id: str, filename: str):
         self._request("DELETE", f"/profiles/{profile_id}/files/{filename}")
