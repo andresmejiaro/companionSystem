@@ -129,6 +129,28 @@ MEMORY_EVENT = {
     "required": ["id", "profile_id", "kind", "content", "tags"],
 }
 
+IRONSWORN_MOVE = {
+    "type": "object",
+    "properties": {
+        "move": {"type": "string"},
+        "when_it_applies": {"type": "string"},
+        "text": {"type": "string"},
+        "source": {"type": "string"},
+    },
+    "required": ["move", "when_it_applies", "text", "source"],
+}
+
+IRONSWORN_ORACLE = {
+    "type": "object",
+    "properties": {
+        "oracle": {"type": "string"},
+        "use_for": {"type": "string"},
+        "text": {"type": "string"},
+        "source": {"type": "string"},
+    },
+    "required": ["oracle", "use_for", "text", "source"],
+}
+
 # Session hydration is model context, not a storage export. IDs, tags,
 # timestamps, and profile ids stay on memory lookup/mutation tools.
 HYDRATION_MEMORY = {

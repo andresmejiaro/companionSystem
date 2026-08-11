@@ -27,6 +27,7 @@ from . import seed
 from .access import AccessControl, AccessError
 from .dynstores import DynamicStores
 from .projects import Projects
+from .ironsworn_rules import MoveNotFoundError, get_move, get_oracle
 from .prompts import companion_contract
 from .questions import QUESTION_PROFILE, QuestionPractice
 from .request_limits import (
@@ -268,6 +269,11 @@ class ApprovalDecideIn(BaseModel):
 
 class AdminVerifyIn(BaseModel):
     secret: str
+    totp_code: str
+
+
+class TotpOnlyVerifyIn(BaseModel):
+    """A live TOTP gate for trusted same-host services."""
     totp_code: str
 
 
@@ -706,6 +712,24 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
             raise HTTPException(401, "invalid, missing, or reused TOTP code")
         return {"ok": True, "principal_id": principal_id}
 
+    @app.post("/admin/verify-totp-only")
+    def admin_verify_totp_only(body: TotpOnlyVerifyIn, request: Request):
+        """Verify the enrolled admin's live TOTP without an admin secret.
+
+        Intended for private same-host browser gates such as The Thread. The
+        route is rate-limited and TOTP replay protection still applies. Keep
+        the backend bound to loopback; do not expose this route through MCP.
+        """
+        client_ip = request.client.host if request.client else "unknown"
+        if _rate_limited(_verify_hits, "totp-only:" + client_ip):
+            raise HTTPException(429, "too many attempts; try again later")
+        principal_id = access.find_totp_admin_principal_id()
+        if principal_id is None:
+            raise HTTPException(403, "no TOTP-enrolled admin found")
+        if not access.verify_totp(principal_id, body.totp_code):
+            raise HTTPException(401, "invalid, missing, or reused TOTP code")
+        return {"ok": True}
+
     @app.get("/profiles/resolve")
     def resolve_profile(q: str, request: Request):
         principal_id = _authenticate(request)
@@ -996,6 +1020,42 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
     def read_file(profile_id: str, filename: str, request: Request):
         _require("search", profile_id, request)
         return _wrap(store.read_file, profile_id, filename)
+
+    @app.get("/profiles/{profile_id}/ironsworn/move")
+    def get_ironsworn_move(profile_id: str, name: str, request: Request):
+        """Return the full Lodestar text for one move named in the index."""
+        _require("search", profile_id, request)
+        _wrap(store.get_profile, profile_id)
+        try:
+            index = _wrap(
+                store.read_file, profile_id, "Ironsworn-Lodestar-Moves-Index.md"
+            )["content"]
+            compendium = _wrap(
+                store.read_file, profile_id, "Ironsworn-Lodestar-Moves-Compendium.md"
+            )["content"]
+            return get_move(name, index_text=index, compendium_text=compendium)
+        except MoveNotFoundError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(503, f"Ironsworn rules source unavailable: {exc}") from exc
+
+    @app.get("/profiles/{profile_id}/ironsworn/oracle")
+    def get_ironsworn_oracle(profile_id: str, name: str, request: Request):
+        """Return the full Lodestar text for one oracle named in the index."""
+        _require("search", profile_id, request)
+        _wrap(store.get_profile, profile_id)
+        try:
+            index = _wrap(
+                store.read_file, profile_id, "Ironsworn-Lodestar-Oracles-Index.md"
+            )["content"]
+            omnibus = _wrap(
+                store.read_file, profile_id, "Ironsworn-Lodestar-Oracle-Omnibus.md"
+            )["content"]
+            return get_oracle(name, index_text=index, omnibus_text=omnibus)
+        except MoveNotFoundError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(503, f"Ironsworn oracle source unavailable: {exc}") from exc
 
     @app.delete("/profiles/{profile_id}/files/{filename}", status_code=204)
     def delete_file(profile_id: str, filename: str, request: Request):

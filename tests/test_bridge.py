@@ -123,6 +123,8 @@ def test_no_tool_bypasses_api_authorization(tmp_path):
         "write_file": {"profile_id": "tara", "filename": "f.txt", "content": "x"},
         "list_files": {"profile_id": "tara"},
         "read_file": {"profile_id": "tara", "filename": "f.txt"},
+        "get_ironsworn_move": {"profile_id": "tara", "move_name": "Face Danger"},
+        "get_ironsworn_oracle": {"profile_id": "tara", "oracle_name": "CORE: ACTION"},
         "delete_file": {"profile_id": "tara", "filename": "f.txt"},
         "search_memories": {"profile_id": "tara", "query": "x"},
         "search_context": {"profile_id": "tara", "query": "x"},

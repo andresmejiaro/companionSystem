@@ -24,6 +24,11 @@ Data is deliberately simple and inspectable: SQLite for application data,
 Markdown files for prompts, JSONL closeout logs, and plain files under the
 configured data directory.
 
+The optional Ironsworn rules surface exposes indexed Lodestar move and oracle
+text through the read-only `get_ironsworn_move` and `get_ironsworn_oracle` MCP
+tools. The generated Markdown corpus lives in the companion's persistent file
+store and is intentionally ignored by git.
+
 ## Quick start: local development
 
 Requirements: Python 3.12+ (the repository environment is supported) and

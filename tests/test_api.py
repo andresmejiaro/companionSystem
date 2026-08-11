@@ -416,6 +416,85 @@ def test_file_store_path_traversal_rejected(client, tmp_path):
     assert not (tmp_path / "direct" / "profiles" / "escaped").exists()
 
 
+def test_get_indexed_ironsworn_move(client):
+    index = """| Move | When it applies | Line |
+| --- | --- | ---: |
+| Face Danger | Risk. | 1 |
+| Secure an Advantage | Prepare. | 5 |
+| Gather Information | Investigate. | 9 |
+| Face Danger (Scene Challenge Mode) | Risk in a scene. | 13 |
+"""
+    compendium = """### Face Danger
+
+Full danger text.
+
+### Secure an Advantage
+
+On a strong hit, you gain advantage.
+
+### Gather Information
+
+Full gather text.
+
+### Face Danger (Scene Challenge Mode)
+
+Full scene danger text.
+"""
+    assert client.put("/profiles/tara/files/Ironsworn-Lodestar-Moves-Index.md",
+                      json={"content": index}).status_code == 201
+    assert client.put("/profiles/tara/files/Ironsworn-Lodestar-Moves-Compendium.md",
+                      json={"content": compendium}).status_code == 201
+    move = client.get(
+        "/profiles/tara/ironsworn/move", params={"name": "Secure an Advantage"}
+    )
+    assert move.status_code == 200
+    assert move.json()["move"] == "Secure an Advantage"
+    assert move.json()["text"].startswith("### Secure an Advantage\n")
+    assert "On a strong hit, you gain advantage." in move.json()["text"]
+    assert "### Gather Information" not in move.json()["text"]
+
+    scene = client.get(
+        "/profiles/tara/ironsworn/move",
+        params={"name": "Face Danger (Scene Challenge Mode)"},
+    )
+    assert scene.status_code == 200
+    assert scene.json()["text"].startswith("### Face Danger (Scene Challenge Mode)")
+
+    missing = client.get(
+        "/profiles/tara/ironsworn/move", params={"name": "Face A Sandwich"}
+    )
+    assert missing.status_code == 404
+
+
+def test_get_indexed_ironsworn_oracle(client):
+    index = """| Oracle | Use for | Line |
+| --- | --- | ---: |
+| CORE: ACTION | Generate an action. | 1 |
+| STORY: PLOT TWIST | Generate a surprise. | 7 |
+"""
+    omnibus = """### Core: Action
+
+- 1 Scheme
+
+#### Guidance
+Interpret the result.
+### Story: Plot Twist
+
+- 1 It was a diversion
+"""
+    client.put("/profiles/tara/files/Ironsworn-Lodestar-Oracles-Index.md",
+               json={"content": index})
+    client.put("/profiles/tara/files/Ironsworn-Lodestar-Oracle-Omnibus.md",
+               json={"content": omnibus})
+    response = client.get(
+        "/profiles/tara/ironsworn/oracle", params={"name": "CORE: ACTION"}
+    )
+    assert response.status_code == 200
+    assert response.json()["oracle"] == "CORE: ACTION"
+    assert "#### Guidance" in response.json()["text"]
+    assert "### Story: Plot Twist" not in response.json()["text"]
+
+
 def test_file_store_size_limit(client):
     from profile_os.storage import Store
     too_big = "x" * (Store.MAX_FILE_BYTES + 1)

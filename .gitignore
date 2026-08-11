@@ -8,3 +8,6 @@ data/
 # personal identity/canonical-facts files — never committed, VPS-only
 quien_soy*
 *identity*.md
+
+# Generated Lodestar corpus lives in each companion's persistent file store.
+/Ironsworn-Lodestar-*.md

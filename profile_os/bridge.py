@@ -50,6 +50,8 @@ from .tool_schemas import (
     FILE_CONTENT,
     FILE_META,
     IDENTITY,
+    IRONSWORN_MOVE,
+    IRONSWORN_ORACLE,
     MEMORY_EVENT,
     MEMORY_KINDS,
     MESSAGE,
@@ -112,6 +114,8 @@ BRIDGE_OUTPUT_SCHEMAS = {
     "write_file": FILE_META,
     "list_files": array_of(FILE_META),
     "read_file": FILE_CONTENT,
+    "get_ironsworn_move": IRONSWORN_MOVE,
+    "get_ironsworn_oracle": IRONSWORN_ORACLE,
     "delete_file": DELETED_FILE,
     "closeout": CLOSEOUT,
     "prepare_closeout": PREPARE_CLOSEOUT,
@@ -223,6 +227,18 @@ TOOLS = [
     _tool("read_file", "Read a file from your scratch file store.",
           {"profile_id": _PID, "filename": {"type": "string"}},
           ["profile_id", "filename"]),
+    _tool("get_ironsworn_move", "Return the full authoritative Lodestar text for"
+                                " one move. Read the move index file at session start,"
+                                " then call this before applying a move's rules.",
+          {"profile_id": _PID,
+           "move_name": {"type": "string", "description": "Exact move name from the index"}},
+          ["profile_id", "move_name"]),
+    _tool("get_ironsworn_oracle", "Return the full authoritative Lodestar text for"
+                                  " one oracle. Read the oracle index at session start"
+                                  " and pass its exact indexed name.",
+          {"profile_id": _PID,
+           "oracle_name": {"type": "string", "description": "Exact oracle name from the index"}},
+          ["profile_id", "oracle_name"]),
     _tool("delete_file", "Delete a file from your scratch file store.",
           {"profile_id": _PID, "filename": {"type": "string"}},
           ["profile_id", "filename"]),
@@ -472,6 +488,14 @@ class ToolBridge:
 
     def read_file(self, profile_id: str, filename: str):
         return self._request("GET", f"/profiles/{profile_id}/files/{filename}")
+
+    def get_ironsworn_move(self, profile_id: str, move_name: str):
+        return self._request("GET", f"/profiles/{profile_id}/ironsworn/move",
+                             params={"name": move_name})
+
+    def get_ironsworn_oracle(self, profile_id: str, oracle_name: str):
+        return self._request("GET", f"/profiles/{profile_id}/ironsworn/oracle",
+                             params={"name": oracle_name})
 
     def delete_file(self, profile_id: str, filename: str):
         self._request("DELETE", f"/profiles/{profile_id}/files/{filename}")

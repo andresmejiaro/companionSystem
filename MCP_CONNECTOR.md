@@ -31,6 +31,8 @@ Exposed MCP tools:
 - `write_file`
 - `list_files`
 - `read_file`
+- `get_ironsworn_move` (full move text from the profile's Lodestar index/compendium)
+- `get_ironsworn_oracle` (full oracle text from the profile's Lodestar index/omnibus)
 - `delete_file`
 - `closeout`
 - `list_stores`

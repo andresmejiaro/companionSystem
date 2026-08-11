@@ -51,6 +51,8 @@ from .tool_schemas import (
     FILE_CONTENT,
     FILE_META,
     IDENTITY,
+    IRONSWORN_MOVE,
+    IRONSWORN_ORACLE,
     MEMORY_EVENT,
     MEMORY_KINDS,
     MESSAGE,
@@ -452,6 +454,8 @@ MCP_OUTPUT_SCHEMAS = {
     "write_file": FILE_META,
     "list_files": mcp_items(FILE_META),
     "read_file": FILE_CONTENT,
+    "get_ironsworn_move": IRONSWORN_MOVE,
+    "get_ironsworn_oracle": IRONSWORN_ORACLE,
     "delete_file": DELETED_FILE,
     "closeout": CLOSEOUT,
     "prepare_closeout": PREPARE_CLOSEOUT,
@@ -483,7 +487,8 @@ MCP_OUTPUT_SCHEMAS = {
 _READ_ONLY_TOOLS = {
     "whoami", "resolve_companion", "discover_companions", "list_profiles",
     "boot_profile", "start_session", "search_memories", "search_context",
-    "read_inbox", "list_files", "read_file", "list_stores", "query_records",
+    "read_inbox", "list_files", "read_file", "get_ironsworn_move",
+    "get_ironsworn_oracle", "list_stores", "query_records",
     "filter_records", "draw_exam_questions", "diagnose_exam_weaknesses", "get_record", "list_projects", "query_project_records",
     "prepare_closeout",
 }
@@ -710,6 +715,36 @@ MCP_TOOLS = [
         "Read a file from your scratch file store.",
         {"profile_id": _PROFILE_ID, "filename": {"type": "string"}},
         ["profile_id", "filename"],
+    ),
+    _tool(
+        "get_ironsworn_move",
+        "Get Ironsworn Move",
+        "Return the full authoritative Lodestar text for one move. For Aster GM:"
+        " read the stored move index at session start, then call this tool before"
+        " resolving or explaining a move. Do not reconstruct move outcomes from memory.",
+        {
+            "profile_id": _PROFILE_ID,
+            "move_name": {
+                "type": "string",
+                "description": "Exact move name from Ironsworn-Lodestar-Moves-Index.md",
+            },
+        },
+        ["profile_id", "move_name"],
+    ),
+    _tool(
+        "get_ironsworn_oracle",
+        "Get Ironsworn Oracle",
+        "Return the full authoritative Lodestar text for one oracle. For Aster GM:"
+        " read the stored oracle index at session start and pass the exact indexed"
+        " name. Do not reconstruct oracle tables from memory.",
+        {
+            "profile_id": _PROFILE_ID,
+            "oracle_name": {
+                "type": "string",
+                "description": "Exact oracle name from Ironsworn-Lodestar-Oracles-Index.md",
+            },
+        },
+        ["profile_id", "oracle_name"],
     ),
     _tool(
         "delete_file",
@@ -1227,6 +1262,12 @@ class MCPToolRunner:
             return self.bridge.list_files(arguments["profile_id"])
         if name == "read_file":
             return self.bridge.read_file(arguments["profile_id"], arguments["filename"])
+        if name == "get_ironsworn_move":
+            return self.bridge.get_ironsworn_move(
+                arguments["profile_id"], arguments["move_name"])
+        if name == "get_ironsworn_oracle":
+            return self.bridge.get_ironsworn_oracle(
+                arguments["profile_id"], arguments["oracle_name"])
         if name == "delete_file":
             return self.bridge.delete_file(arguments["profile_id"], arguments["filename"])
         if name == "closeout":

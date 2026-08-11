@@ -192,6 +192,22 @@ class FakeBridge:
             },
         }
 
+    def get_ironsworn_move(self, profile_id, move_name):
+        return {
+            "move": move_name,
+            "when_it_applies": "When the indexed trigger applies.",
+            "text": f"### {move_name}\n\nFull move text.",
+            "source": "Ironsworn-Lodestar-Moves-Compendium.md",
+        }
+
+    def get_ironsworn_oracle(self, profile_id, oracle_name):
+        return {
+            "oracle": oracle_name,
+            "use_for": "Generate something.",
+            "text": f"### {oracle_name}\n\nFull oracle text.",
+            "source": "Ironsworn-Lodestar-Oracle-Omnibus.md",
+        }
+
     def remember(self, profile_id, kind, content, tags=None):
         event = {
             "id": "mem-1", "created_at": 1,
@@ -431,7 +447,7 @@ def test_initialize_and_list_tools(tmp_path, monkeypatch):
     assert r.status_code == 200
     tools = r.json()["result"]["tools"]
     names = {tool["name"] for tool in tools}
-    assert len(names) == 40
+    assert len(names) == 42
     assert {"prepare_closeout", "closeout", "search_memories"} <= names
     assert {"create_project", "list_projects", "join_project", "leave_project",
             "add_project_record", "query_project_records"} <= names
@@ -470,7 +486,7 @@ def test_list_tools_can_omit_output_schemas(tmp_path, monkeypatch):
     r = client.post("/mcp", json=_rpc("tools/list"), headers=_bearer())
     assert r.status_code == 200
     tools = r.json()["result"]["tools"]
-    assert len(tools) == 40
+    assert len(tools) == 42
     for tool in tools:
         assert set(tool) == {"name", "title", "description", "inputSchema", "annotations"}
 
@@ -673,6 +689,12 @@ def test_successful_structured_content_matches_declared_output_schema():
     call_and_validate("remember", {"profile_id": "tara", "kind": "note", "content": "x"})
     call_and_validate("search_memories", {"profile_id": "tara", "query": "x"})
     call_and_validate("search_context", {"profile_id": "tara", "query": "x"})
+    call_and_validate("get_ironsworn_move", {
+        "profile_id": "tara", "move_name": "Face Danger",
+    })
+    call_and_validate("get_ironsworn_oracle", {
+        "profile_id": "tara", "oracle_name": "CORE: ACTION",
+    })
     call_and_validate("prepare_closeout", {"profile_id": "tara"})
     call_and_validate("closeout", {"profile_id": "tara", "facts": "f", "texture": "t", "exchange": "u"})
     call_and_validate("propose_store", {"profile_id": "tara", "name": "items", "purpose": "p",

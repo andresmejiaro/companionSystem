@@ -290,6 +290,25 @@ def test_admin_verify_totp_route(auth_client, clock):
     assert "authorization" not in {k.lower() for k in ok.request.headers}
 
 
+def test_admin_verify_totp_only_uses_enrolled_admin(auth_client, clock):
+    client, access, admin_id = auth_client
+    totp = _enroll_and_confirm(access, admin_id, clock)
+
+    code = clock.next_code(totp)
+    ok = client.post("/admin/verify-totp-only", json={"totp_code": code})
+    assert ok.status_code == 200
+    assert ok.json() == {"ok": True}
+
+    replay = client.post("/admin/verify-totp-only", json={"totp_code": code})
+    assert replay.status_code == 401
+
+
+def test_admin_verify_totp_only_requires_enrolled_admin(auth_client):
+    client, access, admin_id = auth_client
+    response = client.post("/admin/verify-totp-only", json={"totp_code": "000000"})
+    assert response.status_code == 403
+
+
 def test_admin_verify_totp_requires_approvals_decide_grant(tmp_path, clock):
     from profile_os.access import AccessControl
     from profile_os.storage import Store
