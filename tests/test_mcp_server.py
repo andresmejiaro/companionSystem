@@ -881,6 +881,17 @@ def test_oauth_metadata_dcr_pkce_and_bearer_use(tmp_path):
     assert params["state"] == ["state-1"]
     code = params["code"][0]
 
+    # Go's OAuth client probes HTTP Basic auth first without client_id in the
+    # form, then retries as a public client. The probe must not burn the code.
+    probe = client.post("/oauth/token", data={
+        "grant_type": "authorization_code",
+        "redirect_uri": redirect_uri,
+        "code": code,
+        "code_verifier": verifier,
+    })
+    assert probe.status_code == 400
+    assert probe.json()["error"] == "invalid_client"
+
     token = client.post("/oauth/token", data={
         "grant_type": "authorization_code",
         "client_id": client_id,

@@ -1102,6 +1102,32 @@ class OAuthState:
             return None
         return item
 
+    def exchange_code(
+        self,
+        code: str,
+        client_id: str,
+        redirect_uri: str,
+        code_challenge: str,
+    ) -> tuple[OAuthCode | None, str | None]:
+        """Validate and consume an authorization code atomically.
+
+        OAuth clients may probe token authentication styles before retrying
+        with public-client credentials in the body. A failed probe must not
+        burn the one-time code; only a fully valid exchange does.
+        """
+        with self._lock:
+            item = self._codes.get(code)
+            if item is None or item.expires_at < time.time():
+                return None, "invalid_grant"
+            if client_id != item.client_id:
+                return None, "invalid_client"
+            if redirect_uri != item.redirect_uri:
+                return None, "invalid_grant"
+            if not hmac.compare_digest(code_challenge, item.code_challenge):
+                return None, "invalid_grant"
+            self._codes.pop(code, None)
+            return item, None
+
 
 class MCPToolRunner:
     def __init__(self, bridge: ToolBridge):
@@ -1872,17 +1898,17 @@ def create_mcp_app(
             return JSONResponse({"error": "invalid_request"}, status_code=400)
         if data.get("grant_type") != "authorization_code":
             return JSONResponse({"error": "unsupported_grant_type"}, status_code=400)
-        code = app.state.oauth.consume_code(str(data.get("code") or ""))
-        if code is None:
-            return JSONResponse({"error": "invalid_grant"}, status_code=400)
-        if data.get("client_id") != code.client_id:
-            return JSONResponse({"error": "invalid_client"}, status_code=400)
-        if data.get("redirect_uri") != code.redirect_uri:
-            return JSONResponse({"error": "invalid_grant"}, status_code=400)
         verifier = str(data.get("code_verifier") or "")
         challenge = _b64url(hashlib.sha256(verifier.encode("ascii")).digest())
-        if not verifier or not hmac.compare_digest(challenge, code.code_challenge):
-            return JSONResponse({"error": "invalid_grant"}, status_code=400)
+        code, error = app.state.oauth.exchange_code(
+            str(data.get("code") or ""),
+            str(data.get("client_id") or ""),
+            str(data.get("redirect_uri") or ""),
+            challenge if verifier else "",
+        )
+        if error is not None:
+            return JSONResponse({"error": error}, status_code=400)
+        assert code is not None
         now = int(time.time())
         token = _sign_token(settings, {
             "iss": _issuer_url(settings, request),
