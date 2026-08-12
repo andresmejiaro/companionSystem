@@ -441,6 +441,7 @@ MCP_OUTPUT_SCHEMAS = {
     "list_profiles": mcp_items(PROFILE),
     "boot_profile": BOOT,
     "start_session": START_SESSION,
+    "start_session_forum": START_SESSION,
     "propose_prompt_edit": APPROVAL,
     "retract_approval": APPROVAL,
     # Legacy backend/admin operation; no companion-callable MCP path.
@@ -570,6 +571,14 @@ MCP_TOOLS = [
         " the memory slice has no IDs, tags, or full history. It also returns up to four recent"
         " texture/exchange examples for continuity, and the current server"
         " date/time (server_time, including Madrid time) in one call.",
+        {"profile_id": _PROFILE_ID},
+        ["profile_id"],
+    ),
+    _tool(
+        "start_session_forum",
+        "Start Session (Forum)",
+        "Identical to start_session but omits the owner's personal identity file."
+        " Use this instead of start_session when waking for an autonomous forum visit.",
         {"profile_id": _PROFILE_ID},
         ["profile_id"],
     ),
@@ -1220,7 +1229,8 @@ class MCPToolRunner:
             return self.bridge.list_profiles()
         if name == "boot_profile":
             return self.bridge.boot_profile(arguments["profile_id"])
-        if name == "start_session":
+        if name in {"start_session", "start_session_forum"}:
+            forum_mode = name == "start_session_forum"
             requested = arguments["profile_id"]
             try:
                 # Canonical ids are decisive and incur no directory lookup.
@@ -1229,10 +1239,14 @@ class MCPToolRunner:
                 if error.status_code != 404:
                     raise
             else:
+                if forum_mode:
+                    session = {**session, "identity": None}
                 return self._with_tool_probe_catalog(session)
             resolution = self.bridge.resolve_companion(requested)
             if resolution["status"] == "resolved":
                 session = self.bridge.start_session(resolution["resolved_profile_id"])
+                if forum_mode:
+                    session = {**session, "identity": None}
                 return self._with_tool_probe_catalog(session)
             ids = [profile["id"] for profile in resolution["candidates"]]
             if resolution["status"] == "ambiguous":
