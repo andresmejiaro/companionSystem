@@ -100,7 +100,9 @@ second, lighter path: a public link, TOTP code only, no admin secret.
 - `propose_store` (MCP tool / `POST /profiles/{id}/stores`) returns an
   `approval_id` for pending schema proposals; the MCP tool response also
   includes `approval_link` when `MCP_PUBLIC_BASE_URL` is set. The link
-  targets that exact schema proposal row, not just the store name.
+  targets that exact schema proposal row, not just the store name. Repeating
+  a pending proposal with the same name revises it for the original proposer,
+  retracting the old approval and creating a replacement link.
 - `GET /approvals/{id}` on the **mcp** service (public, no auth at the
   HTTP layer — same principle as the OAuth consent screen) renders the
   proposed prompt edit or schema and a form asking only for a 6-digit code.

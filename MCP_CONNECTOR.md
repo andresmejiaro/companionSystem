@@ -140,7 +140,9 @@ This matters for OAuth audience validation: issued access tokens are scoped to
     allowed tools.
 
 After startup, Claude can call `remember`, `search_context`, `closeout`,
-`list_stores`, `propose_store`, `query_records`, and `add_record`. Record
+`list_stores`, `propose_store`, `query_records`, and `add_record`. Re-submit
+the same pending store name with `propose_store` to revise your own proposal;
+the old approval link is retired and replaced. Record
 writes still require a backend-approved dynamic store; pending/rejected/
 archived stores are rejected by the backend. Pending schema proposals include
 an `approval_link` when `MCP_PUBLIC_BASE_URL` is set, so the companion can

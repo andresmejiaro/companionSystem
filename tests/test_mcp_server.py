@@ -458,13 +458,14 @@ def test_initialize_and_list_tools(tmp_path, monkeypatch):
     assert r.status_code == 200
     tools = r.json()["result"]["tools"]
     names = {tool["name"] for tool in tools}
-    assert len(names) == 45
+    assert len(names) == 42
     assert {"prepare_closeout", "closeout", "search_memories"} <= names
     assert {"create_project", "list_projects", "join_project", "leave_project",
             "add_project_record", "query_project_records"} <= names
     assert not names & {"whoami", "resolve_companion", "list_profiles",
                         "boot_profile", "start_session", "start_session_forum",
-                        "update_own_description"}
+                        "update_own_description", "retract_approval",
+                        "update_pending_store", "withdraw_pending_store"}
     assert not names & {"approve_store", "reject_store", "archive_store", "audit"}
     for tool in tools:
         assert set(tool) == {"name", "title", "description", "inputSchema", "outputSchema", "annotations"}
@@ -500,7 +501,7 @@ def test_list_tools_can_omit_output_schemas(tmp_path, monkeypatch):
     r = client.post("/mcp", json=_rpc("tools/list"), headers=_bearer())
     assert r.status_code == 200
     tools = r.json()["result"]["tools"]
-    assert len(tools) == 45
+    assert len(tools) == 42
     for tool in tools:
         assert set(tool) == {"name", "title", "description", "inputSchema", "annotations"}
 

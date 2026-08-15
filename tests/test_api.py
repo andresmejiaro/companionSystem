@@ -43,6 +43,47 @@ def test_read_only_mode_keeps_reads_and_blocks_writes(tmp_path, monkeypatch):
         ).json() == []
 
 
+def test_repeating_pending_store_proposal_revises_same_proposer_and_retires_link(client):
+    original = client.post("/profiles/tara/stores", json={
+        "name": "trip_plans", "purpose": "track trips", "proposed_by": "limo",
+        "schema": {"fields": {"destination": {"type": "string"}}},
+    })
+    assert original.status_code == 201
+    original_store = original.json()
+
+    revised = client.post("/profiles/tara/stores", json={
+        "name": "trip_plans", "purpose": "track booked trips", "proposed_by": "limo",
+        "schema": {"fields": {
+            "destination": {"type": "string"},
+            "booked": {"type": "boolean", "required": False},
+        }},
+    })
+    assert revised.status_code == 201, revised.text
+    revised_store = revised.json()
+    assert revised_store["id"] == original_store["id"]
+    assert revised_store["version"] == original_store["version"] == 1
+    assert revised_store["purpose"] == "track booked trips"
+    assert revised_store["schema"]["fields"]["booked"]["type"] == "boolean"
+    assert revised_store["approval_id"] != original_store["approval_id"]
+    assert client.app.state.access.get_approval(original_store["approval_id"])["status"] == "retracted"
+    assert client.app.state.access.get_approval(revised_store["approval_id"])["status"] == "pending"
+
+
+def test_repeating_pending_store_proposal_rejects_a_different_proposer(client):
+    first = client.post("/profiles/tara/stores", json={
+        "name": "trip_plans", "purpose": "track trips", "proposed_by": "limo",
+        "schema": {"fields": {"destination": {"type": "string"}}},
+    })
+    assert first.status_code == 201
+
+    rejected = client.post("/profiles/tara/stores", json={
+        "name": "trip_plans", "purpose": "replace trips", "proposed_by": "other",
+        "schema": {"fields": {"city": {"type": "string"}}},
+    })
+    assert rejected.status_code == 403
+    assert client.app.state.dynstores.get("tara", "trip_plans")["purpose"] == "track trips"
+
+
 def test_list_and_get_profiles(client):
     ids = {p["id"] for p in client.get("/profiles").json()}
     assert {"sidra", "tara", "tool_probe"} <= ids

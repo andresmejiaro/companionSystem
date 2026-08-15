@@ -1390,6 +1390,47 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
     def propose_store(profile_id: str, body: StoreProposalIn, request: Request):
         _expire_approvals()
         principal_id = _require("stores:propose", profile_id, request)
+        proposer_id = principal_id or body.proposed_by
+        try:
+            current = dyn.get(profile_id, body.name)
+        except DynStoreNotFound:
+            current = None
+
+        # Re-submitting a pending proposal is the MCP-facing edit path.  Keep
+        # the HTTP PATCH route for administrative/bridge compatibility, but
+        # give companions one clear proposal action: revise their own pending
+        # definition and hand the human a fresh approval link.
+        if current is not None and current["status"] == "pending":
+            pending = next((approval for approval in access.list_pending_approvals(profile_id)
+                            if approval["kind"] == "store_schema"
+                            and approval["payload"].get("store_id") == current["id"]), None)
+            if pending is None:
+                raise HTTPException(409, "pending store has no live approval")
+            if pending["proposed_by_principal"] != proposer_id:
+                raise HTTPException(403, "only the proposing companion may modify this pending store")
+            updated = _wrap(dyn.update_pending, profile_id, body.name, body.purpose,
+                            body.schema_def, proposer_id)
+            # Retire every approval for this definition before issuing the
+            # replacement.  Normally there is one, but doing this defensively
+            # keeps an old link from approving a superseded schema.
+            for approval in access.list_pending_approvals(profile_id):
+                if (approval["kind"] == "store_schema"
+                        and approval["payload"].get("store_id") == updated["id"]):
+                    access.retract_approval(approval["id"], proposer_id)
+            approval = access.propose_approval(
+                "store_schema", proposer_id,
+                {
+                    "store_id": updated["id"],
+                    "profile_id": profile_id,
+                    "store_name": updated["name"],
+                    "version": updated["version"],
+                    "purpose": updated["purpose"],
+                    "schema": updated["schema"],
+                },
+                profile_id=profile_id,
+            )
+            return {**updated, "approval_id": approval["id"]}
+
         proposed = _wrap(dyn.propose, profile_id, body.name, body.purpose,
                          body.proposed_by, body.schema_def)
         result = _maybe_auto_approve(profile_id, body.name, principal_id, proposed)
@@ -1397,7 +1438,7 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
             return result
         approval = access.propose_approval(
             "store_schema",
-            principal_id or body.proposed_by,
+            proposer_id,
             {
                 "store_id": result["id"],
                 "profile_id": profile_id,

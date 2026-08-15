@@ -436,7 +436,6 @@ MCP_OUTPUT_SCHEMAS = {
     "discover_companions": mcp_items(PROFILE),
     "summon_companion": START_SESSION,
     "propose_prompt_edit": APPROVAL,
-    "retract_approval": APPROVAL,
     # Legacy backend/admin operation; no companion-callable MCP path.
     # "update_own_description": PROFILE,
     "remember": MEMORY_EVENT,
@@ -460,8 +459,6 @@ MCP_OUTPUT_SCHEMAS = {
     "prepare_closeout": PREPARE_CLOSEOUT,
     "list_stores": mcp_items(DYNAMIC_STORE),
     "propose_store": DYNAMIC_STORE,
-    "update_pending_store": DYNAMIC_STORE,
-    "withdraw_pending_store": DYNAMIC_STORE,
     "query_records": mcp_items(DYNAMIC_RECORD),
     "filter_records": mcp_items(DYNAMIC_RECORD),
     "draw_exam_questions": QUESTION_DRAW,
@@ -563,13 +560,6 @@ MCP_TOOLS = [
             "how_you_keep_context": {"type": "string"},
         },
         ["profile_id"],
-    ),
-    _tool(
-        "retract_approval",
-        "Retract Pending Approval",
-        "Retract a pending prompt or store approval that you proposed.",
-        {"approval_id": {"type": "string"}},
-        ["approval_id"],
     ),
     # update_own_description intentionally omitted. The implementation stays
     # for legacy administrative callers, but is not registered with MCP.
@@ -795,7 +785,7 @@ MCP_TOOLS = [
     _tool(
         "propose_store",
         "Propose Store",
-        "Propose a dynamic structured store. Backend approval is required before records can be written.",
+        "Propose a dynamic structured store. Re-submit the same pending name to revise your own proposal and issue a fresh approval. Backend approval is required before records can be written.",
         {
             "profile_id": _PROFILE_ID,
             "name": {
@@ -809,17 +799,6 @@ MCP_TOOLS = [
             },
         },
         ["profile_id", "name", "purpose", "schema"],
-    ),
-    _tool(
-        "update_pending_store", "Modify Pending Store",
-        "Modify a pending store proposal you made. The old approval is retracted and a fresh 24-hour approval is created.",
-        {"profile_id": _PROFILE_ID, "name": {"type": "string"}, "purpose": {"type": "string"}, "schema": {"$ref": "#/$defs/DynamicSchema"}},
-        ["profile_id", "name", "purpose", "schema"],
-    ),
-    _tool(
-        "withdraw_pending_store", "Withdraw Pending Store",
-        "Withdraw a pending store proposal you made; approved stores cannot be removed this way.",
-        {"profile_id": _PROFILE_ID, "name": {"type": "string"}}, ["profile_id", "name"],
     ),
     _tool(
         "query_records",
@@ -1218,8 +1197,6 @@ class MCPToolRunner:
                 "who_you_are", "signature", "lane", "voice", "what_you_do",
                 "how_you_keep_context") if key in arguments}
             return self.bridge.propose_prompt_edit(arguments["profile_id"], **prompt_args)
-        if name == "retract_approval":
-            return self.bridge.retract_approval(arguments["approval_id"])
         # No update_own_description dispatch: legacy implementation retained
         # outside the companion-callable MCP registry.
         if name == "remember":
@@ -1304,10 +1281,6 @@ class MCPToolRunner:
                 arguments["purpose"],
                 arguments["schema"],
             )
-        if name == "update_pending_store":
-            return self.bridge.update_pending_store(arguments["profile_id"], arguments["name"], arguments["purpose"], arguments["schema"])
-        if name == "withdraw_pending_store":
-            return self.bridge.withdraw_pending_store(arguments["profile_id"], arguments["name"])
         if name == "query_records":
             contains = arguments.get("contains")
             return self.bridge.query_records(
@@ -1677,7 +1650,7 @@ def _handle_rpc(message: dict[str, Any], app: FastAPI) -> dict[str, Any]:
         profile_id = _safe_profile(arguments)
         try:
             value = app.state.runner.call(name, arguments)
-            if name in {"propose_prompt_edit", "propose_store", "update_pending_store",
+            if name in {"propose_prompt_edit", "propose_store",
                         "create_project", "join_project"} and isinstance(value, dict):
                 settings: MCPSettings = app.state.settings
                 approval_id = (value.get("id") if name == "propose_prompt_edit"
