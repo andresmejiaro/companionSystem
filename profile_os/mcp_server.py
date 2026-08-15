@@ -39,7 +39,6 @@ from .request_limits import (
 )
 from .tool_schemas import (
     APPROVAL,
-    BOOT,
     CLOSEOUT,
     CONTEXT_RESULT,
     DELETED_FILE,
@@ -50,7 +49,6 @@ from .tool_schemas import (
     DYNAMIC_STORE,
     FILE_CONTENT,
     FILE_META,
-    IDENTITY,
     IRONSWORN_MOVE,
     IRONSWORN_ORACLE,
     IRONSWORN_SHEET,
@@ -59,7 +57,6 @@ from .tool_schemas import (
     MEMORY_KINDS,
     MESSAGE,
     PROFILE,
-    PROFILE_RESOLUTION,
     PREPARE_CLOSEOUT,
     QUESTION_DRAW,
     QUESTION_GRADE,
@@ -314,7 +311,7 @@ def _create_profile_page(values: dict[str, str] | None = None,
 def _session_inspector_page(profiles: list[dict], *, selected_id: str = "",
                             mode: str = "human", result: dict | None = None,
                             error: str | None = None) -> str:
-    """Read-only view of the exact start_session result, gated by TOTP."""
+    """Read-only view of the exact summon_companion result, gated by TOTP."""
     options = "".join(
         f'<option value="{_html.escape(str(p.get("id", "")))}"'
         f'{" selected" if p.get("id") == selected_id else ""}>'
@@ -328,7 +325,7 @@ def _session_inspector_page(profiles: list[dict], *, selected_id: str = "",
     if result is not None:
         if mode == "raw":
             output = ("<section><h2>Delivered payload</h2><p>This is the pretty-printed JSON "
-                      "returned by <code>start_session</code>.</p><pre>" +
+                      "returned by <code>summon_companion</code>.</p><pre>" +
                       _html.escape(_json_text(result)) + "</pre></section>")
         else:
             def block(title: str, source: str, value: Any) -> str:
@@ -347,7 +344,7 @@ def _session_inspector_page(profiles: list[dict], *, selected_id: str = "",
             ]
             output = "<section><h2>Hydration packet</h2><p>This is the context delivered to the agent. Lookup IDs, tags, full history, and closeout archives are not hydrated.</p></section>"
             output += block("Profile context", "Profile registry fields that affect how this companion operates.", profile_context)
-            output += block("System contracts", "Shared runtime rules injected by start_session; they do not replace this companion's identity prompt.", result.get("system_contracts"))
+            output += block("System contracts", "Shared runtime rules injected by summon_companion; they do not replace this companion's identity prompt.", result.get("system_contracts"))
             output += block("Who you are", "Canonical prompt section.", result.get("who_you_are"))
             output += block("Signature", "Reserved prompt section.", result.get("signature"))
             output += block("Lane", "Reserved prompt section.", result.get("lane"))
@@ -369,7 +366,7 @@ label {{ display:block; font-weight:600; margin:.6em 0; }} select,input,button {
 fieldset {{ border:0; padding:0; margin:1em 0; }} fieldset label {{ display:inline; margin-right:1.2em; font-weight:400; }}
 button {{ background:#1769aa; color:white; border:0; border-radius:6px; cursor:pointer; }} .error {{ color:#a11; font-weight:600; }}
 pre {{ white-space:pre-wrap; overflow-wrap:anywhere; background:#f3f6f8; padding:14px; border-radius:7px; max-height:34rem; overflow:auto; }} code {{ background:#eef2f5; padding:.1em .25em; }}
-</style></head><body><main><h1>Companion session inspector</h1><p class="hint">Read-only. Enter a live authenticator code to view exactly what a companion receives from <code>start_session</code>.</p>
+</style></head><body><main><h1>Companion session inspector</h1><p class="hint">Read-only. Enter a live authenticator code to view exactly what a companion receives from <code>summon_companion</code>.</p>
 {error_html}<form method="post"><label>Companion<br><select name="profile_id" required><option value="">Choose a companion…</option>{options}</select></label>
 <label>Authenticator code<br><input name="totp_code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{{6,8}}" required></label>
 <fieldset><legend>Display</legend><label><input type="radio" name="mode" value="human" {checked_human}> Human-readable, grouped by source</label><label><input type="radio" name="mode" value="raw" {checked_raw}> Raw delivered JSON</label></fieldset><button type="submit">View session</button></form>{output}</main></body></html>"""
@@ -428,20 +425,16 @@ def _tool(
 
 _PROFILE_ID = {
     "type": "string",
-    "description": "Profile id to operate on, such as a value returned by list_profiles.",
+    "description": "Profile id to operate on, such as a value returned by discover_companions.",
 }
 
 _MEMORY_KINDS = MEMORY_KINDS
 
 MCP_OUTPUT_SCHEMAS = {
-    "whoami": IDENTITY,
-    # Kept as an internal start_session fallback, not a callable MCP tool.
+    # Kept as an internal summon_companion fallback, not a callable MCP tool.
     # "resolve_companion": PROFILE_RESOLUTION,
     "discover_companions": mcp_items(PROFILE),
-    "list_profiles": mcp_items(PROFILE),
-    "boot_profile": BOOT,
-    "start_session": START_SESSION,
-    "start_session_forum": START_SESSION,
+    "summon_companion": START_SESSION,
     "propose_prompt_edit": APPROVAL,
     "retract_approval": APPROVAL,
     # Legacy backend/admin operation; no companion-callable MCP path.
@@ -491,8 +484,7 @@ MCP_OUTPUT_SCHEMAS = {
 
 
 _READ_ONLY_TOOLS = {
-    "whoami", "resolve_companion", "discover_companions", "list_profiles",
-    "boot_profile", "start_session", "search_memories", "search_context",
+    "resolve_companion", "discover_companions", "summon_companion", "search_memories", "search_context",
     "read_inbox", "list_files", "read_file", "get_ironsworn_move",
     "get_ironsworn_oracle", "list_stores", "query_records",
     "get_ironsworn_sheet", "roll_ironsworn_dice",
@@ -519,70 +511,40 @@ TOOL_ANNOTATIONS = {
 }
 
 MCP_TOOLS = [
-    _tool(
-        "whoami",
-        "Who Am I",
-        "Canonical 'who am I talking to' identity file. Overrides your memory"
-        " on conflict — the file wins and drift gets logged by the human."
-        " Call this when unsure about personal facts (identity, health,"
-        " work, family, key people) rather than trusting your own memory.",
-        {},
-        [],
-    ),
-    # resolve_companion intentionally omitted. start_session keeps its private
+    # resolve_companion intentionally omitted. summon_companion keeps its private
     # resolver fallback, so routing behavior remains unchanged without a raw
     # profile-resolution read surface.
     _tool(
         "discover_companions",
         "Discover Companions",
         "Browse every available companion with canonical id, display name, signature, and"
-        " lane. Do not call this before start_session merely because the"
-        " user supplied a name: start_session tries normalized exact canonical ids"
+        " lane. Do not call this before summon_companion merely because the"
+        " user supplied a name: summon_companion tries normalized exact canonical ids"
         " first and falls back to server resolution. Use discovery for browsing or"
-        " after a not_found result. Do not use whoami for companion discovery.",
+        " after a not_found result.",
         {},
         [],
     ),
     _tool(
-        "list_profiles",
-        "List Profiles",
-        "Compatibility name for discover_companions. Use discover_companions when you"
-        " need to route a user request such as 'talk to Rita' or 'start session as Rita'.",
-        {},
-        [],
-    ),
-    _tool(
-        "boot_profile",
-        "Boot Profile",
-        "Low-level raw hydration for a profile, including memory-event IDs and tags. Prefer start_session unless those raw lookup fields or full profile fields are needed.",
-        {"profile_id": _PROFILE_ID},
-        ["profile_id"],
-    ),
-    _tool(
-        "start_session",
-        "Start Session",
-        "Call this on your first response in a conversation instead of boot_profile."
+        "summon_companion",
+        "Summon Companion",
+        "Call this on your first response in a conversation."
         " Pass the phrase the user supplied. A normalized exact canonical id is"
         " decisive and is tried directly; only a 404 triggers server-side resolution."
         " When the returned selection.settled is true, never ask whether the user meant"
         " a sibling and never switch variants unless the user explicitly requests it. This tool"
-        " returns whoami identity, prompts, compact_state, a bounded semantic"
+        " returns owner identity, prompts, compact_state, a bounded semantic"
         " memory slice, and the global companion contract for conversational profiles;"
         " the memory slice has no IDs, tags, or full history. It also returns up to four recent"
         " texture/exchange examples for continuity, and the current server"
         " date/time (server_time, including Madrid time) in one call.",
-        {"profile_id": _PROFILE_ID},
-        ["profile_id"],
-    ),
-    _tool(
-        "start_session_forum",
-        "Start Session (Forum)",
-        "Identical to start_session but omits the owner's personal identity file."
-        " It also returns bounded companion-owned thread_continuity: active open"
-        " loops first, then the latest active positions. The Thread must join exact"
-        " posts, causal before/companion/after windows, and omitted-history summaries."
-        " Use this instead of start_session when waking for an autonomous forum visit.",
-        {"profile_id": _PROFILE_ID},
+        {"profile_id": _PROFILE_ID,
+         "mode": {
+             "type": "string",
+             "enum": ["conversation", "forum"],
+             "default": "conversation",
+             "description": "conversation returns the owner identity; forum omits it and adds bounded thread continuity for autonomous forum wakes.",
+         }},
         ["profile_id"],
     ),
     _tool(
@@ -1024,11 +986,6 @@ MCP_TOOLS = [
     ),
 ]
 
-_HIDDEN_MCP_TOOLS = {
-    "whoami", "list_profiles", "boot_profile",
-    # Shared-project tools are intentionally advertised. Their profile
-    # allowlist is enforced in MCPToolRunner.call, not by allowed_tools hints.
-}
 MCP_TOOL_NAMES = {tool["name"] for tool in MCP_TOOLS}
 
 
@@ -1037,10 +994,9 @@ def _advertised_tools() -> list[dict[str, Any]]:
     # validate an output schema.  Keep discovery reliably available by
     # default; operators with a host that supports output schemas can opt in
     # with MCP_OMIT_OUTPUT_SCHEMAS=0.
-    visible = [tool for tool in MCP_TOOLS if tool["name"] not in _HIDDEN_MCP_TOOLS]
     if os.environ.get("MCP_OMIT_OUTPUT_SCHEMAS", "1") == "0":
-        return visible
-    return [{k: v for k, v in tool.items() if k != "outputSchema"} for tool in visible]
+        return MCP_TOOLS
+    return [{k: v for k, v in tool.items() if k != "outputSchema"} for tool in MCP_TOOLS]
 
 
 @dataclass
@@ -1224,16 +1180,15 @@ class MCPToolRunner:
                 403,
                 f"{name} is enabled only for profiles: {allowed}",
             )
-        if name == "whoami":
-            return self.bridge.whoami()
         # No direct resolve_companion dispatch: resolution is private to the
-        # start_session fallback below.
-        if name in {"discover_companions", "list_profiles"}:
+        # summon_companion fallback below.
+        if name == "discover_companions":
             return self.bridge.list_profiles()
-        if name == "boot_profile":
-            return self.bridge.boot_profile(arguments["profile_id"])
-        if name in {"start_session", "start_session_forum"}:
-            forum_mode = name == "start_session_forum"
+        if name == "summon_companion":
+            mode = arguments.get("mode", "conversation")
+            if not isinstance(mode, str) or mode not in {"conversation", "forum"}:
+                raise ValueError("mode must be 'conversation' or 'forum'")
+            forum_mode = mode == "forum"
             requested = arguments["profile_id"]
             try:
                 # Canonical ids are decisive and incur no directory lookup.
@@ -1691,7 +1646,7 @@ def _handle_rpc(message: dict[str, Any], app: FastAPI) -> dict[str, Any]:
                 "version": SERVER_VERSION,
             },
             "instructions": (
-                "Call start_session with the companion phrase the user supplied. It tries "
+                "Call summon_companion with the companion phrase the user supplied. It tries "
                 "a normalized exact canonical id first and only resolves names after a 404; "
                 "do not browse the directory first. A returned selection with settled=true "
                 "is final: never ask about sibling variants or switch profiles unless the "

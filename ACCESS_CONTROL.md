@@ -36,9 +36,9 @@ first, then `Signature`; both resolve to a principal, then the existing
 grant check (`allowed()`) applies identically — no changes to the route →
 operation map below.
 
-## `start_session`: one-call bootstrap for a companion's first turn
+## `summon_companion`: one-call bootstrap for a companion's first turn
 
-`POST /profiles/{id}/session` (MCP tool `start_session`) is the agent's
+`POST /profiles/{id}/session` (MCP tool `summon_companion`) is the agent's
 hydration packet: `whoami` identity content (if the caller has
 `identity:read`), current prompts and `compact_state`, a bounded boot-memory
 slice reduced to semantic `kind`/`content`, and `server_time` (`unix` epoch
@@ -47,7 +47,7 @@ timestamps, full memory history, or closeout archives. Those are retrieved
 through the appropriate lookup tools only when useful. It is gated by the
 same `boot` grant as the plain `boot`/`boot_profile` tool. Intended so a
 connector's provider-side system prompt can shrink to "on your first
-response, call `start_session`."
+response, call `summon_companion`."
 
 ## TOTP-gated approvals ("edgy" actions)
 

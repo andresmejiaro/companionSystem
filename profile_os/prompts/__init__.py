@@ -1,7 +1,7 @@
 """Inspectable prompt seeds for companion profiles.
 
 ``<profile>_base.md`` and ``<profile>_role.md`` seed the backend store.
-System-owned contracts are injected by ``start_session`` and are not managed
+System-owned contracts are injected by ``summon_companion`` and are not managed
 as part of an individual companion's identity prompt.
 """
 

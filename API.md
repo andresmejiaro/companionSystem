@@ -60,7 +60,7 @@ subset of these operations over `POST /mcp` and `GET /mcp`; see
   The nested `profile` omits legacy registry `description`; `lane` is the
   canonical model-facing scope field.
 - `POST /profiles/{id}/session` — one-call **hydration packet** for a
-  companion's first turn (MCP tool `start_session`): prompts, current compact
+  companion's first turn (MCP tool `summon_companion`): prompts, current compact
   state, `identity` (the `whoami` file content, or `null` without
   `identity:read`), a bounded boot-memory slice reduced to `kind` and
   `content`, and `server_time` (`{"unix": 1751640000.0,
@@ -78,8 +78,8 @@ subset of these operations over `POST /mcp` and `GET /mcp`; see
   `discussion_id`/source pair plus the companion's `subject`, `position`,
   optional `stake` and `open_loop`, lifecycle `status`, and timestamps.
   `add_record` upserts on `(source_type, source_id)`; bulk import is disabled.
-  Ordinary `start_session` advertises the store but never hydrates its rows.
-  MCP `start_session_forum` returns at most 12 active rows under a 16,000
+  Ordinary `summon_companion` advertises the store but never hydrates its rows.
+  MCP `summon_companion` with `mode: "forum"` returns at most 12 active rows under a 16,000
   character ceiling, prioritizing open loops. The Thread remains responsible
   for joining exact posts, before/companion/after windows, and gap summaries.
   Forum hydration also names the existing `add_record` upsert and

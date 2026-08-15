@@ -452,25 +452,26 @@ def test_initialize_and_list_tools(tmp_path, monkeypatch):
     body = r.json()["result"]
     assert body["protocolVersion"] == "2025-06-18"
     assert body["capabilities"] == {"tools": {"listChanged": False}}
-    assert "start_session" in body["instructions"]
+    assert "summon_companion" in body["instructions"]
 
     r = client.post("/mcp", json=_rpc("tools/list"), headers=_bearer())
     assert r.status_code == 200
     tools = r.json()["result"]["tools"]
     names = {tool["name"] for tool in tools}
-    assert len(names) == 46
+    assert len(names) == 45
     assert {"prepare_closeout", "closeout", "search_memories"} <= names
     assert {"create_project", "list_projects", "join_project", "leave_project",
             "add_project_record", "query_project_records"} <= names
     assert not names & {"whoami", "resolve_companion", "list_profiles",
-                        "boot_profile", "update_own_description"}
+                        "boot_profile", "start_session", "start_session_forum",
+                        "update_own_description"}
     assert not names & {"approve_store", "reject_store", "archive_store", "audit"}
     for tool in tools:
         assert set(tool) == {"name", "title", "description", "inputSchema", "outputSchema", "annotations"}
         assert tool["outputSchema"]["type"] == "object"
         assert set(tool["annotations"]) == {"readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint"}
     discover = next(tool for tool in tools if tool["name"] == "discover_companions")
-    assert "do not call this before start_session" in discover["description"].lower()
+    assert "do not call this before summon_companion" in discover["description"].lower()
     assert discover["annotations"]["readOnlyHint"] is True
     closeout = next(tool for tool in tools if tool["name"] == "closeout")
     assert set(closeout["inputSchema"]["properties"]) == {
@@ -485,9 +486,11 @@ def test_initialize_and_list_tools(tmp_path, monkeypatch):
     assert annotations["forget"]["destructiveHint"] is True
     assert annotations["delete_file"]["destructiveHint"] is True
     assert annotations["delete_record"]["destructiveHint"] is True
-    assert annotations["start_session"]["readOnlyHint"] is True
-    start_session = next(tool for tool in tools if tool["name"] == "start_session")
-    assert "description" not in start_session["outputSchema"]["properties"]["profile"]["properties"]
+    assert annotations["summon_companion"]["readOnlyHint"] is True
+    summon = next(tool for tool in tools if tool["name"] == "summon_companion")
+    assert "description" not in summon["outputSchema"]["properties"]["profile"]["properties"]
+    assert summon["inputSchema"]["properties"]["mode"]["enum"] == ["conversation", "forum"]
+    assert summon["inputSchema"]["properties"]["mode"]["default"] == "conversation"
     assert next(tool for tool in tools if tool["name"] == "prepare_closeout")["description"] == "Use this when the user says they are done with the session. This gives instructions on how to update stores and use closeout when done."
 
 
@@ -497,7 +500,7 @@ def test_list_tools_can_omit_output_schemas(tmp_path, monkeypatch):
     r = client.post("/mcp", json=_rpc("tools/list"), headers=_bearer())
     assert r.status_code == 200
     tools = r.json()["result"]["tools"]
-    assert len(tools) == 46
+    assert len(tools) == 45
     for tool in tools:
         assert set(tool) == {"name", "title", "description", "inputSchema", "annotations"}
 
@@ -529,19 +532,27 @@ def test_mcp_tool_flow_and_logging(tmp_path, caplog):
     bridge = FakeBridge()
     client = _mcp_client(bridge)
 
-    profiles = _call_tool(client, "list_profiles", {}).json()["result"]
-    assert any(item["id"] == "sidra" for item in profiles["structuredContent"]["items"])
     discovered = _call_tool(client, "discover_companions", {}).json()["result"]
     assert any(item["id"] == "tara" for item in discovered["structuredContent"]["items"])
-    removed = _call_tool(client, "resolve_companion", {"query": "Tara"}).json()
-    assert removed["error"]["code"] == -32602
+    for name, arguments in (
+        ("whoami", {}),
+        ("resolve_companion", {"query": "Tara"}),
+        ("list_profiles", {}),
+        ("boot_profile", {"profile_id": "sidra"}),
+        ("start_session", {"profile_id": "tara"}),
+        ("start_session_forum", {"profile_id": "tara"}),
+    ):
+        removed = _call_tool(client, name, arguments).json()
+        assert removed["error"]["code"] == -32602
 
-    started = _call_tool(client, "start_session", {"profile_id": "tara"}).json()["result"]
+    started = _call_tool(client, "summon_companion", {"profile_id": "tara"}).json()["result"]
     assert started["structuredContent"]["selection"]["settled"] is True
+    assert started["structuredContent"]["identity"] == "Canonical identity."
+    assert "thread_continuity" not in started["structuredContent"]
     assert bridge.start_session_calls == ["tara"]
     assert bridge.resolve_calls == []  # exact startup did not resolve
 
-    resolved_start = _call_tool(client, "start_session", {"profile_id": "Tara"}).json()["result"]
+    resolved_start = _call_tool(client, "summon_companion", {"profile_id": "Tara"}).json()["result"]
     assert resolved_start["structuredContent"]["selection"]["profile_id"] == "tara"
     assert bridge.resolve_calls == ["Tara"]
 
@@ -550,21 +561,13 @@ def test_mcp_tool_flow_and_logging(tmp_path, caplog):
     }).json()
     assert removed["error"]["code"] == -32602
 
-    probe = _call_tool(client, "start_session", {"profile_id": "tool_probe"}).json()["result"]
+    probe = _call_tool(client, "summon_companion", {"profile_id": "tool_probe"}).json()["result"]
     catalog = probe["structuredContent"]["server_tool_catalog"]
     assert {tool["name"] for tool in catalog["registered_tools"]} == {
         tool["name"] for tool in MCP_TOOLS
     }
-    assert set(catalog["mcp_advertised_tool_names"]) < set(catalog["registered_tool_names"])
+    assert set(catalog["mcp_advertised_tool_names"]) == set(catalog["registered_tool_names"])
     assert catalog["notes"].startswith("registered_tools is the complete")
-
-    with caplog.at_level(logging.INFO, logger="profile_os.mcp_server"):
-        boot = _call_tool(client, "boot_profile", {"profile_id": "sidra"}).json()
-    boot_data = boot["result"]["structuredContent"]
-    assert boot_data["profile"]["id"] == "sidra"
-    assert boot_data["who_you_are"]
-    assert boot_data["what_you_do"]
-    assert "mcp_tool_call name=boot_profile profile_id=sidra outcome=ok" in caplog.text
 
     r = _call_tool(client, "remember", {
         "profile_id": "tara",
@@ -587,7 +590,7 @@ def test_mcp_tool_flow_and_logging(tmp_path, caplog):
 
     # Hydration intentionally stays lean; a targeted lookup supplies the ID
     # only when the companion needs to mutate the memory.
-    restarted = _call_tool(client, "start_session", {"profile_id": "tara"}).json()["result"]
+    restarted = _call_tool(client, "summon_companion", {"profile_id": "tara"}).json()["result"]
     assert restarted["structuredContent"]["memories"] == [{
         "kind": "note", "content": "MCP memory test",
     }]
@@ -665,23 +668,36 @@ def test_mcp_tool_flow_and_logging(tmp_path, caplog):
     assert revised["structuredContent"]["answer_status"] == "nullified"
 
 
-def test_start_session_uses_exact_id_before_resolution_and_falls_back_on_404():
+def test_summon_companion_uses_exact_id_before_resolution_and_falls_back_on_404():
     bridge = FakeBridge()
     client = _mcp_client(bridge)
 
-    exact = _call_tool(client, "start_session", {"profile_id": "tara"}).json()["result"]
+    exact = _call_tool(client, "summon_companion", {"profile_id": "tara"}).json()["result"]
     assert exact["isError"] is False
     assert bridge.start_session_calls == ["tara"]
     assert bridge.resolve_calls == []
 
-    named = _call_tool(client, "start_session", {"profile_id": "Tara"}).json()["result"]
+    named = _call_tool(client, "summon_companion", {"profile_id": "Tara"}).json()["result"]
     assert named["isError"] is False
     assert named["structuredContent"]["selection"]["profile_id"] == "tara"
     assert bridge.start_session_calls == ["tara", "Tara", "tara"]
     assert bridge.resolve_calls == ["Tara"]
 
 
-def test_start_session_forum_hydrates_bounded_active_continuity_without_identity():
+def test_summon_companion_rejects_an_unknown_mode():
+    client = _mcp_client(FakeBridge())
+
+    result = _call_tool(client, "summon_companion", {
+        "profile_id": "tara", "mode": "background",
+    }).json()["result"]
+
+    assert result["isError"] is True
+    assert result["structuredContent"]["error"]["message"] == (
+        "mode must be 'conversation' or 'forum'"
+    )
+
+
+def test_summon_companion_forum_hydrates_bounded_active_continuity_without_identity():
     bridge = FakeBridge()
     bridge.records = [
         {
@@ -706,7 +722,7 @@ def test_start_session_forum_hydrates_bounded_active_continuity_without_identity
     client = _mcp_client(bridge)
 
     result = _call_tool(
-        client, "start_session_forum", {"profile_id": "tara"}
+        client, "summon_companion", {"profile_id": "tara", "mode": "forum"}
     ).json()["result"]["structuredContent"]
 
     assert result["identity"] is None
@@ -730,10 +746,8 @@ def test_successful_structured_content_matches_declared_output_schema():
         Draft202012Validator(tools[name]["outputSchema"]).validate(result["structuredContent"])
         return result["structuredContent"]
 
-    call_and_validate("list_profiles", {})
     call_and_validate("discover_companions", {})
-    call_and_validate("boot_profile", {"profile_id": "sidra"})
-    call_and_validate("start_session", {"profile_id": "tara"})
+    call_and_validate("summon_companion", {"profile_id": "tara"})
     call_and_validate("remember", {"profile_id": "tara", "kind": "note", "content": "x"})
     call_and_validate("search_memories", {"profile_id": "tara", "query": "x"})
     call_and_validate("search_context", {"profile_id": "tara", "query": "x"})
@@ -870,7 +884,7 @@ def test_mcp_auth_origin_get_and_token_separation(tmp_path):
     assert r.status_code == 200
     assert "text/event-stream" in r.headers["content-type"]
 
-    r = _call_tool(client, "boot_profile", {"profile_id": "tara"})
+    r = _call_tool(client, "summon_companion", {"profile_id": "tara"})
     assert r.status_code == 200
     assert backend_http.requests
     seen_auth = [req["headers"].get("Authorization") for req in backend_http.requests]

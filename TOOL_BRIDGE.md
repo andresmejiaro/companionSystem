@@ -21,7 +21,7 @@ The original bridge shape is still useful:
   harness and smoke runners.
 
 The remote MCP server deliberately exposes a narrower, Claude-facing tool set:
-`resolve_companion`, `list_profiles`, `boot_profile`, `remember`, `search_context`, `closeout`,
+`discover_companions`, `summon_companion`, `remember`, `search_context`, `closeout`,
 `list_stores`, `propose_store`, `query_records`, and `add_record`.
 
 ## Configuration

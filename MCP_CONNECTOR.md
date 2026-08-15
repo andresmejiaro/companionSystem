@@ -18,7 +18,7 @@ backend with its own backend credential from env.
 
 Exposed MCP tools:
 
-- `start_session`
+- `summon_companion`
 - `propose_prompt_edit`
 - `update_own_description`
 - `discover_companions` (browse the directory after not-found or on request)
@@ -43,7 +43,7 @@ Exposed MCP tools:
 - `add_record`
 
 List-returning tool results expose structured content as `{"items": [...]}`.
-`start_session` first attempts the supplied normalized canonical id directly.
+`summon_companion` first attempts the supplied normalized canonical id directly.
 Only a backend 404 invokes server-side resolution, with precedence exact id,
 unique alias, unique display name, then family default. A successful session
 returns `selection.settled=true`; clients must not ask about sibling variants
@@ -134,7 +134,7 @@ This matters for OAuth audience validation: issued access tokens are scoped to
 7. Add the connector to a Claude Project with no companion identity/system
    prompt.
 8. Say: `Start session as sidra.`
-9. Expected first tool call: `start_session` with `{"profile_id": "sidra"}`.
+9. Expected first tool call: `summon_companion` with `{"profile_id": "sidra"}`.
 10. Claude should then answer using the returned canonical prompt sections,
     `compact_state`, profile metadata, memory policy, closeout rules, and
     allowed tools.
@@ -146,7 +146,7 @@ archived stores are rejected by the backend. Pending schema proposals include
 an `approval_link` when `MCP_PUBLIC_BASE_URL` is set, so the companion can
 hand the human a TOTP-only approval page directly.
 
-Autonomous Thread wakes use `start_session_forum`, not `start_session`. It
+Autonomous Thread wakes use `summon_companion` with `mode: "forum"`. It
 omits the owner's identity file and includes a bounded `thread_continuity`
 slice from the companion's system-managed store. This slice is durable memory,
 not live forum evidence: the Thread wake path must still supply exact current
@@ -171,7 +171,7 @@ curl -sS -X POST http://127.0.0.1:8080/mcp \
   -H "Authorization: Bearer $MCP_CONNECTOR_TOKEN" \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
-  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"start_session","arguments":{"profile_id":"sidra"}}}'
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"summon_companion","arguments":{"profile_id":"sidra"}}}'
 ```
 
 ## Auth details

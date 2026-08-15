@@ -49,7 +49,7 @@ services:
       MCP_OAUTH_SIGNING_KEY: ${MCP_OAUTH_SIGNING_KEY:-}
       # Some ChatGPT MCP clients reject an entire tools/list response when a
       # complex outputSchema is present.  Omit them by default so
-      # list_profiles (companion discovery) stays available.
+      # discover_companions stays available.
       MCP_OMIT_OUTPUT_SCHEMAS: ${MCP_OMIT_OUTPUT_SCHEMAS:-1}
       MCP_AUTH_REQUIRED: ${MCP_AUTH_REQUIRED:-1}
       MCP_OAUTH_ACCESS_TOKEN_TTL_SECONDS: ${MCP_OAUTH_ACCESS_TOKEN_TTL_SECONDS:-}
