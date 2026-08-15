@@ -44,9 +44,9 @@ def test_profile_discovery_metadata_and_startup_routing_guidance(client):
         session["system_contracts"]["companion"]
     )
     assert any(item["id"] == "travel" for item in session["companion_directory"])
-    assert session["data_sources"] == {
-        "profile_stores": [], "joined_projects": [],
-    }
+    assert session["data_sources"]["joined_projects"] == []
+    assert [item["name"] for item in session["data_sources"]["profile_stores"]] == [
+        "thread_continuity"]
     assert session["selection"] == {
         "profile_id": "tara",
         "family_id": "tara",
@@ -693,4 +693,5 @@ def test_delete_profile_removes_everything(client):
     # a same-named profile can be recreated cleanly afterward
     r = client.post("/profiles", json={"id": "tara", "display_name": "Tara II"})
     assert r.status_code == 201
-    assert client.get("/profiles/tara/stores").json() == []
+    stores = client.get("/profiles/tara/stores").json()
+    assert [item["name"] for item in stores] == ["thread_continuity"]

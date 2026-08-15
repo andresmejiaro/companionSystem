@@ -27,7 +27,7 @@ from typing import Any
 
 from . import seed
 from .access import AccessControl, AccessError
-from .dynstores import DynamicStores
+from .dynstores import DynamicStores, THREAD_CONTINUITY_STORE
 from .projects import Projects
 from .ironsworn_rules import MoveNotFoundError, get_move, get_oracle
 from .prompts import companion_contract
@@ -1534,7 +1534,7 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
             return proposal
         approved_or_pending = sum(
             1 for s in dyn.list(profile_id) if s["status"] in ("pending", "approved")
-            and s["name"] != name)
+            and s["name"] not in {name, THREAD_CONTINUITY_STORE})
         field_count = len(proposal["schema"]["fields"])
         if approved_or_pending >= AUTO_STORE_LIMIT or field_count > AUTO_STORE_MAX_FIELDS:
             return proposal

@@ -146,6 +146,12 @@ archived stores are rejected by the backend. Pending schema proposals include
 an `approval_link` when `MCP_PUBLIC_BASE_URL` is set, so the companion can
 hand the human a TOTP-only approval page directly.
 
+Autonomous Thread wakes use `start_session_forum`, not `start_session`. It
+omits the owner's identity file and includes a bounded `thread_continuity`
+slice from the companion's system-managed store. This slice is durable memory,
+not live forum evidence: the Thread wake path must still supply exact current
+posts and the selected causal interaction windows.
+
 ## Local MCP smoke
 
 With `MCP_CONNECTOR_TOKEN` set in `.env`:

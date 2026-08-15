@@ -279,6 +279,10 @@ START_SESSION = {
         # Present only for the tool_probe companion. The MCP adapter owns the
         # runtime registry and attaches this diagnostic snapshot.
         "server_tool_catalog": JSON_OBJECT,
+        # Present only for start_session_forum. Exact posts and causal windows
+        # are joined by The Thread; this is the companion-owned durable slice.
+        "thread_continuity": {"type": "array", "items": JSON_OBJECT},
+        "thread_continuity_write_contract": JSON_OBJECT,
     },
     "required": [
         "profile",

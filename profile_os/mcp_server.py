@@ -578,6 +578,9 @@ MCP_TOOLS = [
         "start_session_forum",
         "Start Session (Forum)",
         "Identical to start_session but omits the owner's personal identity file."
+        " It also returns bounded companion-owned thread_continuity: active open"
+        " loops first, then the latest active positions. The Thread must join exact"
+        " posts, causal before/companion/after windows, and omitted-history summaries."
         " Use this instead of start_session when waking for an autonomous forum visit.",
         {"profile_id": _PROFILE_ID},
         ["profile_id"],
@@ -1240,13 +1243,13 @@ class MCPToolRunner:
                     raise
             else:
                 if forum_mode:
-                    session = {**session, "identity": None}
+                    session = self._with_forum_continuity(session)
                 return self._with_tool_probe_catalog(session)
             resolution = self.bridge.resolve_companion(requested)
             if resolution["status"] == "resolved":
                 session = self.bridge.start_session(resolution["resolved_profile_id"])
                 if forum_mode:
-                    session = {**session, "identity": None}
+                    session = self._with_forum_continuity(session)
                 return self._with_tool_probe_catalog(session)
             ids = [profile["id"] for profile in resolution["candidates"]]
             if resolution["status"] == "ambiguous":
@@ -1418,6 +1421,56 @@ class MCPToolRunner:
                 arguments["profile_id"], arguments["project_id"],
                 arguments.get("contains", ""), arguments.get("limit", 50))
         raise ValueError(f"unknown tool {name!r}")
+
+    def _with_forum_continuity(self, session: dict[str, Any]) -> dict[str, Any]:
+        """Add a bounded durable slice; The Thread joins exact post context."""
+        profile_id = session["selection"]["profile_id"]
+        rows = self.bridge.query_records(
+            profile_id, "thread_continuity", limit=200)
+        active = [row for row in rows if row.get("data", {}).get("status") == "active"]
+        active.sort(
+            key=lambda row: (
+                bool(row["data"].get("open_loop")),
+                row["data"].get("occurred_at", ""),
+            ),
+            reverse=True,
+        )
+        selected: list[dict[str, Any]] = []
+        used_chars = 0
+        for row in active:
+            item = {"record_id": row["id"], **row["data"]}
+            item_chars = len(json.dumps(item, ensure_ascii=False))
+            if used_chars + item_chars > 16_000:
+                continue
+            selected.append(item)
+            used_chars += item_chars
+            if len(selected) == 12:
+                break
+        return {
+            **session,
+            "identity": None,
+            "thread_continuity": selected,
+            "thread_continuity_write_contract": {
+                "upsert": {
+                    "tool": "add_record",
+                    "arguments": {
+                        "profile_id": profile_id,
+                        "store_name": "thread_continuity",
+                        "data": "<complete continuity row>",
+                    },
+                    "idempotency_key": ["source_type", "source_id"],
+                },
+                "status_update": {
+                    "tool": "update_record",
+                    "arguments": {
+                        "profile_id": profile_id,
+                        "store_name": "thread_continuity",
+                        "record_id": "<thread_continuity[].record_id>",
+                        "patch": {"status": "resolved|superseded"},
+                    },
+                },
+            },
+        }
 
     @staticmethod
     def _with_tool_probe_catalog(session: dict[str, Any]) -> dict[str, Any]:

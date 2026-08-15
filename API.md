@@ -73,6 +73,18 @@ subset of these operations over `POST /mcp` and `GET /mcp`; see
   registry `description`; the canonical `lane` prompt section is the sole
   hydrated statement of companion scope. Canonical ids are normalized for
   case and surrounding whitespace. Requires the same `boot` grant.
+- Every profile exposes an approved, system-managed `thread_continuity`
+  dynamic store through the normal record tools. Rows retain a Thread
+  `discussion_id`/source pair plus the companion's `subject`, `position`,
+  optional `stake` and `open_loop`, lifecycle `status`, and timestamps.
+  `add_record` upserts on `(source_type, source_id)`; bulk import is disabled.
+  Ordinary `start_session` advertises the store but never hydrates its rows.
+  MCP `start_session_forum` returns at most 12 active rows under a 16,000
+  character ceiling, prioritizing open loops. The Thread remains responsible
+  for joining exact posts, before/companion/after windows, and gap summaries.
+  Forum hydration also names the existing `add_record` upsert and
+  `update_record` status-update call shapes in
+  `thread_continuity_write_contract`.
 - `POST /profiles/{id}/prompt` accepts any canonical prompt sections → 201, a
   pending approval record. Requires `manage_profile` on that profile.
   Companions can propose an edit to their own prompts; it only takes effect

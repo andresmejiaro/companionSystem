@@ -458,7 +458,7 @@ def test_initialize_and_list_tools(tmp_path, monkeypatch):
     assert r.status_code == 200
     tools = r.json()["result"]["tools"]
     names = {tool["name"] for tool in tools}
-    assert len(names) == 45
+    assert len(names) == 46
     assert {"prepare_closeout", "closeout", "search_memories"} <= names
     assert {"create_project", "list_projects", "join_project", "leave_project",
             "add_project_record", "query_project_records"} <= names
@@ -497,7 +497,7 @@ def test_list_tools_can_omit_output_schemas(tmp_path, monkeypatch):
     r = client.post("/mcp", json=_rpc("tools/list"), headers=_bearer())
     assert r.status_code == 200
     tools = r.json()["result"]["tools"]
-    assert len(tools) == 45
+    assert len(tools) == 46
     for tool in tools:
         assert set(tool) == {"name", "title", "description", "inputSchema", "annotations"}
 
@@ -679,6 +679,43 @@ def test_start_session_uses_exact_id_before_resolution_and_falls_back_on_404():
     assert named["structuredContent"]["selection"]["profile_id"] == "tara"
     assert bridge.start_session_calls == ["tara", "Tara", "tara"]
     assert bridge.resolve_calls == ["Tara"]
+
+
+def test_start_session_forum_hydrates_bounded_active_continuity_without_identity():
+    bridge = FakeBridge()
+    bridge.records = [
+        {
+            "id": "open-new",
+            "store": "thread_continuity",
+            "data": {"status": "active", "occurred_at": "2026-08-15T09:00:00Z",
+                     "open_loop": "Waiting for readback", "position": "Probe it"},
+        },
+        {
+            "id": "active-newer",
+            "store": "thread_continuity",
+            "data": {"status": "active", "occurred_at": "2026-08-15T10:00:00Z",
+                     "open_loop": "", "position": "Accepted is unknown"},
+        },
+        {
+            "id": "resolved",
+            "store": "thread_continuity",
+            "data": {"status": "resolved", "occurred_at": "2026-08-15T11:00:00Z",
+                     "open_loop": "Old", "position": "Done"},
+        },
+    ]
+    client = _mcp_client(bridge)
+
+    result = _call_tool(
+        client, "start_session_forum", {"profile_id": "tara"}
+    ).json()["result"]["structuredContent"]
+
+    assert result["identity"] is None
+    assert [item["record_id"] for item in result["thread_continuity"]] == [
+        "open-new", "active-newer"]
+    contract = result["thread_continuity_write_contract"]
+    assert contract["upsert"]["tool"] == "add_record"
+    assert contract["status_update"]["tool"] == "update_record"
+    assert contract["upsert"]["arguments"]["store_name"] == "thread_continuity"
 
 
 def test_successful_structured_content_matches_declared_output_schema():

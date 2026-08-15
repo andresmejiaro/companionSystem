@@ -31,9 +31,10 @@ import json
 import math
 import random
 import re
+import sqlite3
 import time
 import uuid
-from datetime import date
+from datetime import date, datetime
 
 from .errors import DynStoreConflict, DynStoreNotFound, SchemaError
 from .storage import Store
@@ -79,6 +80,28 @@ FIELD_TYPES = {"string", "number", "integer", "boolean", "date",
                "string_list", "object", "object_list"}
 NAME_RE = re.compile(r"^[a-z][a-z0-9_]{1,63}$")
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+THREAD_CONTINUITY_STORE = "thread_continuity"
+THREAD_CONTINUITY_PURPOSE = (
+    "Per-companion continuity for The Thread: positions, stakes, and open loops. "
+    "Exact forum posts remain owned by The Thread."
+)
+THREAD_CONTINUITY_SCHEMA = {
+    "fields": {
+        "discussion_id": {"type": "string"},
+        "source_type": {"type": "string"},
+        "source_id": {"type": "string"},
+        "subject": {"type": "string"},
+        "position": {"type": "string"},
+        "stake": {"type": "string", "required": False},
+        "open_loop": {"type": "string", "required": False},
+        "status": {"type": "string"},
+        "occurred_at": {"type": "string"},
+        "updated_at": {"type": "string"},
+    }
+}
+THREAD_SOURCE_TYPES = {"post", "reply", "vote", "reaction", "proposal"}
+THREAD_STATUSES = {"active", "resolved", "superseded"}
 
 
 def validate_schema(schema: dict) -> None:
@@ -149,6 +172,14 @@ class DynamicStores:
         if "updated_at" not in columns:
             with self.db:
                 self.db.execute("ALTER TABLE dynamic_records ADD COLUMN updated_at REAL")
+        # The JSON expression index makes forum retries idempotent at the
+        # database boundary, including concurrent retries from wake workers.
+        self.db.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_thread_continuity_source "
+            "ON dynamic_records(profile_id, store_name, "
+            "json_extract(data, '$.source_type'), json_extract(data, '$.source_id')) "
+            f"WHERE store_name='{THREAD_CONTINUITY_STORE}'"
+        )
 
     @property
     def db(self):
@@ -159,6 +190,9 @@ class DynamicStores:
     def propose(self, profile_id: str, name: str, purpose: str,
                 proposed_by: str, schema: dict) -> dict:
         self._store._require_profile(profile_id)
+        if name == THREAD_CONTINUITY_STORE:
+            self.ensure_thread_continuity(profile_id)
+            raise DynStoreConflict("thread_continuity is a system-managed store")
         if not NAME_RE.match(name or ""):
             raise SchemaError("store name must be a lowercase slug (a-z, 0-9, _)")
         if not purpose or not purpose.strip():
@@ -225,6 +259,8 @@ class DynamicStores:
             "SELECT * FROM dynamic_stores WHERE id=?", (row["id"],)).fetchone())
 
     def archive(self, profile_id: str, name: str, actor: str = "admin") -> dict:
+        if name == THREAD_CONTINUITY_STORE:
+            raise DynStoreConflict("thread_continuity is a system-managed store")
         row = self._require(profile_id, name)
         if row["status"] != "approved":
             raise DynStoreConflict(f"only approved stores can be archived (is {row['status']})")
@@ -241,6 +277,8 @@ class DynamicStores:
 
     def update_pending(self, profile_id: str, name: str, purpose: str,
                        schema: dict, actor: str) -> dict:
+        if name == THREAD_CONTINUITY_STORE:
+            raise DynStoreConflict("thread_continuity is a system-managed store")
         row = self._require(profile_id, name)
         if row["status"] != "pending":
             raise DynStoreConflict("only pending stores can be modified; archive and re-propose approved stores")
@@ -256,6 +294,9 @@ class DynamicStores:
     # -- records ---------------------------------------------------------------
 
     def add_record(self, profile_id: str, name: str, data: dict) -> dict:
+        if name == THREAD_CONTINUITY_STORE:
+            self.ensure_thread_continuity(profile_id)
+            self._validate_thread_continuity(data)
         latest = self._require(profile_id, name)
         # Writes go to the latest APPROVED version, even if a newer version
         # is pending or rejected.
@@ -267,15 +308,31 @@ class DynamicStores:
         schema = json.loads(row["schema"])
         validate_record(schema, data)
         rid, now = str(uuid.uuid4()), time.time()
-        with self.db:
-            self.db.execute(
-                "INSERT INTO dynamic_records (id, profile_id, store_name, schema_version,"
-                " data, created_at) VALUES (?,?,?,?,?,?)",
-                (rid, profile_id, name, row["version"], json.dumps(data), now))
+        try:
+            with self.db:
+                self.db.execute(
+                    "INSERT INTO dynamic_records (id, profile_id, store_name, schema_version,"
+                    " data, created_at) VALUES (?,?,?,?,?,?)",
+                    (rid, profile_id, name, row["version"], json.dumps(data), now))
+        except sqlite3.IntegrityError:
+            if name != THREAD_CONTINUITY_STORE:
+                raise
+            existing = self.db.execute(
+                "SELECT id FROM dynamic_records WHERE profile_id=? AND store_name=? "
+                "AND json_extract(data, '$.source_type')=? "
+                "AND json_extract(data, '$.source_id')=?",
+                (profile_id, name, data["source_type"], data["source_id"]),
+            ).fetchone()
+            if existing is None:
+                raise
+            return self.update_record(profile_id, name, existing["id"], data)
         return {"id": rid, "store": name, "schema_version": row["version"],
                 "data": data, "created_at": now}
 
     def add_records(self, profile_id: str, name: str, records: list[dict]) -> list[dict]:
+        if name == THREAD_CONTINUITY_STORE:
+            raise DynStoreConflict(
+                "thread_continuity uses add_record upserts; bulk import is disabled")
         if not records or len(records) > 200:
             raise SchemaError("records must contain between 1 and 200 items")
         row = self._latest_with_status(profile_id, name, ("approved",))
@@ -322,13 +379,21 @@ class DynamicStores:
         if not isinstance(patch, dict) or not patch:
             raise SchemaError("patch must be a non-empty object")
         row = self._require_record(profile_id, name, record_id)
+        previous = json.loads(row["data"])
+        if name == THREAD_CONTINUITY_STORE:
+            for field in ("source_type", "source_id"):
+                if field in patch and patch[field] != previous[field]:
+                    raise SchemaError(
+                        f"{field} is immutable; add_record with the new source instead")
         schema_row = self.db.execute(
             "SELECT schema FROM dynamic_stores WHERE profile_id=? AND name=? AND version=?",
             (profile_id, name, row["schema_version"])).fetchone()
         if schema_row is None:
             raise DynStoreConflict("record schema version no longer exists")
-        data = {**json.loads(row["data"]), **patch}
+        data = {**previous, **patch}
         validate_record(json.loads(schema_row["schema"]), data)
+        if name == THREAD_CONTINUITY_STORE:
+            self._validate_thread_continuity(data)
         now = time.time()
         with self.db:
             self.db.execute("UPDATE dynamic_records SET data=?, updated_at=? WHERE id=?",
@@ -442,6 +507,7 @@ class DynamicStores:
 
     def list(self, profile_id: str) -> list[dict]:
         self._store._require_profile(profile_id)
+        self.ensure_thread_continuity(profile_id)
         rows = self.db.execute(
             "SELECT * FROM dynamic_stores WHERE profile_id=?"
             " ORDER BY name, version DESC", (profile_id,)).fetchall()
@@ -451,6 +517,53 @@ class DynamicStores:
                 seen.add(r["name"])
                 latest.append(self._to_dict(r))
         return latest
+
+    def ensure_thread_continuity(self, profile_id: str) -> dict:
+        """Install the platform-owned continuity lane for one companion."""
+        self._store._require_profile(profile_id)
+        existing = self._latest(profile_id, THREAD_CONTINUITY_STORE)
+        if existing is not None:
+            return self._to_dict(existing)
+        now = time.time()
+        store_id = str(uuid.uuid4())
+        try:
+            with self.db:
+                self.db.execute(
+                    "INSERT INTO dynamic_stores (id, profile_id, name, version, purpose, "
+                    "proposed_by, schema, status, created_at, approved_at) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (store_id, profile_id, THREAD_CONTINUITY_STORE, 1,
+                     THREAD_CONTINUITY_PURPOSE, "system",
+                     json.dumps(THREAD_CONTINUITY_SCHEMA), "approved", now, now),
+                )
+        except sqlite3.IntegrityError:
+            pass
+        return self.get(profile_id, THREAD_CONTINUITY_STORE)
+
+    @staticmethod
+    def _validate_thread_continuity(data: dict) -> None:
+        if data.get("source_type") not in THREAD_SOURCE_TYPES:
+            raise SchemaError(
+                f"source_type must be one of {sorted(THREAD_SOURCE_TYPES)}")
+        if data.get("status") not in THREAD_STATUSES:
+            raise SchemaError(f"status must be one of {sorted(THREAD_STATUSES)}")
+        limits = {
+            "discussion_id": 200,
+            "source_id": 200,
+            "subject": 500,
+            "position": 3000,
+            "stake": 1500,
+            "open_loop": 1500,
+        }
+        for field, limit in limits.items():
+            value = data.get(field, "")
+            if len(value) > limit:
+                raise SchemaError(f"{field} must be at most {limit} characters")
+        for field in ("occurred_at", "updated_at"):
+            try:
+                datetime.fromisoformat(data.get(field, "").replace("Z", "+00:00"))
+            except (AttributeError, ValueError):
+                raise SchemaError(f"{field} must be an ISO-8601 timestamp") from None
 
     def audit_events(self, profile_id: str, name: str | None = None,
                      limit: int = 100) -> list[dict]:
