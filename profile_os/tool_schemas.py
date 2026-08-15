@@ -588,6 +588,27 @@ QUESTION_REVISION = {
                  "correct_count", "wrong_count"],
 }
 
+# MCP keeps LT Rita's practice operations in two compact action tools.  The
+# action remains in the envelope so callers can safely distinguish the result
+# shape without re-reading their request.
+EXAM_ATTEMPT = {
+    "type": "object",
+    "properties": {
+        "action": {"type": "string", "enum": ["draw", "grade", "correct_grade"]},
+        "result": {"oneOf": [QUESTION_DRAW, QUESTION_GRADE]},
+    },
+    "required": ["action", "result"],
+}
+
+EXAM_REVIEW = {
+    "type": "object",
+    "properties": {
+        "action": {"type": "string", "enum": ["diagnose_weaknesses", "revise_answer_key"]},
+        "result": {"oneOf": [QUESTION_WEAKNESS_REPORT, QUESTION_REVISION]},
+    },
+    "required": ["action", "result"],
+}
+
 PROJECT_MEMBER = {
     "type": "object",
     "properties": {"profile_id": {"type": "string"}, "role": {"type": "string"},

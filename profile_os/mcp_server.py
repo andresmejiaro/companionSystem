@@ -50,16 +50,14 @@ from .tool_schemas import (
     DYNAMIC_STORE,
     FILE_CONTENT,
     FILE_META,
+    EXAM_ATTEMPT,
+    EXAM_REVIEW,
     IRONSWORN_RESOURCE,
     IRONSWORN_SHEET,
     MEMORY_EVENT,
     MEMORY_KINDS,
     MESSAGE,
     PROFILE,
-    QUESTION_DRAW,
-    QUESTION_GRADE,
-    QUESTION_REVISION,
-    QUESTION_WEAKNESS_REPORT,
     PROJECT,
     PROJECT_WITH_APPROVAL,
     PROJECT_RECORD,
@@ -454,11 +452,8 @@ MCP_OUTPUT_SCHEMAS = {
     "list_stores": mcp_items(DYNAMIC_STORE),
     "propose_store": DYNAMIC_STORE,
     "query_records": mcp_items(DYNAMIC_RECORD),
-    "draw_exam_questions": QUESTION_DRAW,
-    "grade_exam_questions": QUESTION_GRADE,
-    "regrade_exam_questions": QUESTION_GRADE,
-    "diagnose_exam_weaknesses": QUESTION_WEAKNESS_REPORT,
-    "revise_exam_question_answer": QUESTION_REVISION,
+    "exam_attempt": EXAM_ATTEMPT,
+    "exam_review": EXAM_REVIEW,
     "get_record": DYNAMIC_RECORD,
     "update_record": DYNAMIC_RECORD,
     "delete_record": DELETED_RECORD,
@@ -475,8 +470,7 @@ MCP_OUTPUT_SCHEMAS = {
 _READ_ONLY_TOOLS = {
     "resolve_companion", "discover_companions", "summon_companion", "search_memories", "search_context",
     "read_inbox", "list_files", "read_file", "get_ironsworn_resource",
-    "list_stores", "query_records",
-    "draw_exam_questions", "diagnose_exam_weaknesses", "get_record", "list_projects", "query_project_records",
+    "list_stores", "query_records", "get_record", "list_projects", "query_project_records",
 }
 _OPEN_WORLD_TOOLS = {"send_message", "join_project", "leave_project",
                      "add_project_record", "query_project_records"}
@@ -794,62 +788,39 @@ MCP_TOOLS = [
         ["profile_id", "store_name"],
     ),
     _tool(
-        "draw_exam_questions", "Draw Exam Questions",
-        "LT Rita only. Draw weighted exam questions without replacement and return ready-to-send Markdown plus a 24-hour attempt code.",
+        "exam_attempt", "Exam Attempt",
+        "LT Rita only. Use action draw to create a weighted attempt, grade to score a live attempt, or correct_grade to auditably correct a graded attempt and replay its learning statistics. Each action accepts only its relevant fields.",
         {"companion_name": {"type": "string", "enum": ["lt_rita"]},
-         "where": {"type": "object", "default": {}, "additionalProperties": {
+         "action": {"type": "string", "enum": ["draw", "grade", "correct_grade"]},
+         "where": {"type": "object", "additionalProperties": {
              "anyOf": [
                  {"not": {"type": "object"}}, {"type": "object", "properties": {
                      "eq": {}, "ne": {}, "gt": {}, "gte": {}, "lt": {}, "lte": {},
                      "contains": {}, "in": {"type": "array"},
                  }, "additionalProperties": False, "minProperties": 1, "maxProperties": 1}
              ]}},
-         "count": {"type": "integer", "minimum": 1, "maximum": 20, "default": 1}},
-        ["companion_name"],
-    ),
-    _tool(
-        "grade_exam_questions", "Grade Exam Questions",
-        "LT Rita only. Grade every question in a live attempt. Correct answers return OK and reduce weight; wrong answers return targeted and full explanations and increase weight.",
-        {"companion_name": {"type": "string", "enum": ["lt_rita"]},
-         "attempt_code": {"type": "string"},
+         "count": {"type": "integer", "minimum": 1, "maximum": 20},
+         "attempt_code": {"type": "string", "minLength": 1},
          "answers": {"type": "array", "minItems": 1, "items": {
              "type": "object", "properties": {
                  "position": {"type": "integer", "minimum": 1, "maximum": 20},
                  "selected": {"type": "array", "minItems": 1,
                               "items": {"type": "string", "enum": ["A", "B", "C", "D", "E"]}},
              }, "required": ["position", "selected"], "additionalProperties": False}},
-        },
-        ["companion_name", "attempt_code", "answers"],
+         "reason": {"type": "string", "minLength": 1}},
+        ["companion_name", "action"],
     ),
     _tool(
-        "regrade_exam_questions", "Regrade Exam Questions",
-        "LT Rita only. Correct a consumed graded attempt, with an audit reason, and replay its learning statistics.",
+        "exam_review", "Exam Review",
+        "LT Rita only. Use action diagnose_weaknesses for aggregate performance analysis, or revise_answer_key to auditably override, nullify, or restore a question answer key. Each action accepts only its relevant fields.",
         {"companion_name": {"type": "string", "enum": ["lt_rita"]},
-         "attempt_code": {"type": "string"},
-         "answers": {"type": "array", "minItems": 1, "items": {
-             "type": "object", "properties": {
-                 "position": {"type": "integer", "minimum": 1, "maximum": 20},
-                 "selected": {"type": "array", "minItems": 1,
-                              "items": {"type": "string", "enum": ["A", "B", "C", "D", "E"]}},
-             }, "required": ["position", "selected"], "additionalProperties": False}},
-         "reason": {"type": "string"}},
-        ["companion_name", "attempt_code", "answers", "reason"],
-    ),
-    _tool(
-        "diagnose_exam_weaknesses", "Diagnose Exam Weaknesses",
-        "LT Rita only. Aggregate wrong counts and times shown by domain and sub-skill, ranked by accumulated misses.",
-        {"companion_name": {"type": "string", "enum": ["lt_rita"]}}, ["companion_name"],
-    ),
-    _tool(
-        "revise_exam_question_answer", "Revise Exam Question Answer",
-        "LT Rita only. Auditably override, nullify, or restore the answer key for a question from an attempt and recompute its learning statistics.",
-        {"companion_name": {"type": "string", "enum": ["lt_rita"]},
-         "attempt_code": {"type": "string"},
+         "action": {"type": "string", "enum": ["diagnose_weaknesses", "revise_answer_key"]},
+         "attempt_code": {"type": "string", "minLength": 1},
          "position": {"type": "integer", "minimum": 1, "maximum": 20},
-         "action": {"type": "string", "enum": ["override", "nullify", "restore_extracted"]},
+         "answer_action": {"type": "string", "enum": ["override", "nullify", "restore_extracted"]},
          "selected": {"type": "array", "items": {"type": "string", "enum": ["A", "B", "C", "D", "E"]}},
-         "reason": {"type": "string"}},
-        ["companion_name", "attempt_code", "position", "action", "reason"],
+         "reason": {"type": "string", "minLength": 1}},
+        ["companion_name", "action"],
     ),
     _tool(
         "get_record", "Get Record",
@@ -1277,6 +1248,100 @@ class MCPToolRunner:
         self._closeout_code_state.consume(digest)
         return {"phase": "closed", "closeout": closeout}
 
+    @staticmethod
+    def _require_action_contract(
+        tool: str,
+        action: str,
+        arguments: dict[str, Any],
+        *,
+        required: set[str],
+        allowed: set[str],
+    ) -> None:
+        """Reject action fields that would otherwise be silently ignored.
+
+        MCP's flat input schemas intentionally advertise the union of an
+        action tool's fields.  Enforcing the exact per-action contract here
+        keeps calls unambiguous even from clients that do not validate the
+        schema before dispatch.
+        """
+        keys = set(arguments)
+        missing = sorted(required - keys)
+        if missing:
+            raise ToolBridgeError(
+                400, f"{tool} action {action!r} requires: {', '.join(missing)}")
+        irrelevant = sorted(keys - allowed)
+        if irrelevant:
+            raise ToolBridgeError(
+                400, f"{tool} action {action!r} does not accept: {', '.join(irrelevant)}")
+
+    def _exam_attempt(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        action = arguments.get("action")
+        contracts = {
+            "draw": (
+                {"companion_name", "action"},
+                {"companion_name", "action", "where", "count"},
+            ),
+            "grade": (
+                {"companion_name", "action", "attempt_code", "answers"},
+                {"companion_name", "action", "attempt_code", "answers"},
+            ),
+            "correct_grade": (
+                {"companion_name", "action", "attempt_code", "answers", "reason"},
+                {"companion_name", "action", "attempt_code", "answers", "reason"},
+            ),
+        }
+        if action not in contracts:
+            raise ToolBridgeError(400, "exam_attempt action must be draw, grade, or correct_grade")
+        required, allowed = contracts[action]
+        self._require_action_contract(
+            "exam_attempt", action, arguments, required=required, allowed=allowed)
+        companion_name = arguments["companion_name"]
+        if action == "draw":
+            result = self.bridge.draw_exam_questions(
+                companion_name, where=arguments.get("where"),
+                count=int(arguments.get("count", 1)))
+        elif action == "grade":
+            result = self.bridge.grade_exam_questions(
+                companion_name, arguments["attempt_code"], arguments["answers"])
+        else:
+            result = self.bridge.regrade_exam_questions(
+                companion_name, arguments["attempt_code"], arguments["answers"],
+                arguments["reason"])
+        return {"action": action, "result": result}
+
+    def _exam_review(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        action = arguments.get("action")
+        if action == "diagnose_weaknesses":
+            self._require_action_contract(
+                "exam_review", action, arguments,
+                required={"companion_name", "action"},
+                allowed={"companion_name", "action"})
+            result = self.bridge.diagnose_exam_weaknesses(arguments["companion_name"])
+        elif action == "revise_answer_key":
+            self._require_action_contract(
+                "exam_review", action, arguments,
+                required={"companion_name", "action", "attempt_code", "position",
+                          "answer_action", "reason"},
+                allowed={"companion_name", "action", "attempt_code", "position",
+                         "answer_action", "selected", "reason"})
+            answer_action = arguments["answer_action"]
+            if answer_action not in {"override", "nullify", "restore_extracted"}:
+                raise ToolBridgeError(
+                    400, "answer_action must be override, nullify, or restore_extracted")
+            if answer_action == "override" and "selected" not in arguments:
+                raise ToolBridgeError(400, "override requires selected")
+            if answer_action != "override" and "selected" in arguments:
+                raise ToolBridgeError(
+                    400, f"{answer_action} does not accept selected")
+            result = self.bridge.revise_exam_question_answer(
+                arguments["companion_name"], arguments["attempt_code"],
+                int(arguments["position"]), answer_action, arguments["reason"],
+                arguments.get("selected"))
+        else:
+            raise ToolBridgeError(
+                400, "exam_review action must be diagnose_weaknesses or revise_answer_key")
+        return {"action": action, "result": result}
+
     def call(self, name: str, arguments: dict[str, Any]) -> Any:
         if (name in _SHARED_PROJECT_TOOLS
                 and arguments.get("profile_id") not in _SHARED_PROJECT_PROFILES):
@@ -1427,24 +1492,10 @@ class MCPToolRunner:
                 descending=bool(arguments.get("descending", True)),
                 limit=int(arguments.get("limit", 50)),
             )
-        if name == "draw_exam_questions":
-            return self.bridge.draw_exam_questions(
-                arguments["companion_name"], where=arguments.get("where"),
-                count=int(arguments.get("count", 1)))
-        if name == "grade_exam_questions":
-            return self.bridge.grade_exam_questions(
-                arguments["companion_name"], arguments["attempt_code"], arguments["answers"])
-        if name == "regrade_exam_questions":
-            return self.bridge.regrade_exam_questions(
-                arguments["companion_name"], arguments["attempt_code"], arguments["answers"],
-                arguments["reason"])
-        if name == "diagnose_exam_weaknesses":
-            return self.bridge.diagnose_exam_weaknesses(arguments["companion_name"])
-        if name == "revise_exam_question_answer":
-            return self.bridge.revise_exam_question_answer(
-                arguments["companion_name"], arguments["attempt_code"],
-                int(arguments["position"]), arguments["action"], arguments["reason"],
-                arguments.get("selected"))
+        if name == "exam_attempt":
+            return self._exam_attempt(arguments)
+        if name == "exam_review":
+            return self._exam_review(arguments)
         if name == "get_record":
             return self.bridge.get_record(arguments["profile_id"], arguments["store_name"],
                                           arguments["record_id"], arguments.get("fields"))

@@ -472,7 +472,7 @@ def test_initialize_and_list_tools(tmp_path, monkeypatch):
     assert r.status_code == 200
     tools = r.json()["result"]["tools"]
     names = {tool["name"] for tool in tools}
-    assert len(names) == 36
+    assert len(names) == 33
     assert {"closeout", "search_memories",
             "set_messages_read_status"} <= names
     assert {"create_project", "list_projects", "join_project", "leave_project",
@@ -484,8 +484,12 @@ def test_initialize_and_list_tools(tmp_path, monkeypatch):
                         "mark_message_read", "get_ironsworn_move",
                         "get_ironsworn_oracle", "get_ironsworn_sheet",
                         "roll_ironsworn_dice", "prepare_closeout"}
-    assert not names & {"add_record", "bulk_add_records", "filter_records"}
+    assert not names & {"add_record", "bulk_add_records", "filter_records",
+                        "draw_exam_questions", "grade_exam_questions",
+                        "regrade_exam_questions", "diagnose_exam_weaknesses",
+                        "revise_exam_question_answer"}
     assert "add_records" in names
+    assert {"exam_attempt", "exam_review"} <= names
     assert not names & {"approve_store", "reject_store", "archive_store", "audit"}
     for tool in tools:
         assert set(tool) == {"name", "title", "description", "inputSchema", "outputSchema", "annotations"}
@@ -524,7 +528,7 @@ def test_list_tools_can_omit_output_schemas(tmp_path, monkeypatch):
     r = client.post("/mcp", json=_rpc("tools/list"), headers=_bearer())
     assert r.status_code == 200
     tools = r.json()["result"]["tools"]
-    assert len(tools) == 36
+    assert len(tools) == 33
     for tool in tools:
         assert set(tool) == {"name", "title", "description", "inputSchema", "annotations"}
 
@@ -661,6 +665,11 @@ def test_mcp_tool_flow_and_logging(tmp_path, caplog):
         ("boot_profile", {"profile_id": "sidra"}),
         ("start_session", {"profile_id": "tara"}),
         ("start_session_forum", {"profile_id": "tara"}),
+        ("draw_exam_questions", {"companion_name": "lt_rita"}),
+        ("grade_exam_questions", {"companion_name": "lt_rita"}),
+        ("regrade_exam_questions", {"companion_name": "lt_rita"}),
+        ("diagnose_exam_weaknesses", {"companion_name": "lt_rita"}),
+        ("revise_exam_question_answer", {"companion_name": "lt_rita"}),
     ):
         removed = _call_tool(client, name, arguments).json()
         assert removed["error"]["code"] == -32602
@@ -766,29 +775,30 @@ def test_mcp_tool_flow_and_logging(tmp_path, caplog):
     }).json()["result"]["structuredContent"]["items"]
     assert records[0]["data"]["hotel_name"] == "Inn"
 
-    drawn = _call_tool(client, "draw_exam_questions", {
-        "companion_name": "lt_rita",
+    drawn = _call_tool(client, "exam_attempt", {
+        "companion_name": "lt_rita", "action": "draw",
     }).json()["result"]
     assert drawn["isError"] is False
-    graded = _call_tool(client, "grade_exam_questions", {
-        "companion_name": "lt_rita", "attempt_code": "attempt-1",
+    assert drawn["structuredContent"]["action"] == "draw"
+    graded = _call_tool(client, "exam_attempt", {
+        "companion_name": "lt_rita", "action": "grade", "attempt_code": "attempt-1",
         "answers": [{"position": 1, "selected": ["A"]}],
     }).json()["result"]
-    assert graded["structuredContent"]["markdown"] == "OK"
-    regraded = _call_tool(client, "regrade_exam_questions", {
-        "companion_name": "lt_rita", "attempt_code": "attempt-1",
+    assert graded["structuredContent"]["result"]["markdown"] == "OK"
+    regraded = _call_tool(client, "exam_attempt", {
+        "companion_name": "lt_rita", "action": "correct_grade", "attempt_code": "attempt-1",
         "answers": [{"position": 1, "selected": ["A"]}], "reason": "transcription fix",
     }).json()["result"]
-    assert regraded["structuredContent"]["markdown"] == "OK"
-    diagnosis = _call_tool(client, "diagnose_exam_weaknesses", {
-        "companion_name": "lt_rita",
+    assert regraded["structuredContent"]["result"]["markdown"] == "OK"
+    diagnosis = _call_tool(client, "exam_review", {
+        "companion_name": "lt_rita", "action": "diagnose_weaknesses",
     }).json()["result"]
-    assert diagnosis["structuredContent"]["items"][0]["wrong_count"] == 3
-    revised = _call_tool(client, "revise_exam_question_answer", {
+    assert diagnosis["structuredContent"]["result"]["items"][0]["wrong_count"] == 3
+    revised = _call_tool(client, "exam_review", {
         "companion_name": "lt_rita", "attempt_code": "attempt-1", "position": 1,
-        "action": "nullify", "reason": "bad key",
+        "action": "revise_answer_key", "answer_action": "nullify", "reason": "bad key",
     }).json()["result"]
-    assert revised["structuredContent"]["answer_status"] == "nullified"
+    assert revised["structuredContent"]["result"]["answer_status"] == "nullified"
 
 
 def test_summon_companion_uses_exact_id_before_resolution_and_falls_back_on_404():
@@ -922,19 +932,20 @@ def test_successful_structured_content_matches_declared_output_schema():
     call_and_validate("leave_project", {
         "profile_id": "lumenis", "project_id": project["id"],
     })
-    call_and_validate("draw_exam_questions", {"companion_name": "lt_rita"})
-    call_and_validate("grade_exam_questions", {"companion_name": "lt_rita",
-                                                 "attempt_code": "attempt-1",
-                                                 "answers": [{"position": 1, "selected": ["A"]}]})
-    call_and_validate("regrade_exam_questions", {"companion_name": "lt_rita",
-                                                   "attempt_code": "attempt-1",
-                                                   "answers": [{"position": 1, "selected": ["A"]}],
-                                                   "reason": "transcription correction"})
-    call_and_validate("diagnose_exam_weaknesses", {"companion_name": "lt_rita"})
-    call_and_validate("revise_exam_question_answer", {"companion_name": "lt_rita",
-                                                        "attempt_code": "attempt-1",
-                                                        "position": 1, "action": "nullify",
-                                                        "reason": "bad key"})
+    call_and_validate("exam_attempt", {"companion_name": "lt_rita", "action": "draw"})
+    call_and_validate("exam_attempt", {"companion_name": "lt_rita", "action": "grade",
+                                         "attempt_code": "attempt-1",
+                                         "answers": [{"position": 1, "selected": ["A"]}]})
+    call_and_validate("exam_attempt", {"companion_name": "lt_rita", "action": "correct_grade",
+                                         "attempt_code": "attempt-1",
+                                         "answers": [{"position": 1, "selected": ["A"]}],
+                                         "reason": "transcription correction"})
+    call_and_validate("exam_review", {"companion_name": "lt_rita",
+                                        "action": "diagnose_weaknesses"})
+    call_and_validate("exam_review", {"companion_name": "lt_rita",
+                                        "action": "revise_answer_key", "attempt_code": "attempt-1",
+                                        "position": 1, "answer_action": "nullify",
+                                        "reason": "bad key"})
 
 
 @pytest.mark.parametrize("arguments, expected", [
@@ -946,6 +957,31 @@ def test_get_ironsworn_resource_enforces_resource_specific_name(arguments, expec
     result = _call_tool(
         _mcp_client(FakeBridge()), "get_ironsworn_resource", arguments,
     ).json()["result"]
+
+    assert result["isError"] is True
+    assert expected in result["content"][0]["text"]
+
+
+@pytest.mark.parametrize("name,arguments,expected", [
+    ("exam_attempt", {"companion_name": "lt_rita", "action": "draw",
+                      "attempt_code": "attempt-1"}, "does not accept: attempt_code"),
+    ("exam_attempt", {"companion_name": "lt_rita", "action": "grade",
+                      "attempt_code": "attempt-1"}, "requires: answers"),
+    ("exam_attempt", {"companion_name": "lt_rita", "action": "correct_grade",
+                      "attempt_code": "attempt-1", "answers": [{"position": 1, "selected": ["A"]}],
+                      "reason": "fix", "where": {}}, "does not accept: where"),
+    ("exam_review", {"companion_name": "lt_rita", "action": "diagnose_weaknesses",
+                     "attempt_code": "attempt-1"}, "does not accept: attempt_code"),
+    ("exam_review", {"companion_name": "lt_rita", "action": "revise_answer_key",
+                     "attempt_code": "attempt-1", "position": 1,
+                     "answer_action": "override", "reason": "fix"}, "override requires selected"),
+    ("exam_review", {"companion_name": "lt_rita", "action": "revise_answer_key",
+                     "attempt_code": "attempt-1", "position": 1,
+                     "answer_action": "nullify", "selected": ["A"], "reason": "fix"},
+     "nullify does not accept selected"),
+])
+def test_exam_action_tools_reject_missing_and_irrelevant_fields(name, arguments, expected):
+    result = _call_tool(_mcp_client(FakeBridge()), name, arguments).json()["result"]
 
     assert result["isError"] is True
     assert expected in result["content"][0]["text"]
