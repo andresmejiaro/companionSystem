@@ -268,15 +268,13 @@ START_SESSION = {
             },
             "required": ["profile_id", "family_id", "variant_label", "settled"],
         },
-        "routing_guidance": {"type": "string"},
         "companion_directory": array_of(JSON_OBJECT),
         "data_sources": {
             "type": "object",
             "properties": {
                 "profile_stores": {"type": "array", "items": JSON_OBJECT},
-                "joined_projects": {"type": "array", "items": JSON_OBJECT},
             },
-            "required": ["profile_stores", "joined_projects"],
+            "required": ["profile_stores"],
         },
         "server_time": {
             "type": "object",
@@ -310,7 +308,6 @@ START_SESSION = {
         "recent_exchanges",
         "you_got_mail",
         "selection",
-        "routing_guidance",
         "companion_directory",
         "data_sources",
         "server_time",

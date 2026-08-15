@@ -67,9 +67,8 @@ subset of these operations over `POST /mcp` and `GET /mcp`; see
   "iso": "2026-07-10T12:00:00+00:00", "madrid_iso":
   "2026-07-10T14:00:00+02:00"}`). It deliberately omits memory IDs,
   tags, timestamps, full history, and closeout archives. `selection` names
-  the active profile/family/variant and sets `settled: true`; sibling
-  variants are omitted from `routing_guidance` so the model does not reopen
-  an already-resolved choice. Its compact `profile` object omits the legacy
+  the active profile/family/variant and sets `settled: true`. Its compact
+  `profile` object omits the legacy
   registry `description`; the canonical `lane` prompt section is the sole
   hydrated statement of companion scope. Canonical ids are normalized for
   case and surrounding whitespace. Requires the same `boot` grant.

@@ -158,10 +158,9 @@ class FakeBridge:
                 "variant_label": profile["variant_label"],
                 "settled": True,
             },
-            "routing_guidance": "Selection is settled.",
             "companion_directory": self.list_profiles(),
             "data_sources": {
-                "profile_stores": [], "joined_projects": [],
+                "profile_stores": [],
             },
             "server_time": {
                 "unix": 1,
@@ -185,7 +184,6 @@ class FakeBridge:
                 "variant_label": "",
                 "settled": True,
             },
-            "routing_guidance": "Selection is settled.",
             "server_time": {
                 "unix": 1,
                 "iso": "1970-01-01T00:00:01+00:00",

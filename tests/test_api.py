@@ -91,7 +91,7 @@ def test_list_and_get_profiles(client):
     assert client.get("/profiles/ghost").status_code == 404
 
 
-def test_profile_discovery_metadata_and_startup_routing_guidance(client):
+def test_profile_discovery_metadata_and_session_selection(client):
     created = client.post("/profiles", json={
         "id": "travel", "display_name": "Travel", "description": "Plans trips.",
             "signature": "🧭", "who_you_are": "", "what_you_do": "",
@@ -116,7 +116,7 @@ def test_profile_discovery_metadata_and_startup_routing_guidance(client):
         session["system_contracts"]["companion"]
     )
     assert any(item["id"] == "travel" for item in session["companion_directory"])
-    assert session["data_sources"]["joined_projects"] == []
+    assert set(session["data_sources"]) == {"profile_stores"}
     assert [item["name"] for item in session["data_sources"]["profile_stores"]] == [
         "thread_continuity"]
     assert session["selection"] == {
@@ -125,7 +125,7 @@ def test_profile_discovery_metadata_and_startup_routing_guidance(client):
         "variant_label": "",
         "settled": True,
     }
-    assert "Do not ask whether the user meant a sibling" in session["routing_guidance"]
+    assert "routing_guidance" not in session
 
     system = client.post("/profiles", json={
         "id": "system_notifier", "display_name": "System Notifier",
@@ -174,7 +174,7 @@ def test_profile_resolver_and_family_aware_session_routing(client):
     session = client.post("/profiles/vera/session").json()
     assert session["selection"]["settled"] is True
     assert session["selection"]["profile_id"] == "vera"
-    assert "Dr Vera" not in session["routing_guidance"]
+    assert "routing_guidance" not in session
     assert any(item["id"] == "dr_vera" for item in session["companion_directory"])
 
     normalized_session = client.post("/profiles/VERA/session").json()
@@ -356,8 +356,7 @@ def test_context_search_and_prepare_closeout_omit_redundant_sources(client):
     sources = session.json()["data_sources"]
     assert sources["profile_stores"][0]["name"] == "case_status"
     assert sources["profile_stores"][0]["schema"] == schema
-    assert sources["joined_projects"][0]["id"] == project["id"]
-    assert sources["joined_projects"][0]["schema"] == schema
+    assert set(sources) == {"profile_stores"}
 
 
 def test_context_search_stays_within_the_companion_and_joined_projects(client):

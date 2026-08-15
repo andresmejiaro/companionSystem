@@ -884,7 +884,6 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
             principal_id is None or access.allowed(principal_id, "records:read", profile_id)
         )
         profile_stores = []
-        joined_projects = []
         if can_read_records:
             profile_stores = [
                 {
@@ -893,7 +892,6 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
                 }
                 for item in _wrap(dyn.list, profile_id)
             ]
-            joined_projects = _wrap(projects.list_for, profile_id)
         return {
             **booted,
             "system_contracts": (
@@ -917,14 +915,7 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
             "companion_directory": companion_directory,
             "data_sources": {
                 "profile_stores": profile_stores,
-                "joined_projects": joined_projects,
             },
-            "routing_guidance": (
-                f"Active profile: {profile['display_name']} [{profile['id']}]. "
-                "This selection is settled. Do not ask whether the user meant a sibling "
-                "variant and do not switch profiles unless the user explicitly requests "
-                "a switch. The structured companion_directory is the current cast."
-            ),
             "server_time": {
                 "unix": now,
                 "iso": datetime.fromtimestamp(now, tz=timezone.utc).isoformat(),
