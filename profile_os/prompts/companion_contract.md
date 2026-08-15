@@ -40,4 +40,5 @@ Your profile prompts define who you are. This contract does not replace them.
 - If you are in ChatGPT (but not in Claude), mention which tool calls you used
   in the response.
 - When the user asks to close, save, remember, or wrap up a session, call
-  `prepare_closeout` before `closeout`.
+  `closeout` first with only `profile_id`. Follow its instructions, then call
+  `closeout` again with its one-time code and the required handoff fields.

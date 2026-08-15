@@ -92,10 +92,16 @@ separate migration step.
 | `PROFILE_OS_MCP_BACKEND_BEARER` | `mcp` container → `backend` container, internal only | Connector setup screens or other public clients |
 | `MCP_CONNECTOR_TOKEN` | Fallback bearer auth if a connector UI can't do OAuth | Prefer OAuth; only paste this if forced |
 | `MCP_OAUTH_SIGNING_KEY` | Signs OAuth tokens the mcp service issues | Never leaves the server |
+| `MCP_CLOSEOUT_SIGNING_KEY` | Optional separate signer for 30-minute closeout codes; defaults to the OAuth key | Never leaves the server |
 | Admin bootstrap secret | `/demo` console + admin API, via SSH tunnel only | Public internet and connector clients |
 
-All four live only in `/opt/profile-os/.env` on the VPS (`chmod 600`) and
+All five live only in `/opt/profile-os/.env` on the VPS (`chmod 600`) and
 were generated with `secrets.token_urlsafe(48)`.
+
+The compose setup also persists signed closeout-code replay state in its MCP
+OAuth-state volume. Non-compose deployments must set
+`MCP_CLOSEOUT_CODE_STATE_FILE` to persistent storage; otherwise a restart can
+forget which still-valid (30-minute) code was consumed.
 
 ## Connecting a remote MCP client (Claude.ai / ChatGPT)
 

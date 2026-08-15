@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import secrets
+import sqlite3
 import threading
 import time
 import urllib.parse
@@ -39,7 +40,7 @@ from .request_limits import (
 )
 from .tool_schemas import (
     APPROVAL,
-    CLOSEOUT,
+    MCP_CLOSEOUT,
     CONTEXT_RESULT,
     DELETED_FILE,
     DELETED_MEMORY,
@@ -55,7 +56,6 @@ from .tool_schemas import (
     MEMORY_KINDS,
     MESSAGE,
     PROFILE,
-    PREPARE_CLOSEOUT,
     QUESTION_DRAW,
     QUESTION_GRADE,
     QUESTION_REVISION,
@@ -450,8 +450,7 @@ MCP_OUTPUT_SCHEMAS = {
     "get_ironsworn_resource": IRONSWORN_RESOURCE,
     "update_ironsworn_sheet": IRONSWORN_SHEET,
     "delete_file": DELETED_FILE,
-    "closeout": CLOSEOUT,
-    "prepare_closeout": PREPARE_CLOSEOUT,
+    "closeout": MCP_CLOSEOUT,
     "list_stores": mcp_items(DYNAMIC_STORE),
     "propose_store": DYNAMIC_STORE,
     "query_records": mcp_items(DYNAMIC_RECORD),
@@ -480,7 +479,6 @@ _READ_ONLY_TOOLS = {
     "read_inbox", "list_files", "read_file", "get_ironsworn_resource",
     "list_stores", "query_records",
     "filter_records", "draw_exam_questions", "diagnose_exam_weaknesses", "get_record", "list_projects", "query_project_records",
-    "prepare_closeout",
 }
 _OPEN_WORLD_TOOLS = {"send_message", "join_project", "leave_project",
                      "add_project_record", "query_project_records"}
@@ -733,18 +731,14 @@ MCP_TOOLS = [
         ["profile_id", "filename"],
     ),
     _tool(
-        "prepare_closeout",
-        "Prepare Closeout",
-        "Use this when the user says they are done with the session. This gives instructions on how to update stores and use closeout when done.",
-        {"profile_id": _PROFILE_ID},
-        ["profile_id"],
-    ),
-    _tool(
         "closeout",
         "Close Out",
-        "End with facts, concrete continuity texture (rapport, tone, pacing, or an unresolved concern), and one short verbatim meaningful exchange; notes are optional.",
+        "Call with only profile_id to prepare a closeout and receive a one-time code. "
+        "Then call again with code, facts, texture, exchange, and optional notes to persist it. "
+        "The code is profile-bound, expires in 30 minutes, and is single-use.",
         {
             "profile_id": _PROFILE_ID,
+            "code": {"type": "string", "minLength": 1},
             "facts": {"type": "string", "maxLength": 1200},
             "texture": {"type": "string", "maxLength": 700,
                         "description": "Concrete cues that help the next session retain rapport and tone; not a generic adjective. Preserve only what remains relevant."},
@@ -752,7 +746,7 @@ MCP_TOOLS = [
                          "description": "Verbatim 1–3-turn excerpt; never paraphrase or paste a transcript."},
             "notes": {"type": "string", "maxLength": 700, "default": ""},
         },
-        ["profile_id", "facts", "texture", "exchange"],
+        [],
     ),
     _tool(
         "list_stores",
@@ -966,6 +960,13 @@ class MCPSettings:
     public_base_url: str | None = None
     oauth_issuer: str | None = None
     oauth_signing_key: str = field(default_factory=lambda: secrets.token_urlsafe(32))
+    # Keep this secret stable across deploys. It signs 30-minute MCP-only
+    # closeout preparation codes; it is intentionally distinct from backend
+    # credentials and may default to the OAuth signing key for compatibility.
+    closeout_signing_key: str | None = None
+    # Put this on a persistent volume in deployment so consumed-code replay
+    # protection survives an MCP process/container restart.
+    closeout_code_state_file: str | None = None
     oauth_token_ttl_seconds: int = 60 * 60 * 24 * 30
     oauth_allowed_redirect_hosts: list[str] = field(default_factory=lambda: [
         "claude.ai",
@@ -994,6 +995,17 @@ class MCPSettings:
                 os.environ.get("MCP_OAUTH_SIGNING_KEY")
                 or os.environ.get("MCP_CONNECTOR_TOKEN")
                 or secrets.token_urlsafe(32)
+            ),
+            closeout_signing_key=(
+                os.environ.get("MCP_CLOSEOUT_SIGNING_KEY")
+                or os.environ.get("MCP_OAUTH_SIGNING_KEY")
+                or os.environ.get("MCP_CONNECTOR_TOKEN")
+                or None
+            ),
+            closeout_code_state_file=(
+                os.environ.get("MCP_CLOSEOUT_CODE_STATE_FILE")
+                or ((os.environ.get("MCP_OAUTH_STATE_FILE") + ".closeout.sqlite3")
+                    if os.environ.get("MCP_OAUTH_STATE_FILE") else None)
             ),
             oauth_token_ttl_seconds=ttl,
             oauth_allowed_redirect_hosts=redirect_hosts,
@@ -1126,9 +1138,163 @@ class OAuthState:
             return item, None
 
 
+class CloseoutCodeState:
+    """Durable, one-time closeout-code reservations.
+
+    The code itself is signed and therefore survives an MCP process restart as
+    long as its signing key remains stable.  This SQLite ledger is deliberately
+    separate from the Profile OS backend: MCP preparation is an adapter-only
+    concern, while the existing HTTP prepare/closeout routes remain unchanged.
+    A lease prevents two callers from persisting the same closeout concurrently;
+    a failed backend write releases the lease, while a successful write consumes
+    it.  Deployments must put this file on persistent storage (and keep
+    ``MCP_CLOSEOUT_SIGNING_KEY`` stable) if they restart during the 30-minute
+    code lifetime.
+    """
+
+    def __init__(self, state_file: str):
+        self.state_file = state_file
+        parent = os.path.dirname(state_file)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        self._connection = sqlite3.connect(state_file, check_same_thread=False)
+        self._connection.execute("PRAGMA journal_mode=WAL")
+        self._connection.execute("PRAGMA busy_timeout=5000")
+        self._connection.execute(
+            """CREATE TABLE IF NOT EXISTS mcp_closeout_codes (
+                digest TEXT PRIMARY KEY,
+                expires_at INTEGER NOT NULL,
+                state TEXT NOT NULL CHECK(state IN ('leased', 'consumed')),
+                updated_at INTEGER NOT NULL
+            )"""
+        )
+        self._connection.commit()
+        self._lock = threading.Lock()
+
+    def acquire(self, digest: str, expires_at: int) -> bool:
+        """Atomically lease an unused code, returning False on replay."""
+        now = int(time.time())
+        with self._lock:
+            connection = self._connection
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                connection.execute(
+                    "DELETE FROM mcp_closeout_codes WHERE expires_at <= ?", (now,))
+                row = connection.execute(
+                    "SELECT state FROM mcp_closeout_codes WHERE digest=?", (digest,)
+                ).fetchone()
+                if row is not None:
+                    connection.rollback()
+                    return False
+                connection.execute(
+                    "INSERT INTO mcp_closeout_codes(digest, expires_at, state, updated_at) "
+                    "VALUES (?, ?, 'leased', ?)",
+                    (digest, expires_at, now),
+                )
+                connection.commit()
+                return True
+            except Exception:
+                connection.rollback()
+                raise
+
+    def release(self, digest: str) -> None:
+        """Release a lease after a failed backend write; it was not consumed."""
+        with self._lock:
+            self._connection.execute(
+                "DELETE FROM mcp_closeout_codes WHERE digest=? AND state='leased'", (digest,)
+            )
+            self._connection.commit()
+
+    def consume(self, digest: str) -> None:
+        with self._lock:
+            cursor = self._connection.execute(
+                "UPDATE mcp_closeout_codes SET state='consumed', updated_at=? "
+                "WHERE digest=? AND state='leased'",
+                (int(time.time()), digest),
+            )
+            self._connection.commit()
+        if cursor.rowcount != 1:
+            raise RuntimeError("closeout code lease was lost before consumption")
+
+
 class MCPToolRunner:
-    def __init__(self, bridge: ToolBridge):
+    def __init__(
+        self,
+        bridge: ToolBridge,
+        *,
+        closeout_signing_key: str,
+        closeout_code_state: CloseoutCodeState,
+    ):
         self.bridge = bridge
+        self._closeout_signing_key = closeout_signing_key.encode("utf-8")
+        self._closeout_code_state = closeout_code_state
+
+    def _prepare_closeout(self, profile_id: str) -> dict[str, Any]:
+        prepared = self.bridge.prepare_closeout(profile_id)
+        expires_at = int(time.time()) + 30 * 60
+        payload = {
+            "v": 1,
+            "p": profile_id,
+            "exp": expires_at,
+            "n": secrets.token_urlsafe(18),
+        }
+        encoded = _b64url(json.dumps(
+            payload, sort_keys=True, separators=(",", ":"),
+        ).encode("utf-8"))
+        signature = _b64url(hmac.new(
+            self._closeout_signing_key, encoded.encode("ascii"), hashlib.sha256,
+        ).digest())
+        return {
+            "phase": "prepared",
+            "profile_id": profile_id,
+            "code": f"poscloseout.v1.{encoded}.{signature}",
+            "expires_at": expires_at,
+            "instructions": prepared["instructions"],
+        }
+
+    def _decode_closeout_code(self, code: Any) -> tuple[str, int, str]:
+        if not isinstance(code, str):
+            raise ToolBridgeError(400, "closeout code must be a string")
+        parts = code.split(".")
+        if len(parts) != 4 or parts[:2] != ["poscloseout", "v1"]:
+            raise ToolBridgeError(400, "invalid closeout code")
+        encoded, supplied_signature = parts[2], parts[3]
+        expected_signature = _b64url(hmac.new(
+            self._closeout_signing_key, encoded.encode("ascii"), hashlib.sha256,
+        ).digest())
+        if not hmac.compare_digest(expected_signature, supplied_signature):
+            raise ToolBridgeError(400, "invalid closeout code")
+        try:
+            payload = json.loads(_b64url_decode(encoded).decode("utf-8"))
+            profile_id = payload["p"]
+            expires_at = int(payload["exp"])
+            nonce = payload["n"]
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError, UnicodeDecodeError):
+            raise ToolBridgeError(400, "invalid closeout code") from None
+        if (payload.get("v") != 1 or not isinstance(profile_id, str)
+                or not profile_id or not isinstance(nonce, str) or not nonce):
+            raise ToolBridgeError(400, "invalid closeout code")
+        if expires_at <= int(time.time()):
+            raise ToolBridgeError(400, "closeout code has expired; prepare again")
+        return profile_id, expires_at, hashlib.sha256(code.encode("utf-8")).hexdigest()
+
+    def _complete_closeout(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        profile_id, expires_at, digest = self._decode_closeout_code(arguments["code"])
+        if not self._closeout_code_state.acquire(digest, expires_at):
+            raise ToolBridgeError(409, "closeout code has already been used or is in progress")
+        try:
+            closeout = self.bridge.closeout(
+                profile_id,
+                arguments["facts"],
+                arguments["texture"],
+                arguments["exchange"],
+                arguments.get("notes", ""),
+            )
+        except Exception:
+            self._closeout_code_state.release(digest)
+            raise
+        self._closeout_code_state.consume(digest)
+        return {"phase": "closed", "closeout": closeout}
 
     def call(self, name: str, arguments: dict[str, Any]) -> Any:
         if (name in _SHARED_PROJECT_TOOLS
@@ -1248,15 +1414,18 @@ class MCPToolRunner:
         if name == "delete_file":
             return self.bridge.delete_file(arguments["profile_id"], arguments["filename"])
         if name == "closeout":
-            return self.bridge.closeout(
-                arguments["profile_id"],
-                arguments["facts"],
-                arguments["texture"],
-                arguments["exchange"],
-                arguments.get("notes", ""),
+            keys = set(arguments)
+            if keys == {"profile_id"}:
+                return self._prepare_closeout(arguments["profile_id"])
+            completion_required = {"code", "facts", "texture", "exchange"}
+            completion_allowed = completion_required | {"notes"}
+            if completion_required <= keys and keys <= completion_allowed:
+                return self._complete_closeout(arguments)
+            raise ToolBridgeError(
+                400,
+                "closeout accepts exactly {profile_id} to prepare, or "
+                "{code, facts, texture, exchange, notes?} to persist",
             )
-        if name == "prepare_closeout":
-            return self.bridge.prepare_closeout(arguments["profile_id"])
         if name == "list_stores":
             return self.bridge.list_stores(arguments["profile_id"])
         if name == "propose_store":
@@ -1684,7 +1853,13 @@ def create_mcp_app(
     app.state.settings = settings
     app.state.oauth = oauth_state or OAuthState(
         state_file=os.environ.get("MCP_OAUTH_STATE_FILE"))
-    app.state.runner = MCPToolRunner(bridge or ToolBridge())
+    closeout_state_file = settings.closeout_code_state_file or os.path.join(
+        "/tmp", "profile-os-mcp-closeout-codes.sqlite3")
+    app.state.runner = MCPToolRunner(
+        bridge or ToolBridge(),
+        closeout_signing_key=settings.closeout_signing_key or settings.oauth_signing_key,
+        closeout_code_state=CloseoutCodeState(closeout_state_file),
+    )
     app.state.admin_verify = admin_verify or default_admin_verify
     _max_request_bytes = configured_max_request_bytes()
     _authorize_hits: dict[str, list[float]] = {}

@@ -86,6 +86,7 @@ class FakeBridge:
         self.approvals = {}
         self.start_session_calls = []
         self.resolve_calls = []
+        self.closeout_calls = []
 
     def list_profiles(self):
         return [
@@ -248,6 +249,7 @@ class FakeBridge:
         }
 
     def closeout(self, profile_id, facts, texture, exchange, notes=""):
+        self.closeout_calls.append((profile_id, facts, texture, exchange, notes))
         return {"id": "closeout-1", "profile_id": profile_id,
                 "facts": facts, "texture": texture, "exchange": exchange,
                 "notes": notes, "new_state": facts, "created_at": 1}
@@ -458,8 +460,8 @@ def test_initialize_and_list_tools(tmp_path, monkeypatch):
     assert r.status_code == 200
     tools = r.json()["result"]["tools"]
     names = {tool["name"] for tool in tools}
-    assert len(names) == 39
-    assert {"prepare_closeout", "closeout", "search_memories",
+    assert len(names) == 38
+    assert {"closeout", "search_memories",
             "set_messages_read_status"} <= names
     assert {"create_project", "list_projects", "join_project", "leave_project",
             "add_project_record", "query_project_records"} <= names
@@ -469,7 +471,7 @@ def test_initialize_and_list_tools(tmp_path, monkeypatch):
                         "update_pending_store", "withdraw_pending_store",
                         "mark_message_read", "get_ironsworn_move",
                         "get_ironsworn_oracle", "get_ironsworn_sheet",
-                        "roll_ironsworn_dice"}
+                        "roll_ironsworn_dice", "prepare_closeout"}
     assert not names & {"approve_store", "reject_store", "archive_store", "audit"}
     for tool in tools:
         assert set(tool) == {"name", "title", "description", "inputSchema", "outputSchema", "annotations"}
@@ -480,11 +482,9 @@ def test_initialize_and_list_tools(tmp_path, monkeypatch):
     assert discover["annotations"]["readOnlyHint"] is True
     closeout = next(tool for tool in tools if tool["name"] == "closeout")
     assert set(closeout["inputSchema"]["properties"]) == {
-        "profile_id", "facts", "texture", "exchange", "notes",
+        "profile_id", "code", "facts", "texture", "exchange", "notes",
     }
-    assert closeout["inputSchema"]["required"] == [
-        "profile_id", "facts", "texture", "exchange",
-    ]
+    assert closeout["inputSchema"]["required"] == []
     assert closeout["inputSchema"]["properties"]["notes"]["maxLength"] == 700
     assert "rapport" in closeout["inputSchema"]["properties"]["texture"]["description"]
     annotations = {tool["name"]: tool["annotations"] for tool in tools}
@@ -501,7 +501,7 @@ def test_initialize_and_list_tools(tmp_path, monkeypatch):
     assert "description" not in summon["outputSchema"]["properties"]["profile"]["properties"]
     assert summon["inputSchema"]["properties"]["mode"]["enum"] == ["conversation", "forum"]
     assert summon["inputSchema"]["properties"]["mode"]["default"] == "conversation"
-    assert next(tool for tool in tools if tool["name"] == "prepare_closeout")["description"] == "Use this when the user says they are done with the session. This gives instructions on how to update stores and use closeout when done."
+    assert "one-time code" in closeout["description"]
 
 
 def test_list_tools_can_omit_output_schemas(tmp_path, monkeypatch):
@@ -510,7 +510,7 @@ def test_list_tools_can_omit_output_schemas(tmp_path, monkeypatch):
     r = client.post("/mcp", json=_rpc("tools/list"), headers=_bearer())
     assert r.status_code == 200
     tools = r.json()["result"]["tools"]
-    assert len(tools) == 39
+    assert len(tools) == 38
     for tool in tools:
         assert set(tool) == {"name", "title", "description", "inputSchema", "annotations"}
 
@@ -523,6 +523,102 @@ def test_list_tools_omit_output_schemas_by_default(tmp_path, monkeypatch):
     tools = r.json()["result"]["tools"]
     discovered = next(tool for tool in tools if tool["name"] == "discover_companions")
     assert "outputSchema" not in discovered
+
+
+def test_closeout_is_two_phase_profile_bound_single_use_and_retriable_on_failure(monkeypatch):
+    bridge = FakeBridge()
+    client = _mcp_client(bridge)
+
+    prepared = _call_tool(client, "closeout", {"profile_id": "tara"}).json()["result"]["structuredContent"]
+    assert prepared["phase"] == "prepared"
+    assert prepared["profile_id"] == "tara"
+    assert prepared["expires_at"] > 0
+
+    # A code has no caller-selectable profile in phase two: it always closes
+    # the profile in its signed payload.
+    completed = _call_tool(client, "closeout", {
+        "code": prepared["code"], "facts": "f", "texture": "t", "exchange": "x",
+    }).json()["result"]["structuredContent"]
+    assert completed["phase"] == "closed"
+    assert bridge.closeout_calls[-1][0] == "tara"
+
+    replay = _call_tool(client, "closeout", {
+        "code": prepared["code"], "facts": "f", "texture": "t", "exchange": "x",
+    }).json()["result"]
+    assert replay["isError"] is True
+    assert replay["structuredContent"]["error"]["status"] == 409
+
+    tampered = prepared["code"][:-1] + ("A" if prepared["code"][-1] != "A" else "B")
+    invalid = _call_tool(client, "closeout", {
+        "code": tampered, "facts": "f", "texture": "t", "exchange": "x",
+    }).json()["result"]
+    assert invalid["isError"] is True
+
+    failed_prepared = _call_tool(client, "closeout", {"profile_id": "tara"}).json()["result"]["structuredContent"]
+    original_closeout = bridge.closeout
+
+    def fail_once(*args, **kwargs):
+        bridge.closeout = original_closeout
+        raise ToolBridgeError(503, "temporary backend failure")
+
+    bridge.closeout = fail_once
+    failed = _call_tool(client, "closeout", {
+        "code": failed_prepared["code"], "facts": "f", "texture": "t", "exchange": "x",
+    }).json()["result"]
+    assert failed["isError"] is True
+    # Persistence failed, so this code was released rather than consumed.
+    retried = _call_tool(client, "closeout", {
+        "code": failed_prepared["code"], "facts": "f", "texture": "t", "exchange": "x",
+    }).json()["result"]["structuredContent"]
+    assert retried["phase"] == "closed"
+
+    now = 1_700_000_000
+    monkeypatch.setattr("profile_os.mcp_server.time.time", lambda: now)
+    expiring = _call_tool(client, "closeout", {"profile_id": "tara"}).json()["result"]["structuredContent"]
+    monkeypatch.setattr("profile_os.mcp_server.time.time", lambda: now + 30 * 60 + 1)
+    expired = _call_tool(client, "closeout", {
+        "code": expiring["code"], "facts": "f", "texture": "t", "exchange": "x",
+    }).json()["result"]
+    assert expired["isError"] is True
+    assert "expired" in expired["content"][0]["text"]
+
+
+@pytest.mark.parametrize("arguments", [
+    {},
+    {"profile_id": "tara", "facts": "f"},
+    {"code": "nope", "profile_id": "tara", "facts": "f", "texture": "t", "exchange": "x"},
+    {"code": "nope", "facts": "f", "texture": "t"},
+])
+def test_closeout_rejects_empty_mixed_and_incomplete_arguments(arguments):
+    result = _call_tool(_mcp_client(), "closeout", arguments).json()["result"]
+    assert result["isError"] is True
+
+
+def test_closeout_replay_protection_survives_mcp_restart(tmp_path):
+    settings_kwargs = {
+        "auth_required": True,
+        "connector_tokens": [CONNECTOR_TOKEN],
+        "allowed_origins": [ORIGIN],
+        "public_base_url": PUBLIC_BASE,
+        "oauth_issuer": PUBLIC_BASE,
+        "oauth_signing_key": "stable-test-oauth-key",
+        "closeout_signing_key": "stable-test-closeout-key",
+        "closeout_code_state_file": str(tmp_path / "closeout-codes.sqlite3"),
+    }
+    first = ThreadedASGIClient(create_mcp_app(
+        bridge=FakeBridge(), settings=MCPSettings(**settings_kwargs)))
+    prepared = _call_tool(first, "closeout", {"profile_id": "tara"}).json()["result"]["structuredContent"]
+    _call_tool(first, "closeout", {
+        "code": prepared["code"], "facts": "f", "texture": "t", "exchange": "x",
+    })
+
+    restarted = ThreadedASGIClient(create_mcp_app(
+        bridge=FakeBridge(), settings=MCPSettings(**settings_kwargs)))
+    replay = _call_tool(restarted, "closeout", {
+        "code": prepared["code"], "facts": "f", "texture": "t", "exchange": "x",
+    }).json()["result"]
+    assert replay["isError"] is True
+    assert replay["structuredContent"]["error"]["status"] == 409
 
 
 def test_post_responses_use_sse_when_accepted(tmp_path):
@@ -609,19 +705,22 @@ def test_mcp_tool_flow_and_logging(tmp_path, caplog):
     }).json()["result"]["structuredContent"]
     assert deleted == {"deleted": True, "event_id": hits[0]["id"]}
     assert not bridge.search_memories("tara", "MCP memory")
-    prepared = _call_tool(client, "prepare_closeout", {
+    prepared = _call_tool(client, "closeout", {
         "profile_id": "tara",
     }).json()["result"]["structuredContent"]
-    assert set(prepared) == {"profile_id", "instructions"}
+    assert set(prepared) == {"phase", "profile_id", "code", "expires_at", "instructions"}
+    assert prepared["phase"] == "prepared"
     assert prepared["profile_id"] == "tara"
 
-    assert _call_tool(client, "closeout", {
-        "profile_id": "tara",
+    closed = _call_tool(client, "closeout", {
+        "code": prepared["code"],
         "facts": "MCP state stored.",
         "texture": "Routine test.",
         "exchange": "User: done.\nAssistant: recorded.",
         "notes": "done",
-    }).json()["result"]["isError"] is False
+    }).json()["result"]["structuredContent"]
+    assert closed["phase"] == "closed"
+    assert closed["closeout"]["profile_id"] == "tara"
 
     proposed = _call_tool(client, "propose_store", {
         "profile_id": "tara",
@@ -779,8 +878,12 @@ def test_successful_structured_content_matches_declared_output_schema():
     call_and_validate("update_ironsworn_sheet", {
         "profile_id": "tara", "updates": {"momentum": 3},
     })
-    call_and_validate("prepare_closeout", {"profile_id": "tara"})
-    call_and_validate("closeout", {"profile_id": "tara", "facts": "f", "texture": "t", "exchange": "u"})
+    prepared = call_and_validate("closeout", {"profile_id": "tara"})
+    assert prepared["phase"] == "prepared"
+    closed = call_and_validate("closeout", {
+        "code": prepared["code"], "facts": "f", "texture": "t", "exchange": "u",
+    })
+    assert closed["phase"] == "closed"
     call_and_validate("propose_store", {"profile_id": "tara", "name": "items", "purpose": "p",
                                          "schema": {"fields": {"name": {"type": "string"}}}})
     bridge.store_approved = True

@@ -341,6 +341,24 @@ PREPARE_CLOSEOUT = {
     "additionalProperties": False,
 }
 
+# ``closeout`` is deliberately a two-call MCP tool.  The first call prepares
+# the handoff and returns a one-time code; the second persists the closeout.
+# This flattened union avoids ``oneOf`` because some connector validators do
+# not support it reliably.
+MCP_CLOSEOUT = {
+    "type": "object",
+    "properties": {
+        "phase": {"type": "string", "enum": ["prepared", "closed"]},
+        "profile_id": {"type": "string"},
+        "code": {"type": "string"},
+        "expires_at": {"type": "number"},
+        "instructions": array_of({"type": "string"}),
+        "closeout": CLOSEOUT,
+    },
+    "required": ["phase"],
+    "additionalProperties": False,
+}
+
 APPROVAL = {
     "type": "object",
     "properties": {

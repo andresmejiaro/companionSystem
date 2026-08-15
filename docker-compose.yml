@@ -54,6 +54,11 @@ services:
       MCP_AUTH_REQUIRED: ${MCP_AUTH_REQUIRED:-1}
       MCP_OAUTH_ACCESS_TOKEN_TTL_SECONDS: ${MCP_OAUTH_ACCESS_TOKEN_TTL_SECONDS:-}
       MCP_OAUTH_STATE_FILE: /app/oauth-state/clients.json
+      # Durable one-time closeout-code replay protection. Keep it beside the
+      # OAuth state on the persistent volume so a redeploy cannot replay a
+      # still-valid preparation code.
+      MCP_CLOSEOUT_CODE_STATE_FILE: /app/oauth-state/closeout-codes.sqlite3
+      MCP_CLOSEOUT_SIGNING_KEY: ${MCP_CLOSEOUT_SIGNING_KEY:-}
     command:
       - uvicorn
       - profile_os.mcp_server:app

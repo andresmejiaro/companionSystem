@@ -87,7 +87,7 @@ many profiles — grants are many-to-many.
 | `boot(profile_id)` | `POST /profiles/{id}/boot` | `boot` |
 | `remember(profile_id, kind, content, tags=[])` | `POST /profiles/{id}/memories` | `remember` |
 | `search_context(profile_id, query, limit=20)` | `GET /profiles/{id}/context/search` | `search`, `records:read` |
-| `closeout(profile_id, notes, new_state)` | `POST /profiles/{id}/closeout` | `closeout` |
+| `closeout(profile_id, notes, new_state)` | `POST /profiles/{id}/closeout` | `closeout` (MCP uses a prepare-code-confirm flow; the HTTP route is unchanged) |
 | `propose_store(profile_id, name, purpose, schema)` | `POST /profiles/{id}/stores` | `stores:propose` |
 | `list_stores(profile_id)` | `GET /profiles/{id}/stores` | `records:read` |
 | `get_store(profile_id, name)` | `GET /profiles/{id}/stores/{name}` | `records:read` |
