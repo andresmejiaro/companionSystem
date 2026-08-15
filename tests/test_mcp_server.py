@@ -458,7 +458,7 @@ def test_initialize_and_list_tools(tmp_path, monkeypatch):
     assert r.status_code == 200
     tools = r.json()["result"]["tools"]
     names = {tool["name"] for tool in tools}
-    assert len(names) == 42
+    assert len(names) == 39
     assert {"prepare_closeout", "closeout", "search_memories",
             "set_messages_read_status"} <= names
     assert {"create_project", "list_projects", "join_project", "leave_project",
@@ -467,7 +467,9 @@ def test_initialize_and_list_tools(tmp_path, monkeypatch):
                         "boot_profile", "start_session", "start_session_forum",
                         "update_own_description", "retract_approval",
                         "update_pending_store", "withdraw_pending_store",
-                        "mark_message_read"}
+                        "mark_message_read", "get_ironsworn_move",
+                        "get_ironsworn_oracle", "get_ironsworn_sheet",
+                        "roll_ironsworn_dice"}
     assert not names & {"approve_store", "reject_store", "archive_store", "audit"}
     for tool in tools:
         assert set(tool) == {"name", "title", "description", "inputSchema", "outputSchema", "annotations"}
@@ -490,6 +492,11 @@ def test_initialize_and_list_tools(tmp_path, monkeypatch):
     assert annotations["delete_file"]["destructiveHint"] is True
     assert annotations["delete_record"]["destructiveHint"] is True
     assert annotations["summon_companion"]["readOnlyHint"] is True
+    ironsworn = next(tool for tool in tools if tool["name"] == "get_ironsworn_resource")
+    assert ironsworn["inputSchema"]["required"] == ["profile_id", "resource"]
+    assert ironsworn["inputSchema"]["properties"]["resource"]["enum"] == [
+        "move", "oracle", "sheet",
+    ]
     summon = next(tool for tool in tools if tool["name"] == "summon_companion")
     assert "description" not in summon["outputSchema"]["properties"]["profile"]["properties"]
     assert summon["inputSchema"]["properties"]["mode"]["enum"] == ["conversation", "forum"]
@@ -503,7 +510,7 @@ def test_list_tools_can_omit_output_schemas(tmp_path, monkeypatch):
     r = client.post("/mcp", json=_rpc("tools/list"), headers=_bearer())
     assert r.status_code == 200
     tools = r.json()["result"]["tools"]
-    assert len(tools) == 42
+    assert len(tools) == 39
     for tool in tools:
         assert set(tool) == {"name", "title", "description", "inputSchema", "annotations"}
 
@@ -754,17 +761,24 @@ def test_successful_structured_content_matches_declared_output_schema():
     call_and_validate("remember", {"profile_id": "tara", "kind": "note", "content": "x"})
     call_and_validate("search_memories", {"profile_id": "tara", "query": "x"})
     call_and_validate("search_context", {"profile_id": "tara", "query": "x"})
-    call_and_validate("get_ironsworn_move", {
-        "profile_id": "tara", "move_name": "Face Danger",
+    move = call_and_validate("get_ironsworn_resource", {
+        "profile_id": "tara", "resource": "move", "name": "Face Danger",
     })
-    call_and_validate("get_ironsworn_oracle", {
-        "profile_id": "tara", "oracle_name": "CORE: ACTION",
+    assert move["resource"] == "move"
+    assert move["item"]["move"] == "Face Danger"
+    oracle = call_and_validate("get_ironsworn_resource", {
+        "profile_id": "tara", "resource": "oracle", "name": "CORE: ACTION",
     })
-    call_and_validate("get_ironsworn_sheet", {"profile_id": "tara"})
+    assert oracle["resource"] == "oracle"
+    assert oracle["item"]["oracle"] == "CORE: ACTION"
+    sheet = call_and_validate("get_ironsworn_resource", {
+        "profile_id": "tara", "resource": "sheet",
+    })
+    assert sheet["resource"] == "sheet"
+    assert sheet["item"]["filename"] == "oak-sheet.json"
     call_and_validate("update_ironsworn_sheet", {
         "profile_id": "tara", "updates": {"momentum": 3},
     })
-    call_and_validate("roll_ironsworn_dice", {"profile_id": "tara"})
     call_and_validate("prepare_closeout", {"profile_id": "tara"})
     call_and_validate("closeout", {"profile_id": "tara", "facts": "f", "texture": "t", "exchange": "u"})
     call_and_validate("propose_store", {"profile_id": "tara", "name": "items", "purpose": "p",
@@ -803,6 +817,20 @@ def test_successful_structured_content_matches_declared_output_schema():
                                                         "attempt_code": "attempt-1",
                                                         "position": 1, "action": "nullify",
                                                         "reason": "bad key"})
+
+
+@pytest.mark.parametrize("arguments, expected", [
+    ({"profile_id": "tara", "resource": "move"}, "name is required"),
+    ({"profile_id": "tara", "resource": "oracle", "name": "   "}, "name is required"),
+    ({"profile_id": "tara", "resource": "sheet", "name": "oak"}, "name must be omitted"),
+])
+def test_get_ironsworn_resource_enforces_resource_specific_name(arguments, expected):
+    result = _call_tool(
+        _mcp_client(FakeBridge()), "get_ironsworn_resource", arguments,
+    ).json()["result"]
+
+    assert result["isError"] is True
+    assert expected in result["content"][0]["text"]
 
 
 @pytest.mark.parametrize("name,arguments", [

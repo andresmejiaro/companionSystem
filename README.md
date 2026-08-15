@@ -25,12 +25,13 @@ Markdown files for prompts, JSONL closeout logs, and plain files under the
 configured data directory.
 
 The optional Ironsworn rules surface exposes indexed Lodestar move and oracle
-text through the read-only `get_ironsworn_move` and `get_ironsworn_oracle` MCP
-tools. The generated Markdown corpus lives in the companion's persistent file
-store and is intentionally ignored by git.
+text, plus Oak's editable sheet, through the read-only
+`get_ironsworn_resource` MCP tool. The generated Markdown corpus lives in the
+companion's persistent file store and is intentionally ignored by git.
 Oak's optional JSON sheet is likewise exposed as exact reads and dotted-path
 assignments. It intentionally encodes no caps, burns, move outcomes, or other
-Ironsworn rules; the raw dice tool returns only one d6 and two d10s.
+Ironsworn rules. Roll dice with the host's code execution rather than the MCP
+server.
 
 ## Quick start: local development
 

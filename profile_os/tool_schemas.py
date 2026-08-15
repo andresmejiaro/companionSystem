@@ -161,6 +161,17 @@ IRONSWORN_SHEET = {
     "required": ["filename", "updated_at", "sheet"],
 }
 
+IRONSWORN_RESOURCE = {
+    "type": "object",
+    "properties": {
+        "resource": {"type": "string", "enum": ["move", "oracle", "sheet"]},
+        "item": {
+            "oneOf": [IRONSWORN_MOVE, IRONSWORN_ORACLE, IRONSWORN_SHEET],
+        },
+    },
+    "required": ["resource", "item"],
+}
+
 IRONSWORN_DICE = {
     "type": "object",
     "properties": {

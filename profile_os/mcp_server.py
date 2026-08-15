@@ -49,10 +49,8 @@ from .tool_schemas import (
     DYNAMIC_STORE,
     FILE_CONTENT,
     FILE_META,
-    IRONSWORN_MOVE,
-    IRONSWORN_ORACLE,
+    IRONSWORN_RESOURCE,
     IRONSWORN_SHEET,
-    IRONSWORN_DICE,
     MEMORY_EVENT,
     MEMORY_KINDS,
     MESSAGE,
@@ -449,11 +447,8 @@ MCP_OUTPUT_SCHEMAS = {
     "write_file": FILE_META,
     "list_files": mcp_items(FILE_META),
     "read_file": FILE_CONTENT,
-    "get_ironsworn_move": IRONSWORN_MOVE,
-    "get_ironsworn_oracle": IRONSWORN_ORACLE,
-    "get_ironsworn_sheet": IRONSWORN_SHEET,
+    "get_ironsworn_resource": IRONSWORN_RESOURCE,
     "update_ironsworn_sheet": IRONSWORN_SHEET,
-    "roll_ironsworn_dice": IRONSWORN_DICE,
     "delete_file": DELETED_FILE,
     "closeout": CLOSEOUT,
     "prepare_closeout": PREPARE_CLOSEOUT,
@@ -482,9 +477,8 @@ MCP_OUTPUT_SCHEMAS = {
 
 _READ_ONLY_TOOLS = {
     "resolve_companion", "discover_companions", "summon_companion", "search_memories", "search_context",
-    "read_inbox", "list_files", "read_file", "get_ironsworn_move",
-    "get_ironsworn_oracle", "list_stores", "query_records",
-    "get_ironsworn_sheet", "roll_ironsworn_dice",
+    "read_inbox", "list_files", "read_file", "get_ironsworn_resource",
+    "list_stores", "query_records",
     "filter_records", "draw_exam_questions", "diagnose_exam_weaknesses", "get_record", "list_projects", "query_project_records",
     "prepare_closeout",
 }
@@ -697,41 +691,24 @@ MCP_TOOLS = [
         ["profile_id", "filename"],
     ),
     _tool(
-        "get_ironsworn_move",
-        "Get Ironsworn Move",
-        "Return the full authoritative Lodestar text for one move. For Aster GM:"
-        " read the stored move index at session start, then call this tool before"
-        " resolving or explaining a move. Do not reconstruct move outcomes from memory.",
+        "get_ironsworn_resource",
+        "Get Ironsworn Resource",
+        "Read one authoritative Ironsworn resource. For a move or oracle, read its"
+        " stored index at session start and pass its exact indexed name; do not"
+        " reconstruct rules or tables from memory. For sheet, omit name; it returns"
+        " Oak's complete editable JSON sheet and applies no game rules.",
         {
             "profile_id": _PROFILE_ID,
-            "move_name": {
-                "type": "string",
-                "description": "Exact move name from Ironsworn-Lodestar-Moves-Index.md",
+            "resource": {
+                "type": "string", "enum": ["move", "oracle", "sheet"],
+                "description": "Resource to read.",
+            },
+            "name": {
+                "type": "string", "minLength": 1,
+                "description": "Exact indexed move or oracle name; omit for sheet.",
             },
         },
-        ["profile_id", "move_name"],
-    ),
-    _tool(
-        "get_ironsworn_oracle",
-        "Get Ironsworn Oracle",
-        "Return the full authoritative Lodestar text for one oracle. For Aster GM:"
-        " read the stored oracle index at session start and pass the exact indexed"
-        " name. Do not reconstruct oracle tables from memory.",
-        {
-            "profile_id": _PROFILE_ID,
-            "oracle_name": {
-                "type": "string",
-                "description": "Exact oracle name from Ironsworn-Lodestar-Oracles-Index.md",
-            },
-        },
-        ["profile_id", "oracle_name"],
-    ),
-    _tool(
-        "get_ironsworn_sheet",
-        "Get Ironsworn Sheet",
-        "Read Oak's complete editable JSON sheet. This tool applies no game rules.",
-        {"profile_id": _PROFILE_ID},
-        ["profile_id"],
+        ["profile_id", "resource"],
     ),
     _tool(
         "update_ironsworn_sheet",
@@ -747,14 +724,6 @@ MCP_TOOLS = [
             },
         },
         ["profile_id", "updates"],
-    ),
-    _tool(
-        "roll_ironsworn_dice",
-        "Roll Ironsworn Dice",
-        "Roll and report one raw d6 and two raw d10s. Returns no modifiers,"
-        " score, hit category, burn advice, or sheet mutation.",
-        {"profile_id": _PROFILE_ID},
-        ["profile_id"],
     ),
     _tool(
         "delete_file",
@@ -1257,19 +1226,25 @@ class MCPToolRunner:
             return self.bridge.list_files(arguments["profile_id"])
         if name == "read_file":
             return self.bridge.read_file(arguments["profile_id"], arguments["filename"])
-        if name == "get_ironsworn_move":
-            return self.bridge.get_ironsworn_move(
-                arguments["profile_id"], arguments["move_name"])
-        if name == "get_ironsworn_oracle":
-            return self.bridge.get_ironsworn_oracle(
-                arguments["profile_id"], arguments["oracle_name"])
-        if name == "get_ironsworn_sheet":
-            return self.bridge.get_ironsworn_sheet(arguments["profile_id"])
+        if name == "get_ironsworn_resource":
+            resource = arguments["resource"]
+            resource_name = arguments.get("name")
+            if resource in {"move", "oracle"}:
+                if not isinstance(resource_name, str) or not resource_name.strip():
+                    raise ToolBridgeError(400, f"name is required for Ironsworn {resource}")
+                getter = (self.bridge.get_ironsworn_move if resource == "move"
+                          else self.bridge.get_ironsworn_oracle)
+                item = getter(arguments["profile_id"], resource_name)
+            elif resource == "sheet":
+                if resource_name is not None:
+                    raise ToolBridgeError(400, "name must be omitted for Ironsworn sheet")
+                item = self.bridge.get_ironsworn_sheet(arguments["profile_id"])
+            else:
+                raise ToolBridgeError(400, "resource must be one of: move, oracle, sheet")
+            return {"resource": resource, "item": item}
         if name == "update_ironsworn_sheet":
             return self.bridge.update_ironsworn_sheet(
                 arguments["profile_id"], arguments["updates"])
-        if name == "roll_ironsworn_dice":
-            return self.bridge.roll_ironsworn_dice(arguments["profile_id"])
         if name == "delete_file":
             return self.bridge.delete_file(arguments["profile_id"], arguments["filename"])
         if name == "closeout":
