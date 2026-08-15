@@ -40,9 +40,7 @@ def _raw_question(number=1, correct=(0,), option_count=4, explanations=True,
 @pytest.fixture
 def practice(tmp_path):
     store = Store(tmp_path / "data")
-    store.create_profile(
-        QUESTION_PROFILE, "LT Rita", "identity", "role", family_id="rita",
-        variant_label="LT", is_family_default=False)
+    store.create_profile(QUESTION_PROFILE, "LT Rita", "identity", "role")
     service = QuestionPractice(store, DynamicStores(store))
     yield service
     store.close()

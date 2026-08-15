@@ -121,8 +121,6 @@ def test_profile_discovery_metadata_and_session_selection(client):
         "thread_continuity"]
     assert session["selection"] == {
         "profile_id": "tara",
-        "family_id": "tara",
-        "variant_label": "",
         "settled": True,
     }
     assert "routing_guidance" not in session
@@ -141,22 +139,16 @@ def test_profile_discovery_metadata_and_session_selection(client):
     assert client.put("/profiles/travel/description", json={"signature": "abcdef"}).status_code == 422
 
 
-def test_profile_resolver_and_family_aware_session_routing(client):
+def test_profile_resolver_and_session_routing(client):
     assert client.post("/profiles", json={
         "id": "vera",
         "display_name": "Vera",
         "aliases": ["life vera"],
-        "family_id": "vera_family",
-        "variant_label": "life",
-        "is_family_default": True,
     }).status_code == 201
     assert client.post("/profiles", json={
         "id": "dr_vera",
         "display_name": "Dr Vera",
         "aliases": ["doctor vera"],
-        "family_id": "vera_family",
-        "variant_label": "clinical",
-        "is_family_default": False,
     }).status_code == 201
 
     exact = client.get("/profiles/resolve", params={"q": " VeRa "}).json()
@@ -166,10 +158,6 @@ def test_profile_resolver_and_family_aware_session_routing(client):
     alias = client.get("/profiles/resolve", params={"q": "Doctor Vera"}).json()
     assert alias["match_basis"] == "alias"
     assert alias["resolved_profile_id"] == "dr_vera"
-
-    family = client.get("/profiles/resolve", params={"q": "vera_family"}).json()
-    assert family["match_basis"] == "family_default"
-    assert family["resolved_profile_id"] == "vera"
 
     session = client.post("/profiles/vera/session").json()
     assert session["selection"]["settled"] is True
@@ -185,12 +173,10 @@ def test_routing_metadata_update_trims_display_name(client):
     response = client.put("/profiles/tara/routing", json={
         "display_name": "  Tara  ",
         "aliases": ["food duck"],
-        "variant_label": "bookkeeping",
     })
     assert response.status_code == 200
     assert response.json()["display_name"] == "Tara"
     assert response.json()["aliases"] == ["food duck"]
-    assert response.json()["variant_label"] == "bookkeeping"
 
 
 def test_root_directory_and_admin_shortcuts(client, monkeypatch):
@@ -346,6 +332,7 @@ def test_context_search_and_prepare_closeout_omit_redundant_sources(client):
         "Reconcile relevant profile stores and joined shared-project stores; query the owning source when current state matters.",
         "Update existing records for the same real thing and identify duplicates or contradictions; flag conflicts the schema cannot resolve.",
         "Write the companion-appropriate transient, front-of-mind memories.",
+        "Write daily intake summary and flag uncalibrated products.",
         "Complete the existing closeout form.",
         "After doing the thing, use `closeout` to finish the session.",
         "Let the companion close in its own voice.",

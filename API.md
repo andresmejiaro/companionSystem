@@ -15,14 +15,13 @@ subset of these operations over `POST /mcp` and `GET /mcp`; see
   ```json
   {"id": "tara", "display_name": "Tara", "description": "...", "signature": "🍎",
    "allowed_tools": ["log_food"], "memory_policy": {"kinds": ["fact"]},
-   "closeout_rules": "...", "aliases": ["food duck"], "family_id": "tara",
-   "variant_label": "", "is_family_default": true, "created_at": 1751640000.0}
+   "closeout_rules": "...", "aliases": ["food duck"], "created_at": 1751640000.0}
   ```
 - `GET /profiles/resolve?q=` → deterministic routing result with status
   `resolved`, `ambiguous`, or `not_found`. Precedence is normalized exact
-  canonical id, unique alias, unique display name, then family default.
+  canonical id, unique alias, then unique display name.
 - `POST /profiles` `{id, display_name, description?, signature?, who_you_are?, what_you_do?,
-  aliases?, family_id?, variant_label?, is_family_default?}` → 201,
+  aliases?}` → 201,
   profile object. Requires the global `create_profile` grant; the creating
   principal automatically receives the owner grant bundle on the new
   profile (see ACCESS_CONTROL.md). `id` must match `[a-z0-9_-]{1,64}`; 409
@@ -39,10 +38,9 @@ subset of these operations over `POST /mcp` and `GET /mcp`; see
   secret. Same `id`/409/422 rules as `POST /profiles`. Also reachable as a
   form at `GET /create-profile` on the mcp service.
 - `PUT /profiles/{id}/routing`
-  `{display_name?, aliases?, family_id?, variant_label?, is_family_default?}`
+  `{display_name?, aliases?}`
   → updated profile. Requires `manage_profile`; display names and aliases
-  are whitespace-normalized, and selecting a family default clears the
-  prior default in that family.
+  are whitespace-normalized.
 - `POST /enroll` `{invite_token, display_name, public_key}` → 201
   `{principal_id, key_id}`. Unauthenticated, single-use; consumes an invite
   minted locally via `python -m profile_os.mint_invite`. 410 if the invite
@@ -67,7 +65,7 @@ subset of these operations over `POST /mcp` and `GET /mcp`; see
   "iso": "2026-07-10T12:00:00+00:00", "madrid_iso":
   "2026-07-10T14:00:00+02:00"}`). It deliberately omits memory IDs,
   tags, timestamps, full history, and closeout archives. `selection` names
-  the active profile/family/variant and sets `settled: true`. Its compact
+  the active profile and sets `settled: true`. Its compact
   `profile` object omits the legacy
   registry `description`; the canonical `lane` prompt section is the sole
   hydrated statement of companion scope. Canonical ids are normalized for
@@ -85,8 +83,10 @@ subset of these operations over `POST /mcp` and `GET /mcp`; see
   Forum hydration also names the existing `add_records` upsert and
   `update_record` status-update call shapes in
   `thread_continuity_write_contract`.
-- `POST /profiles/{id}/prompt` accepts any canonical prompt sections → 201, a
-  pending approval record. Requires `manage_profile` on that profile.
+- `POST /profiles/{id}/prompt` accepts any canonical prompt sections plus
+  `closeout_rules` → 201, a pending approval record. `closeout_rules` is the
+  companion-specific addition to the immutable global closeout baseline; it
+  cannot replace or edit that baseline. Requires `manage_profile` on that profile.
   Companions can propose an edit to their own prompts; it only takes effect
   once an admin approves it with a live TOTP code — see "TOTP-gated
   approvals" in ACCESS_CONTROL.md.

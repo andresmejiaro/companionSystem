@@ -45,9 +45,8 @@ Exposed MCP tools:
 List-returning tool results expose structured content as `{"items": [...]}`.
 `summon_companion` first attempts the supplied normalized canonical id directly.
 Only a backend 404 invokes server-side resolution, with precedence exact id,
-unique alias, unique display name, then family default. A successful session
-returns `selection.settled=true`; clients must not ask about sibling variants
-or switch profiles unless the user explicitly requests it.
+unique alias, then unique display name. A successful session returns the
+active companion in `selection`.
 For ChatGPT compatibility, `outputSchema` is omitted from advertised tool
 definitions by default; this avoids a strict schema validator rejecting the
 entire advertised tool list. Set `MCP_OMIT_OUTPUT_SCHEMAS=0`

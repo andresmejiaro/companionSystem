@@ -169,7 +169,8 @@ TOOLS = [
            "signature": {"type": "string"}, "lane": {"type": "string"},
            "voice": {"type": "string"},
            "what_you_do": {"type": "string"},
-           "how_you_keep_context": {"type": "string"}},
+           "how_you_keep_context": {"type": "string"},
+           "closeout_rules": {"type": "string"}},
           ["profile_id"]),
     _tool("retract_approval", "Retract your own pending approval proposal.",
           {"approval_id": {"type": "string"}}, ["approval_id"]),
@@ -433,11 +434,13 @@ class ToolBridge:
     def propose_prompt_edit(self, profile_id: str, who_you_are: str | None = None,
                             what_you_do: str | None = None, *, signature: str | None = None,
                             lane: str | None = None, voice: str | None = None,
-                            how_you_keep_context: str | None = None):
+                            how_you_keep_context: str | None = None,
+                            closeout_rules: str | None = None):
         return self._request("POST", f"/profiles/{profile_id}/prompt",
                              json={"who_you_are": who_you_are, "signature": signature,
                                    "lane": lane, "voice": voice, "what_you_do": what_you_do,
-                                   "how_you_keep_context": how_you_keep_context})
+                                   "how_you_keep_context": how_you_keep_context,
+                                   "closeout_rules": closeout_rules})
 
     def retract_approval(self, approval_id: str):
         return self._request("POST", f"/approvals/{approval_id}/retract")

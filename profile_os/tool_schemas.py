@@ -58,14 +58,10 @@ PROFILE = {
         "memory_policy": JSON_OBJECT,
         "closeout_rules": {"type": "string"},
         "aliases": array_of({"type": "string"}),
-        "family_id": {"type": "string"},
-        "variant_label": {"type": "string"},
-        "is_family_default": {"type": "boolean"},
         "created_at": {"type": "number"},
     },
     "required": ["id", "display_name", "description", "signature", "allowed_tools",
-                 "memory_policy", "closeout_rules", "aliases", "family_id", "profile_kind",
-                 "variant_label", "is_family_default", "created_at"],
+                 "memory_policy", "closeout_rules", "aliases", "profile_kind", "created_at"],
 }
 
 # Session hydration only carries registry fields that can affect the active
@@ -78,14 +74,12 @@ HYDRATION_PROFILE = {
         key: PROFILE["properties"][key]
         for key in (
             "id", "display_name", "signature", "profile_kind", "allowed_tools",
-            "memory_policy", "closeout_rules", "aliases", "family_id",
-            "variant_label", "is_family_default",
+            "memory_policy", "closeout_rules", "aliases",
         )
     },
     "required": [
         "id", "display_name", "signature", "profile_kind", "allowed_tools",
-        "memory_policy", "closeout_rules", "aliases", "family_id",
-        "variant_label", "is_family_default",
+        "memory_policy", "closeout_rules", "aliases",
     ],
 }
 
@@ -106,7 +100,7 @@ PROFILE_RESOLUTION = {
         "status": {"type": "string", "enum": ["resolved", "ambiguous", "not_found"]},
         "match_basis": {
             "type": "string",
-            "enum": ["exact_id", "alias", "display_name", "family_default", "none"],
+            "enum": ["exact_id", "alias", "display_name", "none"],
         },
         "resolved_profile_id": STRING_OR_NULL,
         "candidates": array_of(PROFILE),
@@ -262,11 +256,9 @@ START_SESSION = {
             "type": "object",
             "properties": {
                 "profile_id": {"type": "string"},
-                "family_id": {"type": "string"},
-                "variant_label": {"type": "string"},
                 "settled": {"type": "boolean"},
             },
-            "required": ["profile_id", "family_id", "variant_label", "settled"],
+            "required": ["profile_id", "settled"],
         },
         "companion_directory": array_of(JSON_OBJECT),
         "data_sources": {

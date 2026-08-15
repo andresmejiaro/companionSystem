@@ -115,9 +115,14 @@ def test_prompt_edit_propose_and_approve_flow(auth_client, clock):
     access.create_credential(owner["id"], "k", "owner-secret")
     access.grant(owner["id"], "manage_profile", profile_id="tara")
     access.grant(owner["id"], "boot", profile_id="tara")
+    access.grant(owner["id"], "closeout", profile_id="tara")
+    access.grant(owner["id"], "records:read", profile_id="tara")
 
     r = client.post("/profiles/tara/prompt", headers=_bearer("owner-secret"),
-                    json={"who_you_are": "New base prompt."})
+                    json={
+                        "who_you_are": "New base prompt.",
+                        "closeout_rules": "Write Tara's daily ledger record.",
+                    })
     assert r.status_code == 201, r.text
     approval_id = r.json()["id"]
     assert r.json()["status"] == "pending"
@@ -125,6 +130,11 @@ def test_prompt_edit_propose_and_approve_flow(auth_client, clock):
     listed = client.get("/approvals", headers=_bearer("root-secret"))
     assert listed.status_code == 200
     assert any(a["id"] == approval_id for a in listed.json())
+
+    detail = client.get(f"/approvals/{approval_id}", headers=_bearer("root-secret"))
+    assert detail.json()["current_sections"]["closeout_rules"] == (
+        "Write daily intake summary and flag uncalibrated products."
+    )
 
     bad = client.post(f"/approvals/{approval_id}/decide", headers=_bearer("root-secret"),
                       json={"approve": True, "totp_code": "000000"})
@@ -138,6 +148,13 @@ def test_prompt_edit_propose_and_approve_flow(auth_client, clock):
     # applied to the actual profile prompt
     booted = client.post("/profiles/tara/boot", headers=_bearer("owner-secret"))
     assert booted.json()["who_you_are"] == "New base prompt."
+    assert booted.json()["profile"]["closeout_rules"] == "Write Tara's daily ledger record."
+
+    prepared = client.post(
+        "/profiles/tara/closeout/prepare", headers=_bearer("owner-secret")
+    ).json()
+    assert prepared["instructions"][3] == "Write Tara's daily ledger record."
+    assert "Complete the existing closeout form." in prepared["instructions"]
 
     # can't decide twice
     again = client.post(f"/approvals/{approval_id}/decide", headers=_bearer("root-secret"),

@@ -19,16 +19,35 @@ def test_profiles_seeded(store):
     assert {"sidra", "tara"} <= ids
 
 
-def test_profile_resolution_precedence_and_family_default(store):
+def test_store_migrates_away_legacy_family_columns(tmp_path):
+    data_dir = tmp_path / "data"
+    original = Store(data_dir)
+    original.create_profile("independent", "Independent", "", "")
+    with original.db:
+        original.db.execute(
+            "ALTER TABLE profiles ADD COLUMN family_id TEXT NOT NULL DEFAULT ''")
+        original.db.execute(
+            "ALTER TABLE profiles ADD COLUMN variant_label TEXT NOT NULL DEFAULT ''")
+        original.db.execute(
+            "ALTER TABLE profiles ADD COLUMN is_family_default INTEGER NOT NULL DEFAULT 1")
+        original.db.execute(
+            "UPDATE profiles SET family_id='old_family', variant_label='old_variant'"
+            " WHERE id='independent'")
+    original.close()
+
+    migrated = Store(data_dir)
+    columns = {row["name"] for row in migrated.db.execute("PRAGMA table_info(profiles)")}
+    assert {"family_id", "variant_label", "is_family_default"}.isdisjoint(columns)
+    assert migrated.get_profile("independent")["display_name"] == "Independent"
+    migrated.close()
+
+
+def test_profile_resolution_precedence(store):
     store.create_profile(
         "vera", "Vera", "", "", aliases=["life vera"],
-        family_id="vera_family", variant_label="life",
-        is_family_default=True,
     )
     store.create_profile(
         "dr_vera", "Dr Vera", "", "", aliases=["doctor vera"],
-        family_id="vera_family", variant_label="clinical",
-        is_family_default=False,
     )
 
     exact = store.resolve_profile("  VeRa  ")
@@ -43,10 +62,6 @@ def test_profile_resolution_precedence_and_family_default(store):
     display = store.resolve_profile("Dr Vera")
     assert display["match_basis"] == "display_name"
     assert display["resolved_profile_id"] == "dr_vera"
-
-    family = store.resolve_profile("vera_family")
-    assert family["match_basis"] == "family_default"
-    assert family["resolved_profile_id"] == "vera"
 
     missing = store.resolve_profile("not-a-companion")
     assert missing["status"] == "not_found"
@@ -67,24 +82,17 @@ def test_profile_resolution_reports_same_tier_collisions(store):
     assert display["match_basis"] == "display_name"
 
 
-def test_routing_metadata_trims_names_and_keeps_one_family_default(store):
-    store.create_profile("base", " Base  ", "", "", family_id="birds")
-    store.create_profile(
-        "variant", "Variant", "", "", family_id="birds",
-        is_family_default=False,
-    )
-    assert store.get_profile("base")["display_name"] == "Base"
+def test_routing_metadata_trims_names_and_aliases(store):
+    store.create_profile("companion", " Companion  ", "", "")
+    assert store.get_profile("companion")["display_name"] == "Companion"
 
     updated = store.update_routing_metadata(
-        "variant",
-        display_name="  Variant GM  ",
+        "companion",
+        display_name="  Independent Companion  ",
         aliases=[" GM ", "gm"],
-        is_family_default=True,
     )
-    assert updated["display_name"] == "Variant GM"
+    assert updated["display_name"] == "Independent Companion"
     assert updated["aliases"] == ["GM"]
-    assert updated["is_family_default"] is True
-    assert store.get_profile("base")["is_family_default"] is False
 
 
 def test_boot_returns_prompts_state_and_memories(store):

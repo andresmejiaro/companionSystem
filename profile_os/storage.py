@@ -43,9 +43,6 @@ CREATE TABLE IF NOT EXISTS profiles (
     memory_policy TEXT NOT NULL DEFAULT '{}',      -- JSON object
     closeout_rules TEXT NOT NULL DEFAULT '',       -- free text rules
     aliases TEXT NOT NULL DEFAULT '[]',            -- JSON routing aliases
-    family_id TEXT NOT NULL DEFAULT '',             -- sibling profile family
-    variant_label TEXT NOT NULL DEFAULT '',         -- human-readable mode label
-    is_family_default INTEGER NOT NULL DEFAULT 1,   -- default within family
     created_at REAL NOT NULL
 );
 CREATE TABLE IF NOT EXISTS compact_state (
@@ -196,16 +193,9 @@ class Store:
                     "ALTER TABLE profiles ADD COLUMN profile_kind TEXT NOT NULL DEFAULT 'companion'")
             if "aliases" not in profile_columns:
                 self.db.execute("ALTER TABLE profiles ADD COLUMN aliases TEXT NOT NULL DEFAULT '[]'")
-            if "family_id" not in profile_columns:
-                self.db.execute("ALTER TABLE profiles ADD COLUMN family_id TEXT NOT NULL DEFAULT ''")
-            if "variant_label" not in profile_columns:
-                self.db.execute("ALTER TABLE profiles ADD COLUMN variant_label TEXT NOT NULL DEFAULT ''")
-            if "is_family_default" not in profile_columns:
-                self.db.execute(
-                    "ALTER TABLE profiles ADD COLUMN is_family_default INTEGER NOT NULL DEFAULT 1")
-            # Old rows predate family routing. Each starts as its own default
-            # family until an operator explicitly links sibling variants.
-            self.db.execute("UPDATE profiles SET family_id=id WHERE family_id=''")
+            for legacy_column in ("family_id", "variant_label", "is_family_default"):
+                if legacy_column in profile_columns:
+                    self.db.execute(f"ALTER TABLE profiles DROP COLUMN {legacy_column}")
             self.db.execute("UPDATE profiles SET display_name=TRIM(display_name)")
             # The first system-notifier template predated profile_kind. Its
             # non-conversational prompt is an explicit migration marker; do
@@ -281,9 +271,6 @@ class Store:
         closeout_rules: str = "",
         initial_state: str = "",
         aliases: list[str] | None = None,
-        family_id: str | None = None,
-        variant_label: str = "",
-        is_family_default: bool = True,
         profile_kind: str = "companion",
     ) -> dict:
         if not profile_id or not profile_id.replace("-", "").replace("_", "").isalnum():
@@ -296,21 +283,15 @@ class Store:
         if profile_kind not in {"companion", "system"}:
             raise MalformedRecord("profile_kind must be 'companion' or 'system'")
         aliases = _validate_aliases(aliases)
-        family_id = family_id or profile_id
-        if not family_id.replace("-", "").replace("_", "").isalnum():
-            raise MalformedRecord("family_id must be a non-empty slug (alnum, - or _)")
-        variant_label = " ".join(variant_label.strip().split()) if isinstance(
-            variant_label, str) else ""
         now = time.time()
         with self.db:
             self.db.execute(
                 "INSERT INTO profiles (id, display_name, description, signature, profile_kind, allowed_tools,"
-                " memory_policy, closeout_rules, aliases, family_id, variant_label,"
-                " is_family_default, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                " memory_policy, closeout_rules, aliases, created_at)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (profile_id, display_name, description, signature, profile_kind,
                  json.dumps(allowed_tools or []), json.dumps(memory_policy or {}),
-                 closeout_rules, json.dumps(aliases), family_id, variant_label,
-                 int(is_family_default), now),
+                 closeout_rules, json.dumps(aliases), now),
             )
             self.db.execute(
                 "INSERT INTO compact_state (profile_id, state, updated_at) VALUES (?,?,?)",
@@ -331,11 +312,6 @@ class Store:
                 self.db.execute("DELETE FROM profiles WHERE id=?", (profile_id,))
             shutil.rmtree(pdir, ignore_errors=True)
             raise
-        if is_family_default:
-            with self.db:
-                self.db.execute(
-                    "UPDATE profiles SET is_family_default=0"
-                    " WHERE family_id=? AND id<>?", (family_id, profile_id))
         return self.get_profile(profile_id)
 
     def _require_profile(self, profile_id: str) -> sqlite3.Row:
@@ -356,9 +332,6 @@ class Store:
             "memory_policy": json.loads(row["memory_policy"]),
             "closeout_rules": row["closeout_rules"],
             "aliases": json.loads(row["aliases"]),
-            "family_id": row["family_id"] or row["id"],
-            "variant_label": row["variant_label"],
-            "is_family_default": bool(row["is_family_default"]),
             "created_at": row["created_at"],
         }
 
@@ -415,19 +388,6 @@ class Store:
                 "resolved" if len(display_matches) == 1 else "ambiguous",
                 "display_name", display_matches)
 
-        family_matches = [
-            profile for profile in candidates
-            if normalize_profile_lookup(profile.get("family_id", profile["id"])) == normalized
-        ]
-        if family_matches:
-            defaults = [
-                profile for profile in family_matches
-                if profile.get("is_family_default", False)
-            ]
-            if len(defaults) == 1:
-                return result("resolved", "family_default", defaults)
-            return result("ambiguous", "family_default", family_matches)
-
         return result("not_found", "none", [])
 
     def update_routing_metadata(
@@ -436,13 +396,9 @@ class Store:
         *,
         display_name: str | None = None,
         aliases: list[str] | None = None,
-        family_id: str | None = None,
-        variant_label: str | None = None,
-        is_family_default: bool | None = None,
     ) -> dict:
         current = self.get_profile(profile_id)
-        if all(value is None for value in (
-                display_name, aliases, family_id, variant_label, is_family_default)):
+        if display_name is None and aliases is None:
             raise MalformedRecord("at least one routing metadata field is required")
 
         new_display = current["display_name"]
@@ -452,32 +408,10 @@ class Store:
             if not new_display:
                 raise MalformedRecord("display_name must be a non-empty string")
         new_aliases = current["aliases"] if aliases is None else _validate_aliases(aliases)
-        new_family = family_id if family_id is not None else current["family_id"]
-        if (not isinstance(new_family, str) or not new_family
-                or not new_family.replace("-", "").replace("_", "").isalnum()):
-            raise MalformedRecord("family_id must be a non-empty slug (alnum, - or _)")
-        new_variant = current["variant_label"]
-        if variant_label is not None:
-            if not isinstance(variant_label, str):
-                raise MalformedRecord("variant_label must be a string")
-            new_variant = " ".join(variant_label.strip().split())
-        new_default = (
-            current["is_family_default"]
-            if is_family_default is None else is_family_default
-        )
-        if not isinstance(new_default, bool):
-            raise MalformedRecord("is_family_default must be a boolean")
-
         with self.db:
             self.db.execute(
-                "UPDATE profiles SET display_name=?, aliases=?, family_id=?,"
-                " variant_label=?, is_family_default=? WHERE id=?",
-                (new_display, json.dumps(new_aliases), new_family, new_variant,
-                 int(new_default), profile_id))
-            if new_default:
-                self.db.execute(
-                    "UPDATE profiles SET is_family_default=0"
-                    " WHERE family_id=? AND id<>?", (new_family, profile_id))
+                "UPDATE profiles SET display_name=?, aliases=? WHERE id=?",
+                (new_display, json.dumps(new_aliases), profile_id))
         return self.get_profile(profile_id)
 
     def delete_profile(self, profile_id: str) -> None:
@@ -529,6 +463,18 @@ class Store:
             with self.db:
                 self.db.execute("UPDATE profiles SET signature=? WHERE id=?",
                                 (sections["signature"], profile_id))
+        return self.get_profile(profile_id)
+
+    def update_closeout_rules(self, profile_id: str, closeout_rules: str) -> dict:
+        """Update the registry-backed companion-specific closeout section."""
+        self._require_profile(profile_id)
+        if not isinstance(closeout_rules, str):
+            raise MalformedRecord("closeout_rules must be a string")
+        with self.db:
+            self.db.execute(
+                "UPDATE profiles SET closeout_rules=? WHERE id=?",
+                (closeout_rules, profile_id),
+            )
         return self.get_profile(profile_id)
 
     def update_description(self, profile_id: str, description: str | None = None,

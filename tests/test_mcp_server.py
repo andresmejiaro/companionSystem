@@ -99,8 +99,7 @@ class FakeBridge:
                 "description": "", "signature": "", "allowed_tools": ["remember", "search_memories"],
                 "memory_policy": {"max_boot_events": 10},
                 "closeout_rules": "Write compact state.", "aliases": [],
-                "family_id": profile_id, "profile_kind": "companion", "variant_label": "",
-                "is_family_default": True, "created_at": 1}
+                "profile_kind": "companion", "created_at": 1}
 
     def resolve_companion(self, query):
         self.resolve_calls.append(query)
@@ -154,8 +153,6 @@ class FakeBridge:
             "you_got_mail": False,
             "selection": {
                 "profile_id": profile_id,
-                "family_id": profile["family_id"],
-                "variant_label": profile["variant_label"],
                 "settled": True,
             },
             "companion_directory": self.list_profiles(),
@@ -180,8 +177,6 @@ class FakeBridge:
             "you_got_mail": False,
             "selection": {
                 "profile_id": profile_id,
-                "family_id": profile_id,
-                "variant_label": "",
                 "settled": True,
             },
             "server_time": {
@@ -1207,11 +1202,18 @@ def test_propose_prompt_edit_tool_returns_approval_link():
 
     r = client.post("/mcp", json=_rpc("tools/call", {
         "name": "propose_prompt_edit",
-        "arguments": {"profile_id": "tara", "who_you_are": "hi"},
+        "arguments": {
+            "profile_id": "tara",
+            "who_you_are": "hi",
+            "closeout_rules": "Write the companion-specific record.",
+        },
     }), headers={"Accept": "application/json, text/event-stream"})
     assert r.status_code == 200
     result_text = _sse_json(r)["result"]["content"][0]["text"]
     assert f"{PUBLIC_BASE}/approvals/approval-1" in result_text
+    assert bridge.approvals["approval-1"]["payload"]["closeout_rules"] == (
+        "Write the companion-specific record."
+    )
 
 
 def test_oauth_client_registration_survives_process_restart(tmp_path):

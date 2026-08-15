@@ -129,9 +129,6 @@ class ProfileCreateTotpIn(BaseModel):
     signature: str = ""
     allowed_tools: list[str] | None = None
     aliases: list[str] = Field(default_factory=list)
-    family_id: str | None = None
-    variant_label: str = ""
-    is_family_default: bool = True
     profile_kind: str = "companion"
     totp_code: str
 
@@ -237,9 +234,6 @@ class ProfileCreateIn(BaseModel):
     description: str = Field(default="", max_length=200)
     signature: str = ""
     aliases: list[str] = Field(default_factory=list)
-    family_id: str | None = None
-    variant_label: str = ""
-    is_family_default: bool = True
     profile_kind: str = "companion"
 
 
@@ -256,6 +250,7 @@ class PromptEditProposeIn(BaseModel):
     voice: str | None = None
     what_you_do: str | None = None
     how_you_keep_context: str | None = None
+    closeout_rules: str | None = None
 
     @field_validator("signature")
     @classmethod
@@ -306,9 +301,6 @@ class DescriptionIn(BaseModel):
 class RoutingMetadataIn(BaseModel):
     display_name: str | None = None
     aliases: list[str] | None = None
-    family_id: str | None = None
-    variant_label: str | None = None
-    is_family_default: bool | None = None
 
 
 class ApprovalDecideIn(BaseModel):
@@ -700,9 +692,7 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
         profile = store.create_profile(
             body.id, body.display_name, body.who_you_are, body.what_you_do,
             description=body.description, signature=body.signature,
-            aliases=body.aliases, family_id=body.family_id,
-            variant_label=body.variant_label,
-            is_family_default=body.is_family_default, profile_kind=body.profile_kind)
+            aliases=body.aliases, profile_kind=body.profile_kind)
         if principal_id is not None:
             for op in OWNER_OPS:
                 access.grant(principal_id, op, profile_id=body.id)
@@ -734,8 +724,7 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
             body.id, body.display_name, body.who_you_are, body.what_you_do,
             description=body.description, signature=body.signature,
             allowed_tools=body.allowed_tools, aliases=body.aliases,
-            family_id=body.family_id, variant_label=body.variant_label,
-            is_family_default=body.is_family_default, profile_kind=body.profile_kind)
+            profile_kind=body.profile_kind)
         access.record_audit(admin_id, "create_profile_totp", body.id)
         return profile
 
@@ -813,9 +802,6 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
             profile_id,
             display_name=body.display_name,
             aliases=body.aliases,
-            family_id=body.family_id,
-            variant_label=body.variant_label,
-            is_family_default=body.is_family_default,
         )
 
     @app.delete("/profiles/{profile_id}", status_code=204)
@@ -853,8 +839,7 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
         booted["profile"] = {
             key: profile[key] for key in
             ("id", "display_name", "signature", "allowed_tools",
-             "memory_policy", "closeout_rules", "aliases", "family_id", "profile_kind",
-             "variant_label", "is_family_default")
+             "memory_policy", "closeout_rules", "aliases", "profile_kind")
             if key in profile
         }
         booted.pop("state_updated_at", None)
@@ -908,8 +893,6 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
             "you_got_mail": bool(_wrap(store.list_inbox, profile_id, True, 1)),
             "selection": {
                 "profile_id": profile["id"],
-                "family_id": profile["family_id"],
-                "variant_label": profile["variant_label"],
                 "settled": True,
             },
             "companion_directory": companion_directory,
@@ -973,16 +956,20 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
         """Return the provider-neutral persistence review for session closeout."""
         _require("closeout", profile_id, request)
         _require("records:read", profile_id, request)
+        closeout_rules = _wrap(store.get_profile, profile_id)["closeout_rules"].strip()
+        instructions = [
+            "Reconcile relevant profile stores and joined shared-project stores; query the owning source when current state matters.",
+            "Update existing records for the same real thing and identify duplicates or contradictions; flag conflicts the schema cannot resolve.",
+            "Write the companion-appropriate transient, front-of-mind memories.",
+            "Complete the existing closeout form.",
+            "After doing the thing, use `closeout` to finish the session.",
+            "Let the companion close in its own voice.",
+        ]
+        if closeout_rules:
+            instructions.insert(3, closeout_rules)
         return {
             "profile_id": profile_id,
-            "instructions": [
-                "Reconcile relevant profile stores and joined shared-project stores; query the owning source when current state matters.",
-                "Update existing records for the same real thing and identify duplicates or contradictions; flag conflicts the schema cannot resolve.",
-                "Write the companion-appropriate transient, front-of-mind memories.",
-                "Complete the existing closeout form.",
-                "After doing the thing, use `closeout` to finish the session.",
-                "Let the companion close in its own voice.",
-            ],
+            "instructions": instructions,
         }
 
     @app.post("/profiles/{profile_id}/session-inspect")
@@ -1309,6 +1296,8 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
             approval = access.get_approval(approval_id)
             if approval["kind"] == "prompt_edit" and approval["profile_id"]:
                 approval["current_sections"] = store._prompt_sections(approval["profile_id"])
+                approval["current_sections"]["closeout_rules"] = store.get_profile(
+                    approval["profile_id"])["closeout_rules"]
             return approval
         except AccessError as e:
             raise HTTPException(404, str(e))
@@ -1380,6 +1369,9 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
             payload = decided["payload"]
             _wrap(store.update_prompts, decided["profile_id"],
                  **{name: payload.get(name) for name in PROMPT_SECTION_NAMES})
+            if payload.get("closeout_rules") is not None:
+                _wrap(store.update_closeout_rules, decided["profile_id"],
+                      payload["closeout_rules"])
         return decided
 
     @app.get("/profiles/{profile_id}/domain")

@@ -496,8 +496,7 @@ MCP_TOOLS = [
         "Call this on your first response in a conversation."
         " Pass the phrase the user supplied. A normalized exact canonical id is"
         " decisive and is tried directly; only a 404 triggers server-side resolution."
-        " When the returned selection.settled is true, never ask whether the user meant"
-        " a sibling and never switch variants unless the user explicitly requests it. This tool"
+        " The returned selection identifies the active companion. This tool"
         " returns owner identity, prompts, compact_state, a bounded semantic"
         " memory slice, and the global companion contract for conversational profiles;"
         " the memory slice has no IDs, tags, or full history. It also returns up to four recent"
@@ -515,7 +514,8 @@ MCP_TOOLS = [
     _tool(
         "propose_prompt_edit",
         "Propose Prompt Edit",
-        "Propose changes to your own six canonical prompt sections. Held pending"
+        "Propose changes to your own canonical prompt sections and companion-specific"
+        " closeout rules. Held pending"
         " until the human approves it with a live TOTP code from their authenticator"
         " app.",
         {
@@ -526,6 +526,7 @@ MCP_TOOLS = [
             "voice": {"type": "string"},
             "what_you_do": {"type": "string"},
             "how_you_keep_context": {"type": "string"},
+            "closeout_rules": {"type": "string", "description": "Companion-specific instructions added to the standard closeout procedure."},
         },
         ["profile_id"],
     ),
@@ -1324,7 +1325,7 @@ class MCPToolRunner:
         if name == "propose_prompt_edit":
             prompt_args = {key: arguments[key] for key in (
                 "who_you_are", "signature", "lane", "voice", "what_you_do",
-                "how_you_keep_context") if key in arguments}
+                "how_you_keep_context", "closeout_rules") if key in arguments}
             return self.bridge.propose_prompt_edit(arguments["profile_id"], **prompt_args)
         # No update_own_description dispatch: legacy implementation retained
         # outside the companion-callable MCP registry.
@@ -1719,9 +1720,8 @@ def _handle_rpc(message: dict[str, Any], app: FastAPI) -> dict[str, Any]:
             "instructions": (
                 "Call summon_companion with the companion phrase the user supplied. It tries "
                 "a normalized exact canonical id first and only resolves names after a 404; "
-                "do not browse the directory first. A returned selection with settled=true "
-                "is final: never ask about sibling variants or switch profiles unless the "
-                "user explicitly requests a switch. Use discover_companions only for browsing "
+                "do not browse the directory first. A returned selection identifies the active "
+                "companion. Use discover_companions only for browsing "
                 "or not_found results. The returned "
                 "allowed_tools is guidance for which tools this profile should use; it is "
                 "not enforced server-side."
