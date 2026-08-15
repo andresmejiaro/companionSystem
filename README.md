@@ -13,8 +13,8 @@ Claude, ChatGPT, or another client use the same companion data safely.
 - Memory and workspace: searchable memories, companion-to-companion inboxes,
   and small per-profile files stored outside Git.
 - Structured data: companions propose typed stores; approved schemas validate
-  every record. Shared projects let several companions work against a common,
-  approval-controlled record set.
+  every record. The backend retains shared projects for existing data and
+  administrative integrations; project management is not exposed through MCP.
 - Human control: bearer-credential access control, one-time enrollment invites,
   and TOTP-gated approval flows for sensitive changes.
 - Integrations: a Streamable HTTP MCP server with OAuth or static bearer-token

@@ -333,37 +333,6 @@ class FakeBridge:
     def add_records(self, profile_id, store_name, records):
         return [self.add_record(profile_id, store_name, record) for record in records]
 
-    @staticmethod
-    def _project(approval=False):
-        project = {
-            "id": "project-1", "name": "career_network", "purpose": "shared work",
-            "schema": {"fields": {"name": {"type": "string"}}},
-            "created_by_profile_id": "vertice", "status": "pending",
-            "created_at": 1, "approved_at": None, "members": [],
-        }
-        if approval:
-            project["approval_id"] = "project-approval-1"
-        return project
-
-    def create_project(self, profile_id, name, purpose, schema):
-        return self._project(approval=True)
-
-    def list_projects(self, profile_id, available=False):
-        return []
-
-    def join_project(self, profile_id, project_id):
-        return self._project(approval=True)
-
-    def leave_project(self, profile_id, project_id):
-        return {"left": True, "project_id": project_id, "empty": False}
-
-    def add_project_record(self, profile_id, project_id, data):
-        return {"id": "project-record-1", "project_id": project_id, "data": data,
-                "created_by_profile_id": profile_id, "created_at": 1}
-
-    def query_project_records(self, profile_id, project_id, contains=None, limit=50):
-        return []
-
     def propose_prompt_edit(self, profile_id, who_you_are=None, what_you_do=None, **sections):
         approval = {"id": "approval-1", "kind": "prompt_edit", "profile_id": profile_id,
                    "status": "pending",
@@ -472,11 +441,9 @@ def test_initialize_and_list_tools(tmp_path, monkeypatch):
     assert r.status_code == 200
     tools = r.json()["result"]["tools"]
     names = {tool["name"] for tool in tools}
-    assert len(names) == 33
+    assert len(names) == 27
     assert {"closeout", "search_memories",
             "set_messages_read_status"} <= names
-    assert {"create_project", "list_projects", "join_project", "leave_project",
-            "add_project_record", "query_project_records"} <= names
     assert not names & {"whoami", "resolve_companion", "list_profiles",
                         "boot_profile", "start_session", "start_session_forum",
                         "update_own_description", "retract_approval",
@@ -488,6 +455,8 @@ def test_initialize_and_list_tools(tmp_path, monkeypatch):
                         "draw_exam_questions", "grade_exam_questions",
                         "regrade_exam_questions", "diagnose_exam_weaknesses",
                         "revise_exam_question_answer"}
+    assert not names & {"create_project", "list_projects", "join_project", "leave_project",
+                        "add_project_record", "query_project_records"}
     assert "add_records" in names
     assert {"exam_attempt", "exam_review"} <= names
     assert not names & {"approve_store", "reject_store", "archive_store", "audit"}
@@ -528,7 +497,7 @@ def test_list_tools_can_omit_output_schemas(tmp_path, monkeypatch):
     r = client.post("/mcp", json=_rpc("tools/list"), headers=_bearer())
     assert r.status_code == 200
     tools = r.json()["result"]["tools"]
-    assert len(tools) == 33
+    assert len(tools) == 27
     for tool in tools:
         assert set(tool) == {"name", "title", "description", "inputSchema", "annotations"}
 
@@ -914,24 +883,6 @@ def test_successful_structured_content_matches_declared_output_schema():
     bridge.store_approved = True
     call_and_validate("add_records", {"profile_id": "tara", "store_name": "items", "records": [{"name": "x"}]})
     call_and_validate("query_records", {"profile_id": "tara", "store_name": "items", "where": {"name": "x"}})
-    project = call_and_validate("create_project", {
-        "profile_id": "vertice", "name": "career_network", "purpose": "shared work",
-        "schema": {"fields": {"name": {"type": "string"}}},
-    })
-    call_and_validate("list_projects", {"profile_id": "red_vertice"})
-    call_and_validate("join_project", {
-        "profile_id": "lumenis", "project_id": project["id"],
-    })
-    call_and_validate("add_project_record", {
-        "profile_id": "vertice", "project_id": project["id"],
-        "data": {"name": "room"},
-    })
-    call_and_validate("query_project_records", {
-        "profile_id": "red_vertice", "project_id": project["id"],
-    })
-    call_and_validate("leave_project", {
-        "profile_id": "lumenis", "project_id": project["id"],
-    })
     call_and_validate("exam_attempt", {"companion_name": "lt_rita", "action": "draw"})
     call_and_validate("exam_attempt", {"companion_name": "lt_rita", "action": "grade",
                                          "attempt_code": "attempt-1",
@@ -985,22 +936,6 @@ def test_exam_action_tools_reject_missing_and_irrelevant_fields(name, arguments,
 
     assert result["isError"] is True
     assert expected in result["content"][0]["text"]
-
-
-@pytest.mark.parametrize("name,arguments", [
-    ("create_project", {"profile_id": "tara", "name": "x1", "purpose": "p",
-                        "schema": {"fields": {"name": {"type": "string"}}}}),
-    ("list_projects", {"profile_id": "tara"}),
-    ("join_project", {"profile_id": "tara", "project_id": "project-1"}),
-    ("leave_project", {"profile_id": "tara", "project_id": "project-1"}),
-    ("add_project_record", {"profile_id": "tara", "project_id": "project-1",
-                            "data": {"name": "x"}}),
-    ("query_project_records", {"profile_id": "tara", "project_id": "project-1"}),
-])
-def test_shared_project_tools_reject_profiles_outside_allowlist(name, arguments):
-    result = _call_tool(_mcp_client(FakeBridge()), name, arguments).json()["result"]
-    assert result["isError"] is True
-    assert result["structuredContent"]["error"]["status"] == 403
 
 
 def test_session_inspector_renders_source_aware_and_raw_views():

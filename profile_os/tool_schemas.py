@@ -609,41 +609,6 @@ EXAM_REVIEW = {
     "required": ["action", "result"],
 }
 
-PROJECT_MEMBER = {
-    "type": "object",
-    "properties": {"profile_id": {"type": "string"}, "role": {"type": "string"},
-                   "joined_at": {"type": "number"}},
-    "required": ["profile_id", "role", "joined_at"],
-}
-
-PROJECT = {
-    "type": "object",
-    "properties": {
-        "id": {"type": "string"}, "name": {"type": "string"},
-        "purpose": {"type": "string"}, "schema": DYNAMIC_SCHEMA,
-        "created_by_profile_id": {"type": "string"},
-        "status": {"type": "string", "enum": ["pending", "active"]},
-        "created_at": {"type": "number"}, "approved_at": NUMBER_OR_NULL,
-        "members": array_of(PROJECT_MEMBER), "viewer_is_member": {"type": "boolean"},
-        "approval_id": {"type": "string"}, "approval_link": {"type": "string"},
-    },
-    "required": ["id", "name", "purpose", "schema", "created_by_profile_id",
-                 "status", "created_at", "approved_at", "members"],
-}
-
-PROJECT_WITH_APPROVAL = {
-    **PROJECT,
-    "required": [*PROJECT["required"], "approval_id"],
-}
-
-PROJECT_RECORD = {
-    "type": "object",
-    "properties": {"id": {"type": "string"}, "project_id": {"type": "string"},
-                   "data": JSON_OBJECT, "created_by_profile_id": {"type": "string"},
-                   "created_at": {"type": "number"}},
-    "required": ["id", "project_id", "data", "created_by_profile_id", "created_at"],
-}
-
 DELETED_RECORD = {
     "type": "object",
     "properties": {"deleted": {"type": "boolean"}, "record_id": {"type": "string"},
@@ -651,18 +616,11 @@ DELETED_RECORD = {
     "required": ["deleted", "record_id", "store"],
 }
 
-LEFT_PROJECT = {
-    "type": "object",
-    "properties": {"left": {"type": "boolean"}, "project_id": {"type": "string"},
-                   "empty": {"type": "boolean"}},
-    "required": ["left", "project_id", "empty"],
-}
-
 # Reused by MCP input and output schemas.  Keeping definitions centralized
 # makes references stable without relying on discriminator/oneOf support.
 SHARED_DEFS = {
-    "Profile": PROFILE, "Project": PROJECT, "ProjectRecord": PROJECT_RECORD,
-    "DynamicRecord": DYNAMIC_RECORD, "DynamicSchema": DYNAMIC_SCHEMA,
+    "Profile": PROFILE, "DynamicRecord": DYNAMIC_RECORD,
+    "DynamicSchema": DYNAMIC_SCHEMA,
     "ListEnvelope": {"type": "object", "properties": {"items": {"type": "array"}},
                      "required": ["items"]},
 }

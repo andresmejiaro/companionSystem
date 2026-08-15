@@ -58,10 +58,6 @@ from .tool_schemas import (
     MEMORY_KINDS,
     MESSAGE,
     PROFILE,
-    PROJECT,
-    PROJECT_WITH_APPROVAL,
-    PROJECT_RECORD,
-    LEFT_PROJECT,
     SHARED_DEFS,
     START_SESSION,
     mcp_items,
@@ -458,29 +454,17 @@ MCP_OUTPUT_SCHEMAS = {
     "update_record": DYNAMIC_RECORD,
     "delete_record": DELETED_RECORD,
     "add_records": mcp_items(DYNAMIC_RECORD),
-    "create_project": PROJECT_WITH_APPROVAL,
-    "list_projects": mcp_items(PROJECT),
-    "join_project": PROJECT_WITH_APPROVAL,
-    "leave_project": LEFT_PROJECT,
-    "add_project_record": PROJECT_RECORD,
-    "query_project_records": mcp_items(PROJECT_RECORD),
 }
 
 
 _READ_ONLY_TOOLS = {
     "resolve_companion", "discover_companions", "summon_companion", "search_memories", "search_context",
     "read_inbox", "list_files", "read_file", "get_ironsworn_resource",
-    "list_stores", "query_records", "get_record", "list_projects", "query_project_records",
+    "list_stores", "query_records", "get_record",
 }
-_OPEN_WORLD_TOOLS = {"send_message", "join_project", "leave_project",
-                     "add_project_record", "query_project_records"}
+_OPEN_WORLD_TOOLS = {"send_message"}
 _DESTRUCTIVE_TOOLS = {"forget", "delete_file", "delete_record"}
-_IDEMPOTENT_TOOLS = {"set_messages_read_status", "leave_project"}
-_SHARED_PROJECT_TOOLS = {
-    "create_project", "list_projects", "join_project", "leave_project",
-    "add_project_record", "query_project_records",
-}
-_SHARED_PROJECT_PROFILES = {"vertice", "red_vertice", "lumenis"}
+_IDEMPOTENT_TOOLS = {"set_messages_read_status"}
 TOOL_ANNOTATIONS = {
     name: {
         "readOnlyHint": name in _READ_ONLY_TOOLS,
@@ -848,45 +832,6 @@ MCP_TOOLS = [
         "Add 1–200 schema-validated records atomically to an approved store. For thread_continuity, pass exactly one record; it upserts by source_type and source_id.",
         {"profile_id": _PROFILE_ID, "store_name": {"type": "string"}, "records": {"type": "array", "items": {"type": "object"}, "minItems": 1, "maxItems": 200}},
         ["profile_id", "store_name", "records"],
-    ),
-    _tool(
-        "create_project", "Create Shared Project",
-        "Vertice, Red Vertice, and Lumenis only. Propose a shared schema-enforced project. Human TOTP approval is required; return the approval link.",
-        {"profile_id": _PROFILE_ID, "name": {"type": "string"},
-         "purpose": {"type": "string"}, "schema": {"$ref": "#/$defs/DynamicSchema"}},
-        ["profile_id", "name", "purpose", "schema"],
-    ),
-    _tool(
-        "list_projects", "List Shared Projects",
-        "Vertice, Red Vertice, and Lumenis only. List projects this companion belongs to, or all available projects it may request to join.",
-        {"profile_id": _PROFILE_ID, "available": {"type": "boolean", "default": False}},
-        ["profile_id"],
-    ),
-    _tool(
-        "join_project", "Join Shared Project",
-        "Vertice, Red Vertice, and Lumenis only. Request membership in a project. Human TOTP approval is required; return the approval link.",
-        {"profile_id": _PROFILE_ID, "project_id": {"type": "string"}},
-        ["profile_id", "project_id"],
-    ),
-    _tool(
-        "leave_project", "Leave Shared Project",
-        "Vertice, Red Vertice, and Lumenis only. Leave a shared project immediately; no TOTP approval is required.",
-        {"profile_id": _PROFILE_ID, "project_id": {"type": "string"}},
-        ["profile_id", "project_id"],
-    ),
-    _tool(
-        "add_project_record", "Add Shared Project Record",
-        "Vertice, Red Vertice, and Lumenis only. Add a schema-validated record to a project this companion belongs to.",
-        {"profile_id": _PROFILE_ID, "project_id": {"type": "string"},
-         "data": {"type": "object"}}, ["profile_id", "project_id", "data"],
-    ),
-    _tool(
-        "query_project_records", "Query Shared Project Records",
-        "Vertice, Red Vertice, and Lumenis only. Query records in a project this companion belongs to.",
-        {"profile_id": _PROFILE_ID, "project_id": {"type": "string"},
-         "contains": {"type": "string", "default": ""},
-         "limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50}},
-        ["profile_id", "project_id"],
     ),
 ]
 
@@ -1343,13 +1288,6 @@ class MCPToolRunner:
         return {"action": action, "result": result}
 
     def call(self, name: str, arguments: dict[str, Any]) -> Any:
-        if (name in _SHARED_PROJECT_TOOLS
-                and arguments.get("profile_id") not in _SHARED_PROJECT_PROFILES):
-            allowed = ", ".join(sorted(_SHARED_PROJECT_PROFILES))
-            raise ToolBridgeError(
-                403,
-                f"{name} is enabled only for profiles: {allowed}",
-            )
         # No direct resolve_companion dispatch: resolution is private to the
         # summon_companion fallback below.
         if name == "discover_companions":
@@ -1508,23 +1446,6 @@ class MCPToolRunner:
         if name == "add_records":
             return self.bridge.add_records(
                 arguments["profile_id"], arguments["store_name"], arguments["records"])
-        if name == "create_project":
-            return self.bridge.create_project(arguments["profile_id"], arguments["name"],
-                                              arguments["purpose"], arguments["schema"])
-        if name == "list_projects":
-            return self.bridge.list_projects(arguments["profile_id"],
-                                             arguments.get("available", False))
-        if name == "join_project":
-            return self.bridge.join_project(arguments["profile_id"], arguments["project_id"])
-        if name == "leave_project":
-            return self.bridge.leave_project(arguments["profile_id"], arguments["project_id"])
-        if name == "add_project_record":
-            return self.bridge.add_project_record(arguments["profile_id"], arguments["project_id"],
-                                                  arguments["data"])
-        if name == "query_project_records":
-            return self.bridge.query_project_records(
-                arguments["profile_id"], arguments["project_id"],
-                arguments.get("contains", ""), arguments.get("limit", 50))
         raise ValueError(f"unknown tool {name!r}")
 
     def _with_forum_continuity(self, session: dict[str, Any]) -> dict[str, Any]:
@@ -1827,8 +1748,7 @@ def _handle_rpc(message: dict[str, Any], app: FastAPI) -> dict[str, Any]:
         profile_id = _safe_profile(arguments)
         try:
             value = app.state.runner.call(name, arguments)
-            if name in {"propose_prompt_edit", "propose_store",
-                        "create_project", "join_project"} and isinstance(value, dict):
+            if name in {"propose_prompt_edit", "propose_store"} and isinstance(value, dict):
                 settings: MCPSettings = app.state.settings
                 approval_id = (value.get("id") if name == "propose_prompt_edit"
                                else value.get("approval_id"))

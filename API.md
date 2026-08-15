@@ -209,11 +209,11 @@ schema needs its own approval. No data migrations; old records keep their
 
 ## Shared project stores
 
-The remote MCP advertises `create_project`, `list_projects`, `join_project`,
-`leave_project`, `add_project_record`, and `query_project_records`. These tools
-are server-side restricted to the `vertice`, `red_vertice`, and `lumenis`
-profiles. Project creation and joining require human TOTP approval; record
-access additionally requires active project membership.
+Shared-project storage and its HTTP routes remain available for existing data
+and administrative integrations. The remote MCP no longer advertises project
+creation, membership, or record tools, so companions cannot change project
+membership or write project records through MCP. Existing session data sources
+and `search_context` may still include joined project data.
 
 ## Domain stores (legacy, slice zero — schemaless; superseded by dynamic stores)
 
