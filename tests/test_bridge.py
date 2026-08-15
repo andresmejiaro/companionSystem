@@ -49,6 +49,9 @@ def _exercise_all_tools(bridge, profile="tara"):
     rec = bridge.add_record(profile, "hotel_reservations",
                             {"hotel_name": "Inn", "weight": 1})
     assert rec["data"]["hotel_name"] == "Inn"
+    assert bridge.add_records(profile, "hotel_reservations", [
+        {"hotel_name": "Two", "weight": 2},
+    ])[0]["data"]["hotel_name"] == "Two"
     assert bridge.query_records(profile, "hotel_reservations",
                                 contains="Inn")
     assert bridge.draw_weighted_records(profile, "hotel_reservations", "weight")
@@ -157,6 +160,7 @@ def test_no_tool_bypasses_api_authorization(tmp_path):
         "get_store": {"profile_id": "tara", "name": "n1"},
         "add_record": {"profile_id": "tara", "store_name": "n1", "data": {}},
         "bulk_add_records": {"profile_id": "tara", "store_name": "n1", "records": []},
+        "add_records": {"profile_id": "tara", "store_name": "n1", "records": []},
             "query_records": {"profile_id": "tara", "store_name": "n1"},
             "filter_records": {"profile_id": "tara", "store_name": "n1"},
             "draw_exam_questions": {"companion_name": "lt_rita"},

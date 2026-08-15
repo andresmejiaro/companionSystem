@@ -250,7 +250,7 @@ def test_structured_field_types_reject_wrong_shapes(dyn):
             dyn.add_record("tara", "structured", bad)
 
 
-def test_filter_sort_and_project_records(dyn):
+def test_query_combines_text_structured_filters_sort_and_projection(dyn):
     schema = {"fields": {"title": {"type": "string"},
                          "score": {"type": "integer"},
                          "tags": {"type": "string_list"}}}
@@ -259,14 +259,16 @@ def test_filter_sort_and_project_records(dyn):
     dyn.add_record("tara", "applications", {"title": "Alpha", "score": 3, "tags": ["remote"]})
     dyn.add_record("tara", "applications", {"title": "Beta", "score": 8, "tags": ["remote", "python"]})
     dyn.add_record("tara", "applications", {"title": "Gamma", "score": 5, "tags": ["office"]})
-    hits = dyn.filter_records("tara", "applications",
-                              {"score": {"gte": 3}, "tags": {"contains": "remote"}},
-                              fields=["title", "score"], order_by="score", limit=10)
+    hits = dyn.query_records(
+        "tara", "applications", contains="remote",
+        where={"score": {"gte": 3}, "tags": {"contains": "remote"}},
+        fields=["title", "score"], order_by="score", limit=10)
     assert [r["data"] for r in hits] == [
         {"title": "Beta", "score": 8}, {"title": "Alpha", "score": 3}]
-    assert len(dyn.filter_records("tara", "applications", {"title": {"in": ["Gamma"]}})) == 1
+    assert len(dyn.query_records("tara", "applications",
+                                 where={"title": {"in": ["Gamma"]}})) == 1
     with pytest.raises(SchemaError):
-        dyn.filter_records("tara", "applications", {"missing": "x"})
+        dyn.query_records("tara", "applications", where={"missing": "x"})
 
 
 def test_weighted_draw_filters_and_returns_distinct_records(dyn, monkeypatch):

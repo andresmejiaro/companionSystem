@@ -36,7 +36,7 @@ from .bridge import ToolBridge, ToolBridgeError
 # archive) are not bridge tools at all; keeping an explicit allowlist lets
 # tests assert the harness never grows one by accident.
 HARNESS_TOOLS = ("boot", "remember", "search_memories", "propose_store",
-                 "add_record", "list_stores", "audit", "closeout")
+                 "add_records", "list_stores", "audit", "closeout")
 
 
 class HarnessError(Exception):
@@ -75,7 +75,7 @@ def run_harness(bridge: ToolBridge, profile_id: str = "tara",
     """Execute the scripted assistant flow; returns {calls, summary}.
 
     Raises HarnessError on any unexpected backend refusal (401/403/…).
-    The pre-approval add_record is the one call where an error is the
+    The pre-approval add_records is the one call where an error is the
     *expected* outcome (409) — anything else there is a failure too.
     """
     log: list[dict] = []
@@ -99,20 +99,20 @@ def run_harness(bridge: ToolBridge, profile_id: str = "tara",
           "purpose": "harness rehearsal store", "schema": schema})
 
     # Expected refusal: the store is pending, so a write must 409.
-    printer(f"-> add_record (pre-approval, expecting 409)")
+    printer(f"-> add_records (pre-approval, expecting 409)")
     got_409 = False
     try:
-        bridge.call("add_record", {"profile_id": profile_id,
-                                   "store_name": store_name,
-                                   "data": {"item": "x"}})
+        bridge.call("add_records", {"profile_id": profile_id,
+                                    "store_name": store_name,
+                                    "records": [{"item": "x"}]})
     except ToolBridgeError as e:
         if e.status_code in (401, 403):
-            raise HarnessError("add_record_pre_approval", e)
+            raise HarnessError("add_records_pre_approval", e)
         got_409 = e.status_code == 409
         printer(f"   expected refusal: {e.status_code}: {e.detail}")
     if not got_409:
-        raise AssertionError("pre-approval add_record did not return 409")
-    log.append({"step": "add_record_pre_approval", "tool": "add_record",
+        raise AssertionError("pre-approval add_records did not return 409")
+    log.append({"step": "add_records_pre_approval", "tool": "add_records",
                 "status": 409, "expected": True})
 
     printer("   note: approval is intentionally NOT a bridge tool — an "

@@ -22,7 +22,7 @@ The original bridge shape is still useful:
 
 The remote MCP server deliberately exposes a narrower, Claude-facing tool set:
 `discover_companions`, `summon_companion`, `remember`, `search_context`, `closeout`,
-`list_stores`, `propose_store`, `query_records`, and `add_record`.
+`list_stores`, `propose_store`, `query_records`, and `add_records`.
 
 ## Configuration
 
@@ -91,8 +91,8 @@ many profiles — grants are many-to-many.
 | `propose_store(profile_id, name, purpose, schema)` | `POST /profiles/{id}/stores` | `stores:propose` |
 | `list_stores(profile_id)` | `GET /profiles/{id}/stores` | `records:read` |
 | `get_store(profile_id, name)` | `GET /profiles/{id}/stores/{name}` | `records:read` |
-| `add_record(profile_id, store_name, data)` | `POST …/stores/{name}/records` | `records:write` |
-| `query_records(profile_id, store_name, contains, limit)` | `GET …/stores/{name}/records` | `records:read` |
+| `add_records(profile_id, store_name, records)` | `POST …/stores/{name}/records/bulk` | `records:write` |
+| `query_records(profile_id, store_name, contains?, where?, fields?, order_by?, descending?, limit?)` | `GET/POST …/stores/{name}/records` | `records:read` |
 | `audit(profile_id, store_name=None, limit=100)` | `GET …/audit` | `audit:read` |
 
 **Not exposed:** `approve`/`reject`/`archive` store lifecycle. These are
@@ -146,7 +146,7 @@ python -m profile_os.openai_smoke --profile tara "remember I tested this"
 
 It exposes only operational tools (boot, remember, search_memories,
 list_stores, get_store, query_records, audit, closeout) — no lifecycle
-tools, and no propose_store/add_record in this slice; a model request for
+tools, and no propose_store/add_records in this slice; a model request for
 anything else is refused without executing. Secrets stay in env and are
 never printed; backend 401/403 abort with a clear message.
 

@@ -77,12 +77,13 @@ subset of these operations over `POST /mcp` and `GET /mcp`; see
   dynamic store through the normal record tools. Rows retain a Thread
   `discussion_id`/source pair plus the companion's `subject`, `position`,
   optional `stake` and `open_loop`, lifecycle `status`, and timestamps.
-  `add_record` upserts on `(source_type, source_id)`; bulk import is disabled.
+  A one-record `add_records` call upserts on `(source_type, source_id)`; calls
+  with more than one continuity row are rejected.
   Ordinary `summon_companion` advertises the store but never hydrates its rows.
   MCP `summon_companion` with `mode: "forum"` returns at most 12 active rows under a 16,000
   character ceiling, prioritizing open loops. The Thread remains responsible
   for joining exact posts, before/companion/after windows, and gap summaries.
-  Forum hydration also names the existing `add_record` upsert and
+  Forum hydration also names the existing `add_records` upsert and
   `update_record` status-update call shapes in
   `thread_continuity_write_contract`.
 - `POST /profiles/{id}/prompt` accepts any canonical prompt sections → 201, a

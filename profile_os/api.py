@@ -165,6 +165,7 @@ class RecordPatchIn(BaseModel):
 
 
 class RecordQueryIn(BaseModel):
+    contains: str | None = None
     where: dict = Field(default_factory=dict)
     fields: list[str] | None = None
     order_by: str | None = None
@@ -1558,8 +1559,9 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
     def filter_store_records(profile_id: str, name: str, body: RecordQueryIn,
                              request: Request):
         _require("records:read", profile_id, request)
-        return _wrap(dyn.filter_records, profile_id, name, body.where, body.fields,
-                     body.order_by, body.descending, body.limit)
+        return _wrap(dyn.query_records, profile_id, name, body.contains, body.limit,
+                     where=body.where, fields=body.fields, order_by=body.order_by,
+                     descending=body.descending)
 
     @app.post("/questions/draw")
     def draw_exam_questions(body: ExamQuestionDrawIn, request: Request):

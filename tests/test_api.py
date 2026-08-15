@@ -747,7 +747,8 @@ def test_dynamic_store_lifecycle_via_api(client):
                            json={"patch": {"notes": "quiet room"}})
     assert updated.status_code == 200 and updated.json()["data"]["notes"] == "quiet room"
     filtered = client.post("/profiles/tara/stores/hotel_reservations/records/query",
-                           json={"where": {"city": "Sevilla"}, "fields": ["hotel_name"]})
+                           json={"contains": "quiet room", "where": {"city": "Sevilla"},
+                                 "fields": ["hotel_name"]})
     assert filtered.status_code == 200 and filtered.json()[0]["data"] == {"hotel_name": "Grand"}
 
     # invalid record → 422

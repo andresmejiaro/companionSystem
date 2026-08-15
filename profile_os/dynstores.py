@@ -331,8 +331,12 @@ class DynamicStores:
 
     def add_records(self, profile_id: str, name: str, records: list[dict]) -> list[dict]:
         if name == THREAD_CONTINUITY_STORE:
-            raise DynStoreConflict(
-                "thread_continuity uses add_record upserts; bulk import is disabled")
+            if len(records) != 1:
+                raise DynStoreConflict(
+                    "thread_continuity accepts exactly one record per add_records call")
+            # Continuity rows are idempotent upserts keyed by source.  Keep that
+            # contract while giving MCP one record-writing tool.
+            return [self.add_record(profile_id, name, records[0])]
         if not records or len(records) > 200:
             raise SchemaError("records must contain between 1 and 200 items")
         row = self._latest_with_status(profile_id, name, ("approved",))
@@ -352,20 +356,51 @@ class DynamicStores:
         return out
 
     def query_records(self, profile_id: str, name: str,
-                      contains: str | None = None, limit: int = 50) -> list[dict]:
-        latest = self._require(profile_id, name)
-        # Queryable if ANY version was ever approved or archived — a pending or
-        # rejected newer version must not hide existing records.
-        if self._latest_with_status(profile_id, name, ("approved", "archived")) is None:
-            raise DynStoreConflict(f"store {name!r} is {latest['status']}; not queryable")
-        sql = "SELECT * FROM dynamic_records WHERE profile_id=? AND store_name=?"
-        params: list = [profile_id, name]
+                      contains: str | None = None, limit: int = 50, *,
+                      where: dict | None = None, fields: list[str] | None = None,
+                      order_by: str | None = None, descending: bool = True) -> list[dict]:
+        """Query by free text and/or structured fields.
+
+        Supplying both ``contains`` and ``where`` deliberately narrows the
+        result with logical AND.  The former keeps the original whole-record
+        text search semantics; the latter retains filtering, sort, and
+        projection from the former ``filter_records`` entry point.
+        """
+        schema = self._require_queryable(profile_id, name)
+        field_defs = schema["fields"]
+        where = where or {}
+        if not isinstance(where, dict):
+            raise SchemaError("where must be an object")
+        requested = set(where)
+        if fields:
+            requested.update(fields)
+        if order_by:
+            requested.add(order_by)
+        unknown = requested - set(field_defs)
+        if unknown:
+            raise SchemaError(f"unknown query fields: {sorted(unknown)}")
+        if not 1 <= limit <= 200:
+            raise SchemaError("limit must be between 1 and 200")
+        rows = self.db.execute(
+            "SELECT * FROM dynamic_records WHERE profile_id=? AND store_name=?",
+            (profile_id, name)).fetchall()
+        records = [self._record_dict(row) for row in rows]
         if contains:
-            sql += " AND data LIKE ? COLLATE NOCASE"
-            params.append(f"%{contains}%")
-        sql += " ORDER BY created_at DESC LIMIT ?"
-        params.append(limit)
-        return [self._record_dict(r) for r in self.db.execute(sql, params).fetchall()]
+            needle = contains.casefold()
+            records = [record for record in records
+                       if needle in json.dumps(record["data"], ensure_ascii=False).casefold()]
+        records = [record for record in records if self._matches(record["data"], where)]
+        if order_by:
+            records.sort(key=lambda record: (record["data"].get(order_by) is None,
+                                              record["data"].get(order_by)),
+                         reverse=descending)
+        else:
+            records.sort(key=lambda record: record["created_at"], reverse=descending)
+        if fields:
+            records = [{**record, "data": {key: record["data"][key] for key in fields
+                                              if key in record["data"]}}
+                       for record in records]
+        return records[:limit]
 
     def get_record(self, profile_id: str, name: str, record_id: str,
                    fields: list[str] | None = None) -> dict:
@@ -413,35 +448,10 @@ class DynamicStores:
                        where: dict | None = None, fields: list[str] | None = None,
                        order_by: str | None = None, descending: bool = True,
                        limit: int = 50) -> list[dict]:
-        schema = self._require_queryable(profile_id, name)
-        field_defs = schema["fields"]
-        where = where or {}
-        if not isinstance(where, dict):
-            raise SchemaError("where must be an object")
-        requested = set(where)
-        if fields:
-            requested.update(fields)
-        if order_by:
-            requested.add(order_by)
-        unknown = requested - set(field_defs)
-        if unknown:
-            raise SchemaError(f"unknown query fields: {sorted(unknown)}")
-        if not 1 <= limit <= 200:
-            raise SchemaError("limit must be between 1 and 200")
-        rows = self.db.execute(
-            "SELECT * FROM dynamic_records WHERE profile_id=? AND store_name=?",
-            (profile_id, name)).fetchall()
-        records = [self._record_dict(r) for r in rows]
-        records = [r for r in records if self._matches(r["data"], where)]
-        if order_by:
-            records.sort(key=lambda r: (r["data"].get(order_by) is None,
-                                        r["data"].get(order_by)), reverse=descending)
-        else:
-            records.sort(key=lambda r: r["created_at"], reverse=descending)
-        if fields:
-            records = [{**r, "data": {k: r["data"][k] for k in fields
-                                       if k in r["data"]}} for r in records]
-        return records[:limit]
+        """Compatibility alias for pre-consolidation HTTP callers."""
+        return self.query_records(profile_id, name, where=where, fields=fields,
+                                  order_by=order_by, descending=descending,
+                                  limit=limit)
 
     def draw_weighted_records(self, profile_id: str, name: str, weight_field: str,
                               where: dict | None = None, count: int = 1) -> list[dict]:

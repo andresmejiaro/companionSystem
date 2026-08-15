@@ -454,7 +454,6 @@ MCP_OUTPUT_SCHEMAS = {
     "list_stores": mcp_items(DYNAMIC_STORE),
     "propose_store": DYNAMIC_STORE,
     "query_records": mcp_items(DYNAMIC_RECORD),
-    "filter_records": mcp_items(DYNAMIC_RECORD),
     "draw_exam_questions": QUESTION_DRAW,
     "grade_exam_questions": QUESTION_GRADE,
     "regrade_exam_questions": QUESTION_GRADE,
@@ -463,8 +462,7 @@ MCP_OUTPUT_SCHEMAS = {
     "get_record": DYNAMIC_RECORD,
     "update_record": DYNAMIC_RECORD,
     "delete_record": DELETED_RECORD,
-    "add_record": DYNAMIC_RECORD,
-    "bulk_add_records": mcp_items(DYNAMIC_RECORD),
+    "add_records": mcp_items(DYNAMIC_RECORD),
     "create_project": PROJECT_WITH_APPROVAL,
     "list_projects": mcp_items(PROJECT),
     "join_project": PROJECT_WITH_APPROVAL,
@@ -478,7 +476,7 @@ _READ_ONLY_TOOLS = {
     "resolve_companion", "discover_companions", "summon_companion", "search_memories", "search_context",
     "read_inbox", "list_files", "read_file", "get_ironsworn_resource",
     "list_stores", "query_records",
-    "filter_records", "draw_exam_questions", "diagnose_exam_weaknesses", "get_record", "list_projects", "query_project_records",
+    "draw_exam_questions", "diagnose_exam_weaknesses", "get_record", "list_projects", "query_project_records",
 }
 _OPEN_WORLD_TOOLS = {"send_message", "join_project", "leave_project",
                      "add_project_record", "query_project_records"}
@@ -776,29 +774,23 @@ MCP_TOOLS = [
     _tool(
         "query_records",
         "Query Records",
-        "Free-text substring search across records in an approved or archived dynamic store.",
+        "Search records in an approved or archived dynamic store. contains is a free-text substring search; where is a structured field filter. When both are supplied, both must match. Fields, sort, and projection are optional.",
         {
             "profile_id": _PROFILE_ID,
             "store_name": {"type": "string"},
             "contains": {"type": "string", "default": ""},
+            "where": {"type": "object", "default": {}, "additionalProperties": {
+                "anyOf": [
+                    {"not": {"type": "object"}}, {"type": "object", "properties": {
+                        "eq": {}, "ne": {}, "gt": {}, "gte": {}, "lt": {}, "lte": {},
+                        "contains": {}, "in": {"type": "array"},
+                    }, "additionalProperties": False, "minProperties": 1, "maxProperties": 1}
+                ]}},
+            "fields": {"type": "array", "items": {"type": "string"}},
+            "order_by": {"type": "string"},
+            "descending": {"type": "boolean", "default": True},
             "limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50},
         },
-        ["profile_id", "store_name"],
-    ),
-    _tool(
-        "filter_records", "Filter Records",
-        "Structured field filter: sort records and return only selected fields. Conditions may be direct equality or use eq, ne, gt, gte, lt, lte, contains, or in.",
-        {"profile_id": _PROFILE_ID, "store_name": {"type": "string"},
-         "where": {"type": "object", "default": {}, "additionalProperties": {
-             "anyOf": [
-                 {"not": {"type": "object"}}, {"type": "object", "properties": {
-                     "eq": {}, "ne": {}, "gt": {}, "gte": {}, "lt": {}, "lte": {},
-                     "contains": {}, "in": {"type": "array"},
-                 }, "additionalProperties": False, "minProperties": 1, "maxProperties": 1}
-             ]}},
-         "fields": {"type": "array", "items": {"type": "string"}},
-         "order_by": {"type": "string"}, "descending": {"type": "boolean", "default": True},
-         "limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50}},
         ["profile_id", "store_name"],
     ),
     _tool(
@@ -881,19 +873,8 @@ MCP_TOOLS = [
         ["profile_id", "store_name", "record_id"],
     ),
     _tool(
-        "add_record",
-        "Add Record",
-        "Add a record to a backend-approved dynamic store. The backend enforces the approved schema and rejects pending, rejected, or archived stores.",
-        {
-            "profile_id": _PROFILE_ID,
-            "store_name": {"type": "string"},
-            "data": {"type": "object"},
-        },
-        ["profile_id", "store_name", "data"],
-    ),
-    _tool(
-        "bulk_add_records", "Bulk Add Records",
-        "Atomically import 1–200 schema-validated records into an approved store for a migration.",
+        "add_records", "Add Records",
+        "Add 1–200 schema-validated records atomically to an approved store. For thread_continuity, pass exactly one record; it upserts by source_type and source_id.",
         {"profile_id": _PROFILE_ID, "store_name": {"type": "string"}, "records": {"type": "array", "items": {"type": "object"}, "minItems": 1, "maxItems": 200}},
         ["profile_id", "store_name", "records"],
     ),
@@ -1436,20 +1417,16 @@ class MCPToolRunner:
                 arguments["schema"],
             )
         if name == "query_records":
-            contains = arguments.get("contains")
             return self.bridge.query_records(
                 arguments["profile_id"],
                 arguments["store_name"],
-                contains=contains or None,
-                limit=int(arguments.get("limit", 50)),
-            )
-        if name == "filter_records":
-            return self.bridge.filter_records(
-                arguments["profile_id"], arguments["store_name"],
-                where=arguments.get("where"), fields=arguments.get("fields"),
+                contains=arguments.get("contains") or None,
+                where=arguments.get("where"),
+                fields=arguments.get("fields"),
                 order_by=arguments.get("order_by"),
                 descending=bool(arguments.get("descending", True)),
-                limit=int(arguments.get("limit", 50)))
+                limit=int(arguments.get("limit", 50)),
+            )
         if name == "draw_exam_questions":
             return self.bridge.draw_exam_questions(
                 arguments["companion_name"], where=arguments.get("where"),
@@ -1477,14 +1454,9 @@ class MCPToolRunner:
         if name == "delete_record":
             return self.bridge.delete_record(arguments["profile_id"], arguments["store_name"],
                                              arguments["record_id"])
-        if name == "add_record":
-            return self.bridge.add_record(
-                arguments["profile_id"],
-                arguments["store_name"],
-                arguments["data"],
-            )
-        if name == "bulk_add_records":
-            return self.bridge.bulk_add_records(arguments["profile_id"], arguments["store_name"], arguments["records"])
+        if name == "add_records":
+            return self.bridge.add_records(
+                arguments["profile_id"], arguments["store_name"], arguments["records"])
         if name == "create_project":
             return self.bridge.create_project(arguments["profile_id"], arguments["name"],
                                               arguments["purpose"], arguments["schema"])
@@ -1534,11 +1506,11 @@ class MCPToolRunner:
             "thread_continuity": selected,
             "thread_continuity_write_contract": {
                 "upsert": {
-                    "tool": "add_record",
+                    "tool": "add_records",
                     "arguments": {
                         "profile_id": profile_id,
                         "store_name": "thread_continuity",
-                        "data": "<complete continuity row>",
+                        "records": ["<complete continuity row>"],
                     },
                     "idempotency_key": ["source_type", "source_id"],
                 },

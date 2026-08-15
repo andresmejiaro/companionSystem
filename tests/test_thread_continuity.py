@@ -79,4 +79,11 @@ def test_continuity_contract_rejects_invalid_state_and_normal_session_omits_rows
             "/profiles/tara/stores/thread_continuity/records/bulk",
             json={"records": [_continuity(source_id="bulk-reply")]},
         )
-        assert bulk.status_code == 409
+        assert bulk.status_code == 201
+
+        too_many = client.post(
+            "/profiles/tara/stores/thread_continuity/records/bulk",
+            json={"records": [_continuity(source_id="first"),
+                              _continuity(source_id="second")]},
+        )
+        assert too_many.status_code == 409

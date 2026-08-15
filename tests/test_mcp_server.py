@@ -279,10 +279,19 @@ class FakeBridge:
         self.store_approved = False
         return store
 
-    def query_records(self, profile_id, store_name, contains=None, limit=50):
+    def query_records(self, profile_id, store_name, contains=None, where=None,
+                      fields=None, order_by=None, descending=True, limit=50):
         rows = [r for r in self.records if r["store"] == store_name]
         if contains:
             rows = [r for r in rows if contains.lower() in str(r["data"]).lower()]
+        if where:
+            rows = [r for r in rows if all(r["data"].get(key) == value
+                                          for key, value in where.items())]
+        if order_by:
+            rows.sort(key=lambda r: r["data"].get(order_by), reverse=descending)
+        if fields:
+            rows = [{**r, "data": {key: r["data"][key] for key in fields
+                                     if key in r["data"]}} for r in rows]
         return rows[:limit]
 
     def draw_weighted_records(self, profile_id, store_name, weight_field, where=None, count=1):
@@ -320,6 +329,9 @@ class FakeBridge:
                   "data": data, "created_at": 1, "updated_at": None}
         self.records.append(record)
         return record
+
+    def add_records(self, profile_id, store_name, records):
+        return [self.add_record(profile_id, store_name, record) for record in records]
 
     @staticmethod
     def _project(approval=False):
@@ -460,7 +472,7 @@ def test_initialize_and_list_tools(tmp_path, monkeypatch):
     assert r.status_code == 200
     tools = r.json()["result"]["tools"]
     names = {tool["name"] for tool in tools}
-    assert len(names) == 38
+    assert len(names) == 36
     assert {"closeout", "search_memories",
             "set_messages_read_status"} <= names
     assert {"create_project", "list_projects", "join_project", "leave_project",
@@ -472,6 +484,8 @@ def test_initialize_and_list_tools(tmp_path, monkeypatch):
                         "mark_message_read", "get_ironsworn_move",
                         "get_ironsworn_oracle", "get_ironsworn_sheet",
                         "roll_ironsworn_dice", "prepare_closeout"}
+    assert not names & {"add_record", "bulk_add_records", "filter_records"}
+    assert "add_records" in names
     assert not names & {"approve_store", "reject_store", "archive_store", "audit"}
     for tool in tools:
         assert set(tool) == {"name", "title", "description", "inputSchema", "outputSchema", "annotations"}
@@ -510,7 +524,7 @@ def test_list_tools_can_omit_output_schemas(tmp_path, monkeypatch):
     r = client.post("/mcp", json=_rpc("tools/list"), headers=_bearer())
     assert r.status_code == 200
     tools = r.json()["result"]["tools"]
-    assert len(tools) == 38
+    assert len(tools) == 36
     for tool in tools:
         assert set(tool) == {"name", "title", "description", "inputSchema", "annotations"}
 
@@ -731,18 +745,18 @@ def test_mcp_tool_flow_and_logging(tmp_path, caplog):
     assert proposed["status"] == "pending"
     assert proposed["approval_link"] == f"{PUBLIC_BASE}/approvals/store-approval-1"
 
-    blocked = _call_tool(client, "add_record", {
+    blocked = _call_tool(client, "add_records", {
         "profile_id": "tara",
         "store_name": "hotel_reservations",
-        "data": {"hotel_name": "Inn"},
+        "records": [{"hotel_name": "Inn"}],
     }).json()["result"]
     assert blocked["isError"] is True
 
     bridge.store_approved = True
-    added = _call_tool(client, "add_record", {
+    added = _call_tool(client, "add_records", {
         "profile_id": "tara",
         "store_name": "hotel_reservations",
-        "data": {"hotel_name": "Inn"},
+        "records": [{"hotel_name": "Inn"}],
     }).json()["result"]
     assert added["isError"] is False
     records = _call_tool(client, "query_records", {
@@ -838,9 +852,10 @@ def test_summon_companion_forum_hydrates_bounded_active_continuity_without_ident
     assert [item["record_id"] for item in result["thread_continuity"]] == [
         "open-new", "active-newer"]
     contract = result["thread_continuity_write_contract"]
-    assert contract["upsert"]["tool"] == "add_record"
+    assert contract["upsert"]["tool"] == "add_records"
     assert contract["status_update"]["tool"] == "update_record"
     assert contract["upsert"]["arguments"]["store_name"] == "thread_continuity"
+    assert contract["upsert"]["arguments"]["records"] == ["<complete continuity row>"]
 
 
 def test_successful_structured_content_matches_declared_output_schema():
@@ -887,8 +902,8 @@ def test_successful_structured_content_matches_declared_output_schema():
     call_and_validate("propose_store", {"profile_id": "tara", "name": "items", "purpose": "p",
                                          "schema": {"fields": {"name": {"type": "string"}}}})
     bridge.store_approved = True
-    call_and_validate("add_record", {"profile_id": "tara", "store_name": "items", "data": {"name": "x"}})
-    call_and_validate("query_records", {"profile_id": "tara", "store_name": "items"})
+    call_and_validate("add_records", {"profile_id": "tara", "store_name": "items", "records": [{"name": "x"}]})
+    call_and_validate("query_records", {"profile_id": "tara", "store_name": "items", "where": {"name": "x"}})
     project = call_and_validate("create_project", {
         "profile_id": "vertice", "name": "career_network", "purpose": "shared work",
         "schema": {"fields": {"name": {"type": "string"}}},

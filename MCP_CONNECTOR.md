@@ -40,7 +40,7 @@ Exposed MCP tools:
 - `list_stores`
 - `propose_store`
 - `query_records`
-- `add_record`
+- `add_records`
 
 List-returning tool results expose structured content as `{"items": [...]}`.
 `summon_companion` first attempts the supplied normalized canonical id directly.
@@ -140,7 +140,7 @@ This matters for OAuth audience validation: issued access tokens are scoped to
     allowed tools.
 
 After startup, Claude can call `remember`, `search_context`, `closeout`,
-`list_stores`, `propose_store`, `query_records`, and `add_record`. Re-submit
+`list_stores`, `propose_store`, `query_records`, and `add_records`. Re-submit
 the same pending store name with `propose_store` to revise your own proposal;
 the old approval link is retired and replaced. Record
 writes still require a backend-approved dynamic store; pending/rejected/

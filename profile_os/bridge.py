@@ -131,6 +131,7 @@ BRIDGE_OUTPUT_SCHEMAS = {
     "get_store": DYNAMIC_STORE,
     "add_record": DYNAMIC_RECORD,
     "bulk_add_records": array_of(DYNAMIC_RECORD),
+    "add_records": array_of(DYNAMIC_RECORD),
     "query_records": array_of(DYNAMIC_RECORD),
     "filter_records": array_of(DYNAMIC_RECORD),
     "draw_exam_questions": QUESTION_DRAW,
@@ -301,6 +302,9 @@ TOOLS = [
            "data": {"type": "object"}},
           ["profile_id", "store_name", "data"]),
     _tool("bulk_add_records", "Atomically import 1–200 validated records into an approved store for a migration.",
+          {"profile_id": _PID, "store_name": {"type": "string"}, "records": {"type": "array", "items": {"type": "object"}}},
+          ["profile_id", "store_name", "records"]),
+    _tool("add_records", "Add 1–200 schema-validated records to an approved dynamic store.",
           {"profile_id": _PID, "store_name": {"type": "string"}, "records": {"type": "array", "items": {"type": "object"}}},
           ["profile_id", "store_name", "records"]),
     _tool("query_records", "Query records of a dynamic store.",
@@ -605,8 +609,19 @@ class ToolBridge:
         return self._request("POST", f"/profiles/{profile_id}/stores/{store_name}/records/bulk",
                              json={"records": records})
 
+    def add_records(self, profile_id: str, store_name: str, records: list[dict]):
+        """Consolidated record writer used by the remote MCP surface."""
+        return self.bulk_add_records(profile_id, store_name, records)
+
     def query_records(self, profile_id: str, store_name: str,
-                      contains: str | None = None, limit: int = 50):
+                      contains: str | None = None, where: dict | None = None,
+                      fields: list[str] | None = None, order_by: str | None = None,
+                      descending: bool = True, limit: int = 50):
+        if where is not None or fields is not None or order_by is not None:
+            return self._request(
+                "POST", f"/profiles/{profile_id}/stores/{store_name}/records/query",
+                json={"contains": contains, "where": where or {}, "fields": fields,
+                      "order_by": order_by, "descending": descending, "limit": limit})
         return self._request(
             "GET", f"/profiles/{profile_id}/stores/{store_name}/records",
             params={"contains": contains, "limit": limit})
