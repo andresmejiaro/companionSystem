@@ -112,7 +112,7 @@ BRIDGE_OUTPUT_SCHEMAS = {
     "forget": DELETED_MEMORY,
     "send_message": MESSAGE,
     "read_inbox": array_of(MESSAGE),
-    "mark_message_read": MESSAGE,
+    "set_messages_read_status": array_of(MESSAGE),
     "write_file": FILE_META,
     "list_files": array_of(FILE_META),
     "read_file": FILE_CONTENT,
@@ -215,9 +215,15 @@ TOOLS = [
            "unread_only": {"type": "boolean", "default": True},
            "limit": {"type": "integer", "default": 50}},
           ["profile_id"]),
-    _tool("mark_message_read", "Mark one of your inbox messages as read.",
-          {"profile_id": _PID, "message_id": {"type": "string"}},
-          ["profile_id", "message_id"]),
+    _tool("set_messages_read_status", "Set the read state for 1–200 of your inbox messages."
+          " Set read=true after handling messages; use read=false to restore them"
+          " to the unread inbox. The explicit state is safe to retry.",
+          {"profile_id": _PID,
+           "message_ids": {"type": "array", "items": {"type": "string"},
+                           "minItems": 1, "maxItems": 200, "uniqueItems": True,
+                           "description": "Distinct inbox message ids."},
+           "read": {"type": "boolean"}},
+          ["profile_id", "message_ids", "read"]),
     _tool("write_file", "Write (or overwrite) a plain file in your own scratch file"
                        " store — for scripts, notes, anything that doesn't belong as"
                        " a structured record. Self-service, never in git, never a"
@@ -496,7 +502,13 @@ class ToolBridge:
                              params={"unread_only": unread_only, "limit": limit})
 
     def mark_message_read(self, profile_id: str, message_id: str):
+        """Legacy direct bridge method retained for older callers."""
         return self._request("POST", f"/profiles/{profile_id}/inbox/{message_id}/read")
+
+    def set_messages_read_status(self, profile_id: str, message_ids: list[str],
+                                 read: bool):
+        return self._request("PUT", f"/profiles/{profile_id}/inbox/read-status",
+                             json={"message_ids": message_ids, "read": read})
 
     def write_file(self, profile_id: str, filename: str, content: str):
         return self._request("PUT", f"/profiles/{profile_id}/files/{filename}",

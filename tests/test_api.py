@@ -650,6 +650,47 @@ def test_inbox_flow_between_profiles(client):
     assert client.post(f"/profiles/tara/inbox/{msg['id']}/read").status_code == 404
 
 
+def test_bulk_inbox_read_status_is_atomic_idempotent_and_reversible(client):
+    first = client.post("/profiles/tara/messages", json={
+        "to_profile_id": "sidra", "content": "first"}).json()
+    second = client.post("/profiles/tara/messages", json={
+        "to_profile_id": "sidra", "content": "second"}).json()
+
+    # Results follow caller order, rather than database ordering.
+    marked = client.put("/profiles/sidra/inbox/read-status", json={
+        "message_ids": [second["id"], first["id"]], "read": True})
+    assert marked.status_code == 200, marked.text
+    assert [item["id"] for item in marked.json()] == [second["id"], first["id"]]
+    assert all(item["read_at"] is not None for item in marked.json())
+
+    # Retrying the same explicit assignment is safe, and read=false restores
+    # the messages to the default unread inbox.
+    retried = client.put("/profiles/sidra/inbox/read-status", json={
+        "message_ids": [second["id"], first["id"]], "read": True})
+    assert retried.status_code == 200
+    restored = client.put("/profiles/sidra/inbox/read-status", json={
+        "message_ids": [first["id"], second["id"]], "read": False})
+    assert restored.status_code == 200
+    assert all(item["read_at"] is None for item in restored.json())
+
+    # An invalid batch does not update the valid item alongside it.
+    bad = client.put("/profiles/sidra/inbox/read-status", json={
+        "message_ids": [first["id"], "missing"], "read": True})
+    assert bad.status_code == 404
+    inbox = client.get("/profiles/sidra/inbox").json()
+    assert {item["id"] for item in inbox if item["read_at"] is None} == {
+        first["id"], second["id"]}
+
+    duplicate = client.put("/profiles/sidra/inbox/read-status", json={
+        "message_ids": [first["id"], first["id"]], "read": True})
+    assert duplicate.status_code == 422
+
+    # A recipient cannot mutate messages outside their inbox.
+    wrong_recipient = client.put("/profiles/tara/inbox/read-status", json={
+        "message_ids": [first["id"]], "read": True})
+    assert wrong_recipient.status_code == 404
+
+
 def test_send_message_validation(client):
     empty = client.post("/profiles/tara/messages",
                         json={"to_profile_id": "sidra", "content": "   "})

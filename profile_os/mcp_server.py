@@ -445,7 +445,7 @@ MCP_OUTPUT_SCHEMAS = {
     "forget": DELETED_MEMORY,
     "send_message": MESSAGE,
     "read_inbox": mcp_items(MESSAGE),
-    "mark_message_read": MESSAGE,
+    "set_messages_read_status": mcp_items(MESSAGE),
     "write_file": FILE_META,
     "list_files": mcp_items(FILE_META),
     "read_file": FILE_CONTENT,
@@ -491,7 +491,7 @@ _READ_ONLY_TOOLS = {
 _OPEN_WORLD_TOOLS = {"send_message", "join_project", "leave_project",
                      "add_project_record", "query_project_records"}
 _DESTRUCTIVE_TOOLS = {"forget", "delete_file", "delete_record"}
-_IDEMPOTENT_TOOLS = {"mark_message_read", "leave_project"}
+_IDEMPOTENT_TOOLS = {"set_messages_read_status", "leave_project"}
 _SHARED_PROJECT_TOOLS = {
     "create_project", "list_projects", "join_project", "leave_project",
     "add_project_record", "query_project_records",
@@ -652,11 +652,21 @@ MCP_TOOLS = [
         ["profile_id"],
     ),
     _tool(
-        "mark_message_read",
-        "Mark Message Read",
-        "Mark one of your inbox messages as read.",
-        {"profile_id": _PROFILE_ID, "message_id": {"type": "string"}},
-        ["profile_id", "message_id"],
+        "set_messages_read_status",
+        "Set Messages Read Status",
+        "Set the read state for 1–200 of your inbox messages. Set read=true after"
+        " handling messages; use read=false to restore messages to the unread inbox."
+        " The explicit state is safe to retry.",
+        {
+            "profile_id": _PROFILE_ID,
+            "message_ids": {
+                "type": "array", "items": {"type": "string"},
+                "minItems": 1, "maxItems": 200, "uniqueItems": True,
+                "description": "Distinct inbox message ids.",
+            },
+            "read": {"type": "boolean"},
+        },
+        ["profile_id", "message_ids", "read"],
     ),
     _tool(
         "write_file",
@@ -1237,9 +1247,9 @@ class MCPToolRunner:
                 unread_only=arguments.get("unread_only", True),
                 limit=int(arguments.get("limit", 50)),
             )
-        if name == "mark_message_read":
-            return self.bridge.mark_message_read(
-                arguments["profile_id"], arguments["message_id"])
+        if name == "set_messages_read_status":
+            return self.bridge.set_messages_read_status(
+                arguments["profile_id"], arguments["message_ids"], arguments["read"])
         if name == "write_file":
             return self.bridge.write_file(
                 arguments["profile_id"], arguments["filename"], arguments["content"])

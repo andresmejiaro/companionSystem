@@ -67,6 +67,21 @@ def test_bridge_against_auth_enabled_app_with_grants(tmp_path):
     _exercise_all_tools(_bridge_over(app, bearer="bridge-secret"))
 
 
+def test_bridge_sets_bulk_inbox_read_status_and_preserves_legacy_method(tmp_path):
+    app = create_app(data_dir=str(tmp_path / "data"))
+    bridge = _bridge_over(app)
+    first = bridge.send_message("tara", "sidra", "first")
+    second = bridge.send_message("tara", "sidra", "second")
+
+    updated = bridge.set_messages_read_status(
+        "sidra", [second["id"], first["id"]], read=True)
+    assert [item["id"] for item in updated] == [second["id"], first["id"]]
+    assert all(item["read_at"] is not None for item in updated)
+
+    legacy = bridge.mark_message_read("sidra", first["id"])
+    assert legacy["read_at"] is not None
+
+
 def test_bridge_sends_bearer_header(tmp_path):
     app = create_app(data_dir=str(tmp_path / "data"))
     seen = {}
@@ -119,7 +134,7 @@ def test_no_tool_bypasses_api_authorization(tmp_path):
         "forget": {"profile_id": "tara", "event_id": "e1"},
         "send_message": {"profile_id": "tara", "to_profile_id": "sidra", "content": "hi"},
         "read_inbox": {"profile_id": "tara"},
-        "mark_message_read": {"profile_id": "tara", "message_id": "m1"},
+        "set_messages_read_status": {"profile_id": "tara", "message_ids": ["m1"], "read": True},
         "write_file": {"profile_id": "tara", "filename": "f.txt", "content": "x"},
         "list_files": {"profile_id": "tara"},
         "read_file": {"profile_id": "tara", "filename": "f.txt"},

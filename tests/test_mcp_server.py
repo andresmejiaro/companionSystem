@@ -459,13 +459,15 @@ def test_initialize_and_list_tools(tmp_path, monkeypatch):
     tools = r.json()["result"]["tools"]
     names = {tool["name"] for tool in tools}
     assert len(names) == 42
-    assert {"prepare_closeout", "closeout", "search_memories"} <= names
+    assert {"prepare_closeout", "closeout", "search_memories",
+            "set_messages_read_status"} <= names
     assert {"create_project", "list_projects", "join_project", "leave_project",
             "add_project_record", "query_project_records"} <= names
     assert not names & {"whoami", "resolve_companion", "list_profiles",
                         "boot_profile", "start_session", "start_session_forum",
                         "update_own_description", "retract_approval",
-                        "update_pending_store", "withdraw_pending_store"}
+                        "update_pending_store", "withdraw_pending_store",
+                        "mark_message_read"}
     assert not names & {"approve_store", "reject_store", "archive_store", "audit"}
     for tool in tools:
         assert set(tool) == {"name", "title", "description", "inputSchema", "outputSchema", "annotations"}

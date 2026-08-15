@@ -753,6 +753,51 @@ class Store:
         return self._message_dict(self.db.execute(
             "SELECT * FROM messages WHERE id=?", (message_id,)).fetchone())
 
+    def set_messages_read_status(self, profile_id: str, message_ids: list[str],
+                                 read: bool) -> list[dict]:
+        """Atomically assign a read state to inbox messages in caller order.
+
+        This deliberately validates the complete batch before changing any row:
+        a typo or a message belonging to another recipient cannot produce a
+        partial acknowledgement.  Explicit state makes retries idempotent and
+        supports restoring messages to the unread inbox.
+        """
+        self._require_profile(profile_id)
+        if (not isinstance(message_ids, list) or not 1 <= len(message_ids) <= 200):
+            raise MalformedMessage("message_ids must contain between 1 and 200 ids")
+        if (any(not isinstance(message_id, str) or not message_id.strip()
+                for message_id in message_ids)):
+            raise MalformedMessage("message_ids must contain non-empty strings")
+        if len(set(message_ids)) != len(message_ids):
+            raise MalformedMessage("message_ids must not contain duplicates")
+        if not isinstance(read, bool):
+            raise MalformedMessage("read must be a boolean")
+
+        placeholders = ",".join("?" for _ in message_ids)
+        rows = self.db.execute(
+            f"SELECT * FROM messages WHERE id IN ({placeholders}) AND to_profile_id=?",
+            [*message_ids, profile_id],
+        ).fetchall()
+        by_id = {row["id"]: row for row in rows}
+        for message_id in message_ids:
+            if message_id not in by_id:
+                raise MessageNotFound(profile_id, message_id)
+
+        read_at = time.time() if read else None
+        with self.db:
+            self.db.executemany(
+                "UPDATE messages SET read_at=? WHERE id=?",
+                [(read_at, message_id) for message_id in message_ids],
+            )
+
+        updated_rows = self.db.execute(
+            f"SELECT * FROM messages WHERE id IN ({placeholders})",
+            message_ids,
+        ).fetchall()
+        updated_by_id = {row["id"]: row for row in updated_rows}
+        return [self._message_dict(updated_by_id[message_id])
+                for message_id in message_ids]
+
     @staticmethod
     def _message_dict(row: sqlite3.Row) -> dict:
         return {"id": row["id"], "from_profile_id": row["from_profile_id"],

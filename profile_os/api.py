@@ -104,6 +104,22 @@ class MessageIn(BaseModel):
     content: str
 
 
+class MessageReadStatusIn(BaseModel):
+    """An explicit, retry-safe inbox read-state assignment."""
+
+    message_ids: list[str] = Field(min_length=1, max_length=200)
+    read: bool
+
+    @field_validator("message_ids")
+    @classmethod
+    def message_ids_must_be_distinct(cls, message_ids: list[str]) -> list[str]:
+        if any(not message_id.strip() for message_id in message_ids):
+            raise ValueError("message_ids must contain non-empty strings")
+        if len(set(message_ids)) != len(message_ids):
+            raise ValueError("message_ids must not contain duplicates")
+        return message_ids
+
+
 class ProfileCreateTotpIn(BaseModel):
     id: str
     display_name: str
@@ -1043,8 +1059,17 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
 
     @app.post("/profiles/{profile_id}/inbox/{message_id}/read")
     def mark_message_read(profile_id: str, message_id: str, request: Request):
+        """Legacy one-message endpoint retained for older non-MCP callers."""
         _require("search", profile_id, request)
         return _wrap(store.mark_message_read, profile_id, message_id)
+
+    @app.put("/profiles/{profile_id}/inbox/read-status")
+    def set_messages_read_status(profile_id: str, body: MessageReadStatusIn,
+                                 request: Request):
+        """Set the read state of 1--200 inbox messages atomically."""
+        _require("search", profile_id, request)
+        return _wrap(store.set_messages_read_status,
+                     profile_id, body.message_ids, body.read)
 
     # -- file store: plain files on disk, self-service, never git/DB blob --------
 
