@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from life_mcp.app import create_app
 from life_mcp.config import Settings
-from life_mcp.snapshot import SnapshotError, SnapshotStore
+from life_mcp.snapshot import SnapshotError, SnapshotReadOnly, SnapshotStore
 
 
 def sample_snapshot(generated_at="2026-03-08T10:07:52Z"):
@@ -124,11 +124,21 @@ def test_publish_rejects_duplicate_entities_and_private_evidence(tmp_path):
         SnapshotStore(tmp_path).publish(private)
 
 
+def test_read_only_mode_blocks_publication_but_keeps_snapshot_readable(tmp_path):
+    writable = SnapshotStore(tmp_path)
+    writable.publish(sample_snapshot())
+
+    readonly = SnapshotStore(tmp_path, read_only=True)
+    assert readonly.status()["published"] is True
+    with pytest.raises(SnapshotReadOnly, match="publication is disabled"):
+        readonly.publish(sample_snapshot("2026-08-14T10:00:00Z"))
+
+
 def test_health_is_public_but_mcp_requires_auth(client):
     health = client.get("/health")
     assert health.json() == {
         "status": "healthy", "service": "life-career-truth-mcp",
-        "version": "0.1.0", "snapshot_published": True,
+        "version": "0.1.0", "snapshot_published": True, "read_only": False,
     }
     denied = client.post("/mcp", json={
         "jsonrpc": "2.0", "id": 1, "method": "tools/list",

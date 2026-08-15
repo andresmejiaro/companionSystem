@@ -61,6 +61,31 @@ MAX_PROFILES_PER_PRINCIPAL = int(os.environ.get("PROFILE_OS_MAX_PROFILES_PER_PRI
 
 PROFILE_ID_RE = re.compile(r"^[a-z0-9_-]{1,64}$")
 
+_READ_ONLY_POST_PATHS = (
+    re.compile(r"^/profiles/[^/]+/(?:boot|session|closeout/prepare|session-inspect)$"),
+    re.compile(r"^/profiles/[^/]+/ironsworn/dice$"),
+    re.compile(r"^/profiles/[^/]+/stores/[^/]+/records/(?:query|draw)$"),
+    re.compile(r"^/questions/weaknesses$"),
+    # These only authenticate a caller or create an in-memory browser session;
+    # they do not change companion/profile data.
+    re.compile(r"^/(?:settings|question-practice)/unlock$"),
+    re.compile(r"^/admin/verify-totp(?:-only)?$"),
+)
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _request_is_read_only(method: str, path: str) -> bool:
+    if method in {"GET", "HEAD", "OPTIONS"}:
+        return True
+    return method == "POST" and any(pattern.fullmatch(path)
+                                    for pattern in _READ_ONLY_POST_PATHS)
+
 
 class MemoryEventIn(BaseModel):
     kind: str
@@ -301,12 +326,16 @@ class ProjectJoinIn(BaseModel):
 
 def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
                auth_enabled: bool | None = None,
-               identity_file: str | None = None) -> FastAPI:
+               identity_file: str | None = None,
+               read_only: bool | None = None) -> FastAPI:
     if auth_enabled is None:
         auth_enabled = os.environ.get("PROFILE_OS_AUTH_ENABLED") == "1"
     if identity_file is None:
         identity_file = os.environ.get("PROFILE_OS_IDENTITY_FILE")
+    if read_only is None:
+        read_only = _env_bool("PROFILE_OS_READ_ONLY")
     app = FastAPI(title="Assistant Profile OS", version="0.1.0")
+    app.state.read_only = read_only
     store = Store(data_dir)
     if do_seed:
         seed.seed(store)
@@ -372,6 +401,12 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
     @app.middleware("http")
     async def _buffer_body(request: Request, call_next):
         """Bound and replay the body for signature auth and Pydantic."""
+        if read_only and not _request_is_read_only(request.method, request.url.path):
+            return JSONResponse(
+                {"detail": "Companions is in read-only mode; writes are disabled"},
+                status_code=503,
+                headers={"Retry-After": "60"},
+            )
         try:
             body = await read_request_body(request, _max_request_bytes)
         except RequestBodyTooLarge:
@@ -500,7 +535,7 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
 
     @app.get("/health")
     def health():
-        return {"ok": True}
+        return {"ok": True, "read_only": read_only}
 
     @app.get("/", include_in_schema=False)
     def root_directory():

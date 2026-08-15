@@ -24,6 +24,10 @@ class SnapshotNotFound(LookupError):
     pass
 
 
+class SnapshotReadOnly(SnapshotError):
+    pass
+
+
 def _utc_now() -> str:
     return dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -66,8 +70,9 @@ def _private_key(value: Any) -> str | None:
 class SnapshotStore:
     """Versioned, atomically published read model for career facts."""
 
-    def __init__(self, data_dir: Path):
+    def __init__(self, data_dir: Path, *, read_only: bool = False):
         self.data_dir = data_dir
+        self.read_only = read_only
         self.snapshots_dir = data_dir / "snapshots"
         self.current_path = data_dir / "current.json"
         self.lock = threading.RLock()
@@ -104,6 +109,9 @@ class SnapshotStore:
         return prepared
 
     def publish(self, raw: dict[str, Any]) -> dict[str, Any]:
+        if self.read_only:
+            raise SnapshotReadOnly(
+                "Life MCP is in read-only mode; snapshot publication is disabled")
         prepared = self.prepare(raw)
         with self.lock:
             previous = self.load(required=False)

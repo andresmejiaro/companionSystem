@@ -55,6 +55,17 @@ On first start, the service creates `data/` and seeds the example `sidra` and
 location. Set `PROFILE_OS_SEED_DEMO_PROFILES=0` before first start to skip the
 example profiles.
 
+Set `PROFILE_OS_READ_ONLY=1` to keep discovery, session hydration, searches,
+record queries, and other read operations available while rejecting profile,
+memory, file, store, project, approval, and practice-state writes with HTTP
+503. The Compose stack passes this switch to the backend, so MCP calls are
+covered by the same boundary.
+
+Life MCP's tools are always read-only. Set `LIFE_MCP_READ_ONLY=1` to also
+lock its SSH/CLI snapshot-publication path while keeping the published career
+snapshot readable. Validation with `publish_snapshot --validate-only` remains
+available.
+
 For a quick API check:
 
 ```bash

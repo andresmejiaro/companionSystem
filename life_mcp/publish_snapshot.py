@@ -34,8 +34,9 @@ def main() -> None:
     if args.validate_only:
         print(json.dumps({"valid": True, "entity_count": len(prepared["entities"])}))
         return
-    data_dir = args.data_dir or Settings.from_env().data_dir
-    publication = SnapshotStore(data_dir).publish(prepared)
+    settings = Settings.from_env()
+    data_dir = args.data_dir or settings.data_dir
+    publication = SnapshotStore(data_dir, read_only=settings.read_only).publish(prepared)
     print(json.dumps(publication, sort_keys=True))
 
 

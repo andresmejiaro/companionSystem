@@ -49,7 +49,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     if missing := settings.validate():
         LOGGER.warning("configuration incomplete: %s", ", ".join(missing))
     settings.data_dir.mkdir(parents=True, exist_ok=True)
-    store = SnapshotStore(settings.data_dir)
+    store = SnapshotStore(settings.data_dir, read_only=settings.read_only)
     state = JsonState(settings.data_dir / "oauth-state.json", {"clients": {}, "codes": {}})
     auth = MCPAuth(settings, state)
     tools = build_tools(store)
@@ -83,13 +83,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {
             "status": "healthy", "service": "life-career-truth-mcp",
             "version": __version__, "snapshot_published": status["published"],
+            "read_only": settings.read_only,
         }
 
     @app.get("/")
     async def root():
         return {
             "service": "life-career-truth-mcp", "mcp_endpoint": "/mcp",
-            "mode": "read-only", "source": store.status(),
+            "mode": "read-only", "publication_locked": settings.read_only,
+            "source": store.status(),
         }
 
     @app.get("/.well-known/oauth-protected-resource")

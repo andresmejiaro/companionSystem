@@ -12,6 +12,37 @@ def client(tmp_path):
         yield c
 
 
+def test_read_only_mode_keeps_reads_and_blocks_writes(tmp_path, monkeypatch):
+    monkeypatch.setenv("PROFILE_OS_READ_ONLY", "1")
+    app = create_app(data_dir=str(tmp_path / "data"))
+    with TestClient(app) as readonly:
+        assert readonly.get("/health").json() == {"ok": True, "read_only": True}
+        assert readonly.get("/profiles").status_code == 200
+        assert readonly.post("/profiles/tara/session").status_code == 200
+        assert readonly.post("/profiles/tara/closeout/prepare").status_code == 200
+
+        for response in (
+            readonly.post("/profiles/tara/memories", json={
+                "kind": "note", "content": "must not persist",
+            }),
+            readonly.put("/profiles/tara/files/blocked.txt", json={"content": "x"}),
+            readonly.patch("/profiles/tara/ironsworn/sheet", json={
+                "updates": {"momentum": 1},
+            }),
+            readonly.delete("/profiles/tara/files/blocked.txt"),
+            readonly.post("/questions/draw", json={
+                "companion_name": "lt_rita", "count": 1,
+            }),
+        ):
+            assert response.status_code == 503
+            assert response.json()["detail"] == (
+                "Companions is in read-only mode; writes are disabled")
+
+        assert readonly.get(
+            "/profiles/tara/memories/search", params={"q": "must not persist"}
+        ).json() == []
+
+
 def test_list_and_get_profiles(client):
     ids = {p["id"] for p in client.get("/profiles").json()}
     assert {"sidra", "tara", "tool_probe"} <= ids

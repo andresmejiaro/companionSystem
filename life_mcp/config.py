@@ -24,6 +24,7 @@ class Settings:
     oauth_signing_key: str = ""
     admin_secret: str = ""
     auth_required: bool = True
+    read_only: bool = False
     oauth_access_token_ttl_seconds: int = 60 * 60 * 24 * 30
     allowed_origins: list[str] = field(default_factory=list)
     allowed_redirect_hosts: list[str] = field(default_factory=list)
@@ -42,6 +43,7 @@ class Settings:
             oauth_signing_key=os.getenv("LIFE_MCP_OAUTH_SIGNING_KEY", ""),
             admin_secret=os.getenv("LIFE_MCP_ADMIN_SECRET", ""),
             auth_required=_bool("LIFE_MCP_AUTH_REQUIRED", True),
+            read_only=_bool("LIFE_MCP_READ_ONLY", False),
             oauth_access_token_ttl_seconds=int(os.getenv(
                 "LIFE_MCP_OAUTH_ACCESS_TOKEN_TTL_SECONDS", str(60 * 60 * 24 * 30)
             )),
