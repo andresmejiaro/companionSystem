@@ -462,7 +462,7 @@ def test_initialize_and_list_tools(tmp_path, monkeypatch):
     assert discover["annotations"]["readOnlyHint"] is True
     closeout = next(tool for tool in tools if tool["name"] == "closeout")
     assert set(closeout["inputSchema"]["properties"]) == {
-        "profile_id", "code", "facts", "texture", "exchange", "notes",
+        "profile_id", "code", "facts", "texture", "exchange", "notes", "session_token",
     }
     assert closeout["inputSchema"]["required"] == []
     assert closeout["inputSchema"]["properties"]["notes"]["maxLength"] == 700

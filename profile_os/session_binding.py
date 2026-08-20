@@ -1,24 +1,38 @@
-"""Session-bound companion locking.
+"""Session-bound companion locking — token only.
 
-Binds each MCP conversation to the companion it summoned and blocks
-cross-profile writes (and, when the reads gate is on, cross-profile reads)
-from that conversation. The binding key is a *conversation fingerprint*
-carried below the model's view: ChatGPT's ``x-openai-session`` header or the
-server-minted ``Mcp-Session-Id`` echoed by spec-compliant clients. The model
-can neither read nor forge either, so it cannot re-target a write by editing
-a tool argument. See SESSION_BINDING_PLAN.md for the full design and the wire
-probe that discovered ``x-openai-session``.
+Locks each MCP conversation to the companion it summoned and blocks
+cross-profile writes (and, in strict mode, cross-profile reads and mid-session
+companion switches). The binding is carried by a single **session token**:
+minted on ``summon_companion`` and returned to the model, which must echo it as
+the ``session_token`` argument on every subsequent call.
 
-Enforcement fails open: a request with no fingerprint, or a fingerprint with
-no binding yet, is allowed and logged. An undocumented header disappearing
-must never brick the connector; the ceiling for deliberate intent is
-detection (the audit log), not prevention.
+Deliberately the *simple* shape — one mechanism, every surface, no transport
+headers. We do not read x-openai-session, x-conv-id, or Mcp-Session-Id: those
+each brought a surprise (claude.ai reused one Mcp-Session-Id across
+conversations; the others need unverified client behaviour), and the whole
+point here is no surprises. The cost is honesty about what this is: the token
+is visible to the model, so it is ceremony, not a cryptographic wall — a
+determined model can copy its own token. The goal is to make *accidental*
+cross-companion access impossible and *deliberate* crossing conspicuous (audit
+log), on every client, with nothing to install.
+
+Trust posture (one TOTP-gated switch, ``strict_mode``, default on):
+- **strict**: a guarded call with no valid token is BLOCKED (fail-closed —
+  "summon first and carry the token"); switching companions mid-session is
+  blocked; cross-profile reads are blocked.
+- **trusted** ("revert to trusted"): guarded calls with no token fall open
+  (advisory), switching is allowed, cross-profile reads are allowed.
+  Cross-profile *writes* stay blocked whenever a token identifies a session.
+
+See SESSION_BINDING_PLAN.md.
 """
 
 from __future__ import annotations
 
 import hashlib
 import hmac
+import os
+import secrets
 import sqlite3
 import threading
 import time
@@ -43,8 +57,7 @@ MUTATION_TOOLS = frozenset({
 })
 
 # Tools that read a target profile's private data. Blocked cross-profile only
-# while the reads gate is on (a TOTP-gated admin switch can lift it for an
-# audit without a redeploy).
+# in strict mode (the trust switch lifts it for an audit without a redeploy).
 READ_TOOLS = frozenset({
     "get_record",
     "query_records",
@@ -73,30 +86,32 @@ def classify_tool(name: str) -> str | None:
 
 
 @dataclass(frozen=True)
-class Decision:
-    action: str          # "allow" or "block"
-    kind: str | None     # "mutation", "read", or None
+class CallDecision:
+    action: str          # "allow" | "block"
+    reason: str          # unguarded|no-target|advisory|no-session|allow|reads-open|cross
+    kind: str | None     # "mutation" | "read" | None
     bound_profile: str | None
-    reason: str          # audit label: allow / block / unbound / no-fingerprint / unguarded
+
+
+@dataclass(frozen=True)
+class SummonDecision:
+    action: str          # "allow" | "block"
+    reason: str          # bind|resummon|rebind|switch-blocked
+    token: str | None    # raw token to hand back to the model (on allow)
+    bound_profile: str | None  # currently-bound profile (on switch-blocked)
 
 
 class SessionBindingStore:
-    """SQLite-backed conversation bindings + append-only audit.
-
-    Kept on its own persistent file, deliberately separate from the closeout
-    ledger: bindings are long-lived security state, not 30-minute reservations,
-    and must not inherit the closeout DB's ephemeral default path.
-    """
+    """SQLite-backed session tokens + append-only audit. Own persistent file,
+    separate from the closeout ledger (long-lived security state, not
+    30-minute reservations)."""
 
     def __init__(self, state_file: str, *, default_strict: bool = True,
                  fingerprint_key: str | None = None):
-        # Fingerprints (x-openai-session, minted Mcp-Session-Id, x-conv-id) are
-        # session identifiers, some token-like. Never store them raw: this DB
-        # lands in nightly backups. Keep only a keyed digest — enough to match a
-        # conversation to its binding, useless if the file leaks. A keyed HMAC
-        # (not a bare hash) resists reversing the finite session-id space.
+        # Tokens are secrets; this DB lands in nightly backups. Store only a
+        # keyed HMAC digest — enough to match a session, useless if the file
+        # leaks, and not reversible over the finite token space.
         self._fp_key = fingerprint_key
-        import os
         parent = os.path.dirname(state_file)
         if parent:
             os.makedirs(parent, exist_ok=True)
@@ -105,16 +120,16 @@ class SessionBindingStore:
         self._connection.execute("PRAGMA busy_timeout=5000")
         self._connection.executescript(
             """
-            CREATE TABLE IF NOT EXISTS bindings (
-                fingerprint TEXT PRIMARY KEY,
-                profile_id  TEXT NOT NULL,
-                bound_at    INTEGER NOT NULL,
-                last_seen   INTEGER NOT NULL
+            CREATE TABLE IF NOT EXISTS sessions (
+                token_digest TEXT PRIMARY KEY,
+                profile_id   TEXT NOT NULL,
+                bound_at     INTEGER NOT NULL,
+                last_seen    INTEGER NOT NULL
             );
-            CREATE TABLE IF NOT EXISTS session_audit (
+            CREATE TABLE IF NOT EXISTS session_events (
                 id             INTEGER PRIMARY KEY AUTOINCREMENT,
                 ts             INTEGER NOT NULL,
-                fingerprint    TEXT,
+                token_digest   TEXT,
                 subject_hash   TEXT,
                 tool           TEXT,
                 target_profile TEXT,
@@ -126,10 +141,8 @@ class SessionBindingStore:
             );
             """
         )
-        # One master switch. strict=1 (default) = the trust boundary is up:
-        # one companion per session (no mid-session identity switch) and no
-        # cross-profile reads. strict=0 = "revert to trusted": both relaxed at
-        # once, for an audit or a deliberately trusted session.
+        # One master switch. strict=1 (default) = trust boundary up. strict=0 =
+        # "revert to trusted" (one-companion lock and reads wall relaxed).
         self._connection.execute(
             "INSERT OR IGNORE INTO gate_settings(key, value) VALUES ('strict_mode', ?)",
             (1 if default_strict else 0,),
@@ -137,70 +150,35 @@ class SessionBindingStore:
         self._connection.commit()
         self._lock = threading.Lock()
 
+    # --- helpers ---------------------------------------------------------
+
     @staticmethod
     def _now() -> int:
         return int(time.time())
 
-    def _digest(self, fingerprint: str | None) -> str | None:
-        """Keyed digest stored in place of the raw fingerprint. Deterministic
-        (same fingerprint -> same digest) so bindings still match; irreversible
-        at rest."""
-        if fingerprint is None:
+    def _digest(self, value: str | None) -> str | None:
+        if value is None:
             return None
         if self._fp_key:
-            return hmac.new(self._fp_key.encode(), fingerprint.encode(),
+            return hmac.new(self._fp_key.encode(), value.encode(),
                             hashlib.sha256).hexdigest()
-        return hashlib.sha256(fingerprint.encode()).hexdigest()
+        return hashlib.sha256(value.encode()).hexdigest()
 
-    def bind(self, fingerprint: str, profile_id: str) -> str | None:
-        """Upsert fingerprint -> profile. Return the previous profile if this
-        fingerprint was already bound to a *different* one (a rebind), else
-        None. bound_at is preserved on re-summon of the same profile."""
-        key = self._digest(fingerprint)
-        now = self._now()
-        with self._lock:
-            connection = self._connection
-            connection.execute("BEGIN IMMEDIATE")
-            try:
-                row = connection.execute(
-                    "SELECT profile_id FROM bindings WHERE fingerprint=?",
-                    (key,),
-                ).fetchone()
-                previous = row[0] if row else None
-                if row is None:
-                    connection.execute(
-                        "INSERT INTO bindings(fingerprint, profile_id, bound_at, last_seen) "
-                        "VALUES (?, ?, ?, ?)",
-                        (key, profile_id, now, now),
-                    )
-                else:
-                    connection.execute(
-                        "UPDATE bindings SET profile_id=?, last_seen=? WHERE fingerprint=?",
-                        (profile_id, now, key),
-                    )
-                connection.commit()
-            except Exception:
-                connection.rollback()
-                raise
-        return previous if previous is not None and previous != profile_id else None
+    @staticmethod
+    def _new_token() -> str:
+        return "st_" + secrets.token_urlsafe(24)
 
-    def get(self, fingerprint: str) -> str | None:
-        row = self._connection.execute(
-            "SELECT profile_id FROM bindings WHERE fingerprint=?", (self._digest(fingerprint),)
+    def _by_token(self, token: str | None):
+        if not token:
+            return None
+        return self._connection.execute(
+            "SELECT profile_id FROM sessions WHERE token_digest=?",
+            (self._digest(token),),
         ).fetchone()
-        return row[0] if row else None
 
-    def touch(self, fingerprint: str) -> None:
-        with self._lock:
-            self._connection.execute(
-                "UPDATE bindings SET last_seen=? WHERE fingerprint=?",
-                (self._now(), self._digest(fingerprint)),
-            )
-            self._connection.commit()
+    # --- state ----------------------------------------------------------
 
     def strict_mode(self) -> bool:
-        """True = trust boundary up (one companion per session, no cross-profile
-        reads). False = reverted to trusted (both relaxed)."""
         row = self._connection.execute(
             "SELECT value FROM gate_settings WHERE key='strict_mode'"
         ).fetchone()
@@ -215,13 +193,41 @@ class SessionBindingStore:
             )
             self._connection.commit()
 
-    def audit(self, *, fingerprint: str | None, subject_hash: str | None,
+    def _mint(self, profile: str) -> str:
+        token = self._new_token()
+        now = self._now()
+        with self._lock:
+            self._connection.execute(
+                "INSERT INTO sessions(token_digest, profile_id, bound_at, last_seen) "
+                "VALUES (?, ?, ?, ?)",
+                (self._digest(token), profile, now, now),
+            )
+            self._connection.commit()
+        return token
+
+    def _rebind(self, token: str, profile: str) -> None:
+        with self._lock:
+            self._connection.execute(
+                "UPDATE sessions SET profile_id=?, last_seen=? WHERE token_digest=?",
+                (profile, self._now(), self._digest(token)),
+            )
+            self._connection.commit()
+
+    def _touch(self, token: str) -> None:
+        with self._lock:
+            self._connection.execute(
+                "UPDATE sessions SET last_seen=? WHERE token_digest=?",
+                (self._now(), self._digest(token)),
+            )
+            self._connection.commit()
+
+    def audit(self, *, token: str | None, subject_hash: str | None,
               tool: str | None, target_profile: str | None, decision: str) -> None:
         with self._lock:
             self._connection.execute(
-                "INSERT INTO session_audit(ts, fingerprint, subject_hash, tool, "
+                "INSERT INTO session_events(ts, token_digest, subject_hash, tool, "
                 "target_profile, decision) VALUES (?, ?, ?, ?, ?, ?)",
-                (self._now(), self._digest(fingerprint), subject_hash, tool,
+                (self._now(), self._digest(token), subject_hash, tool,
                  target_profile, decision),
             )
             self._connection.commit()
@@ -230,41 +236,51 @@ class SessionBindingStore:
         cutoff = self._now() - older_than_seconds
         with self._lock:
             cursor = self._connection.execute(
-                "DELETE FROM bindings WHERE last_seen < ?", (cutoff,)
+                "DELETE FROM sessions WHERE last_seen < ?", (cutoff,)
             )
             self._connection.commit()
             return cursor.rowcount
 
-    def evaluate(self, fingerprint: str | None, tool: str,
-                 target_profile: str | None) -> Decision:
-        """Decide whether a tool call is allowed. Pure of side effects except
-        reading gate state; the caller records the audit row with the subject."""
+    # --- policy ---------------------------------------------------------
+
+    def evaluate_call(self, token: str | None, tool: str,
+                      target_profile: str | None) -> CallDecision:
+        """Decide a (non-summon) tool call. Side-effect-free except touch on
+        allow; the caller writes the audit row."""
         kind = classify_tool(tool)
         if kind is None:
-            return Decision("allow", None, None, "unguarded")
+            return CallDecision("allow", "unguarded", None, None)
         if not target_profile or target_profile == "-":
-            return Decision("allow", kind, None, "no-target")
-        if fingerprint is None:
-            return Decision("allow", kind, None, "no-fingerprint")
-        bound = self.get(fingerprint)
-        if bound is None:
-            return Decision("allow", kind, None, "unbound")
-        if bound == target_profile:
-            return Decision("allow", kind, bound, "allow")
-        if kind == "read" and not self.strict_mode():
-            return Decision("allow", kind, bound, "reads-open")
-        return Decision("block", kind, bound, "block")
+            return CallDecision("allow", "no-target", kind, None)
 
-    def switch_blocked(self, fingerprint: str | None, target_profile: str | None) -> str | None:
-        """For summon_companion: return the currently-bound profile if switching
-        to `target_profile` must be blocked (one companion per session), else
-        None. First summon, same-companion re-summon, no fingerprint, and
-        trusted mode all return None (allowed)."""
-        if fingerprint is None or not target_profile:
-            return None
-        if not self.strict_mode():
-            return None
-        bound = self.get(fingerprint)
-        if bound is None or bound == target_profile:
-            return None
-        return bound
+        row = self._by_token(token)
+        if row is None:
+            if not self.strict_mode():
+                return CallDecision("allow", "advisory", kind, None)
+            return CallDecision("block", "no-session", kind, None)
+
+        profile = row[0]
+        if profile == target_profile:
+            self._touch(token)
+            return CallDecision("allow", "allow", kind, profile)
+        if kind == "read" and not self.strict_mode():
+            return CallDecision("allow", "reads-open", kind, profile)
+        return CallDecision("block", "cross", kind, profile)
+
+    def evaluate_summon(self, token: str | None,
+                        target_profile: str) -> SummonDecision:
+        """Decide + apply a summon: mint on a fresh session, re-summon the same
+        companion idempotently, block (strict) or rebind (trusted) a switch."""
+        row = self._by_token(token)
+        if row is None:
+            # No/unknown token: a new session.
+            return SummonDecision("allow", "bind", self._mint(target_profile), None)
+        profile = row[0]
+        assert token is not None
+        if profile == target_profile:
+            self._touch(token)
+            return SummonDecision("allow", "resummon", token, None)
+        if self.strict_mode():
+            return SummonDecision("block", "switch-blocked", None, profile)
+        self._rebind(token, target_profile)
+        return SummonDecision("allow", "rebind", token, profile)

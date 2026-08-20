@@ -880,14 +880,37 @@ MCP_TOOLS = [
 MCP_TOOL_NAMES = {tool["name"] for tool in MCP_TOOLS}
 
 
+_SESSION_TOKEN_PROP = {
+    "type": "string",
+    "description": (
+        "Session token returned by summon_companion. Include it on every tool call "
+        "in this conversation; it locks the conversation to one companion. Calls "
+        "without it (or after switching companions) are refused."),
+}
+
+
+def _with_session_token(tool: dict[str, Any]) -> dict[str, Any]:
+    """Advertise an optional session_token argument on every tool. inputSchema
+    sets additionalProperties:false, so the model may only send it if declared."""
+    schema = tool.get("inputSchema")
+    if not isinstance(schema, dict):
+        return tool
+    props = schema.get("properties") or {}
+    if "session_token" in props:
+        return tool
+    return {**tool, "inputSchema": {**schema,
+            "properties": {**props, "session_token": _SESSION_TOKEN_PROP}}}
+
+
 def _advertised_tools() -> list[dict[str, Any]]:
     # ChatGPT's connector setup rejects the full tool list when it cannot
     # validate an output schema.  Keep discovery reliably available by
     # default; operators with a host that supports output schemas can opt in
     # with MCP_OMIT_OUTPUT_SCHEMAS=0.
     if os.environ.get("MCP_OMIT_OUTPUT_SCHEMAS", "1") == "0":
-        return MCP_TOOLS
-    return [{k: v for k, v in tool.items() if k != "outputSchema"} for tool in MCP_TOOLS]
+        return [_with_session_token(tool) for tool in MCP_TOOLS]
+    return [_with_session_token({k: v for k, v in tool.items() if k != "outputSchema"})
+            for tool in MCP_TOOLS]
 
 
 @dataclass
@@ -1748,33 +1771,33 @@ def _safe_profile(arguments: dict[str, Any]) -> str:
     return str(value) if value is not None else "-"
 
 
-def _conversation_fingerprint(request: Request,
-                              minted_session_id: str | None = None) -> str | None:
-    """The out-of-model binding key for this request, or None.
-
-    ChatGPT carries ``x-openai-session`` (stable within a chat, distinct
-    between chats, invisible to the model). Stock CLI agents (Claude Code,
-    Codex) reach us through the ``mcp-remote`` bridge, which stamps the
-    client's own session id into ``x-conv-id`` (e.g.
-    ``--header x-conv-id:${CLAUDE_CODE_SESSION_ID}``) — see SESSION_BINDING_PLAN.md.
-
-    ``Mcp-Session-Id`` is deliberately NOT used: the claude.ai connector
-    reuses one minted session id across *different* conversations (verified in
-    prod 2026-08-20 — summoning rumbo in a second chat was switch-blocked
-    because it collided with vera's binding from a first chat). It is therefore
-    not per-conversation and unsafe as a binding key; claude.ai falls through to
-    advisory (None) until the model-carried session_token lands.
-
-    This is a trust/friction boundary, not a wall: an agent that hunts for its
-    own session id and hand-rolls a request can forge ``x-conv-id``. Header-only
-    by design; no match -> None (advisory fallback)."""
-    openai_session = request.headers.get("x-openai-session")
-    if openai_session:
-        return openai_session
-    conv_id = request.headers.get("x-conv-id")
-    if conv_id:
-        return conv_id
-    return None
+def _session_block_response(request_id: Any, decision: Any,
+                            target_profile: str) -> dict[str, Any] | None:
+    """JSON-RPC tool error for a blocked guarded call, worded by reason so the
+    model knows how to recover."""
+    bound = decision.bound_profile
+    if decision.reason == "no-session":
+        message = (
+            "blocked: no session_token. Call summon_companion first and include the "
+            "session_token it returns as the session_token argument on every call "
+            "(including this one). Then retry.")
+        code = "session_token_required"
+    elif decision.reason == "cross":
+        verb = "write into" if decision.kind == "mutation" else "read from"
+        message = (
+            f"blocked: this conversation is bound to {bound!r} and cannot {verb} "
+            f"{target_profile!r}. To give {target_profile!r} something, use send_message; "
+            f"to act as {target_profile!r}, start a new conversation and summon it.")
+        code = "session_bound"
+    else:
+        return None
+    return _rpc_result(
+        request_id,
+        {**_tool_error(message),
+         "structuredContent": {"error": {
+             "message": message, "code": code,
+             "bound_profile": bound, "target_profile": target_profile}}},
+    )
 
 
 def _subject_hash(request: Request) -> str | None:
@@ -1788,7 +1811,6 @@ def _subject_hash(request: Request) -> str | None:
 
 
 def _handle_rpc(message: dict[str, Any], app: FastAPI, *,
-                fingerprint: str | None = None,
                 subject_hash: str | None = None) -> dict[str, Any]:
     request_id = message.get("id")
     method = message.get("method")
@@ -1813,7 +1835,10 @@ def _handle_rpc(message: dict[str, Any], app: FastAPI, *,
                 "a normalized exact canonical id first and only resolves names after a 404; "
                 "do not browse the directory first. A returned selection identifies the active "
                 "companion. Use discover_companions only for browsing "
-                "or not_found results. The returned "
+                "or not_found results. summon_companion returns a session_token; include it "
+                "as the session_token argument on every subsequent tool call in this "
+                "conversation (it locks the conversation to one companion — calls without it, "
+                "or after switching companions, are refused). The returned "
                 "allowed_tools is guidance for which tools this profile should use; it is "
                 "not enforced server-side."
             ),
@@ -1836,96 +1861,77 @@ def _handle_rpc(message: dict[str, Any], app: FastAPI, *,
             return _rpc_error(request_id, -32602, "tool arguments must be an object")
 
         started = time.time()
+        # session_token is the model-carried binding key; strip it before the
+        # backend call (it is not a backend argument).
+        session_token = arguments.pop("session_token", None)
+        if not isinstance(session_token, str):
+            session_token = None
         profile_id = _safe_profile(arguments)
 
-        # Companion locking: block cross-profile writes (and gated reads) from a
-        # conversation bound to a different companion. See SESSION_BINDING_PLAN.md.
+        # Companion locking, token-only (see SESSION_BINDING_PLAN.md). The token
+        # is minted on summon and echoed on every call; no transport headers.
         bindings = getattr(app.state, "bindings", None)
-        if bindings is not None:
-            decision = bindings.evaluate(fingerprint, name, profile_id)
-            bindings.audit(fingerprint=fingerprint, subject_hash=subject_hash,
+        if bindings is not None and name != "summon_companion":
+            decision = bindings.evaluate_call(session_token, name, profile_id)
+            bindings.audit(token=session_token, subject_hash=subject_hash,
                            tool=name, target_profile=profile_id,
                            decision=decision.reason)
-            if decision.reason == "no-fingerprint":
-                # Fail open, but make the needle findable: a guarded op arrived
-                # from a client carrying neither x-openai-session nor
-                # Mcp-Session-Id. Distinct, greppable tag rather than a silent
-                # allow, so a header disappearing surfaces in the logs.
+            if decision.reason == "advisory":
                 LOGGER.warning(
-                    "session_binding fingerprint=none guarded=%s tool=%s "
-                    "profile_id=%s decision=allow-advisory",
-                    decision.kind, name, profile_id,
-                )
+                    "session_binding no-session advisory(trusted) tool=%s profile_id=%s",
+                    name, profile_id)
             if decision.action == "block":
-                bound = decision.bound_profile
                 LOGGER.warning(
-                    "session_binding blocked tool=%s target=%s bound=%s kind=%s",
-                    name, profile_id, bound, decision.kind,
-                )
-                verb = "write into" if decision.kind == "mutation" else "read from"
-                message_text = (
-                    f"blocked: this conversation is bound to {bound!r} and cannot "
-                    f"{verb} {profile_id!r}. To give {profile_id!r} something, use "
-                    f"send_message; to act as {profile_id!r}, summon_companion({profile_id!r}) "
-                    f"first (that switch is logged)."
-                )
-                return _rpc_result(
-                    request_id,
-                    {**_tool_error(message_text),
-                     "structuredContent": {"error": {
-                         "message": message_text, "code": "session_bound",
-                         "bound_profile": bound, "target_profile": profile_id}}},
-                )
-            if fingerprint is not None and decision.bound_profile is not None:
-                bindings.touch(fingerprint)
+                    "session_binding blocked reason=%s tool=%s target=%s bound=%s",
+                    decision.reason, name, profile_id, decision.bound_profile)
+                block = _session_block_response(request_id, decision, profile_id)
+                if block is not None:
+                    return block
 
         try:
             value = app.state.runner.call(name, arguments)
-            if name == "summon_companion" and fingerprint is not None \
-                    and isinstance(value, dict) and bindings is not None:
+            if name == "summon_companion" and isinstance(value, dict) \
+                    and bindings is not None:
                 summoned = (value.get("selection") or {}).get("profile_id")
                 if summoned:
-                    # One companion per session: a summon of a *different*
-                    # companion in a bound conversation is blocked unless the
-                    # session has been reverted to trusted. Resolve first (via
-                    # the hydrated result) so aliases don't false-trigger, then
-                    # discard the packet — Y's identity is never returned to a
-                    # session bound to X.
-                    switch_from = bindings.switch_blocked(fingerprint, summoned)
-                    if switch_from is not None:
+                    # Resolve first (via the hydrated result) so aliases don't
+                    # false-trigger; on a blocked switch discard the packet so
+                    # the other companion's identity is never returned here.
+                    sd = bindings.evaluate_summon(session_token, summoned)
+                    bindings.audit(
+                        token=(sd.token or session_token), subject_hash=subject_hash,
+                        tool=name, target_profile=summoned, decision=sd.reason)
+                    if sd.action == "block":
                         LOGGER.warning(
                             "session_binding switch-blocked bound=%s attempted=%s",
-                            switch_from, summoned,
-                        )
-                        bindings.audit(
-                            fingerprint=fingerprint, subject_hash=subject_hash,
-                            tool=name, target_profile=summoned,
-                            decision="switch-blocked")
+                            sd.bound_profile, summoned)
                         message_text = (
-                            f"blocked: this conversation is bound to {switch_from!r} "
-                            f"(one companion per session). To work as {summoned!r}, "
-                            f"start a new conversation, or have the human revert this "
-                            f"session to trusted. To reach {summoned!r} from here, use "
-                            f"send_message."
+                            f"blocked: this conversation is bound to {sd.bound_profile!r} "
+                            f"(one companion per session). To work as {summoned!r}, start a "
+                            f"new conversation, or have the human revert this session to "
+                            f"trusted. To reach {summoned!r} from here, use send_message."
                         )
                         return _rpc_result(
                             request_id,
                             {**_tool_error(message_text),
                              "structuredContent": {"error": {
                                  "message": message_text, "code": "session_locked",
-                                 "bound_profile": switch_from,
+                                 "bound_profile": sd.bound_profile,
                                  "attempted_profile": summoned}}},
                         )
-                    previous = bindings.bind(fingerprint, summoned)
-                    if previous is not None:
-                        LOGGER.warning(
-                            "session_binding rebind fingerprint_bound_from=%s to=%s",
-                            previous, summoned,
-                        )
-                    bindings.audit(
-                        fingerprint=fingerprint, subject_hash=subject_hash,
-                        tool=name, target_profile=summoned,
-                        decision="rebind" if previous is not None else "bind")
+                    if sd.reason == "rebind":
+                        LOGGER.warning("session_binding rebind to=%s", summoned)
+                    # Hand the token back so the model carries it on every call.
+                    value = {
+                        **value,
+                        "session_token": sd.token,
+                        "session_binding": (
+                            "Include this session_token as the session_token argument on "
+                            "EVERY tool call in this conversation. It locks this conversation "
+                            f"to {summoned!r}; calls without it, or after switching "
+                            "companions, are refused. To reach another companion use "
+                            "send_message."),
+                    }
             if name in {"propose_prompt_edit", "propose_store"} and isinstance(value, dict):
                 settings: MCPSettings = app.state.settings
                 approval_id = (value.get("id") if name == "propose_prompt_edit"
@@ -2383,9 +2389,7 @@ def create_mcp_app(
         if "method" not in message:
             return Response(status_code=202, headers=headers)
 
-        fingerprint = _conversation_fingerprint(request)
-        response = _handle_rpc(message, app, fingerprint=fingerprint,
-                               subject_hash=_subject_hash(request))
+        response = _handle_rpc(message, app, subject_hash=_subject_hash(request))
         accept = request.headers.get("accept", "")
         if "text/event-stream" in accept:
             # ChatGPT's Streamable HTTP client is tested against the reference
