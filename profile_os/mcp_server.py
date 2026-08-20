@@ -757,12 +757,19 @@ MCP_TOOLS = [
         {
             "profile_id": _PROFILE_ID,
             "code": {"type": "string", "minLength": 1},
-            "facts": {"type": "string", "maxLength": 1200},
-            "texture": {"type": "string", "maxLength": 700,
-                        "description": "Concrete cues that help the next session retain rapport and tone; not a generic adjective. Preserve only what remains relevant."},
-            "exchange": {"type": "string", "maxLength": 800,
-                         "description": "Verbatim 1–3-turn excerpt; never paraphrase or paste a transcript."},
-            "notes": {"type": "string", "maxLength": 700, "default": ""},
+            # Length limits live in the descriptions, not as schema maxLength:
+            # some MCP clients silently DROP a field that exceeds an advertised
+            # maxLength, which made an over-long facts vanish and closeout fail
+            # with a misleading "needs all of" (prod 2026-08-20). The backend
+            # still enforces these caps and returns an explicit "exceeds N" error.
+            "facts": {"type": "string",
+                      "description": "Keep under 1200 characters."},
+            "texture": {"type": "string",
+                        "description": "Concrete cues that help the next session retain rapport and tone; not a generic adjective. Preserve only what remains relevant. Keep under 700 characters."},
+            "exchange": {"type": "string",
+                         "description": "Verbatim 1–3-turn excerpt; never paraphrase or paste a transcript. Keep under 800 characters."},
+            "notes": {"type": "string", "default": "",
+                      "description": "Optional. Keep under 700 characters."},
         },
         [],
     ),

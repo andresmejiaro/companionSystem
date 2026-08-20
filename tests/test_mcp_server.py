@@ -465,7 +465,10 @@ def test_initialize_and_list_tools(tmp_path, monkeypatch):
         "profile_id", "code", "facts", "texture", "exchange", "notes", "session_token",
     }
     assert closeout["inputSchema"]["required"] == []
-    assert closeout["inputSchema"]["properties"]["notes"]["maxLength"] == 700
+    # Length caps are guidance in the description, not schema maxLength (clients
+    # silently drop over-maxLength fields — see the closeout dispatch comment).
+    assert "maxLength" not in closeout["inputSchema"]["properties"]["notes"]
+    assert "700" in closeout["inputSchema"]["properties"]["notes"]["description"]
     assert "rapport" in closeout["inputSchema"]["properties"]["texture"]["description"]
     annotations = {tool["name"]: tool["annotations"] for tool in tools}
     assert annotations["forget"]["destructiveHint"] is True
