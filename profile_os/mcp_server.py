@@ -1484,9 +1484,21 @@ class MCPToolRunner:
             if completion_required <= keys:
                 return self._complete_closeout(arguments)
             if keys & completion_fields:
-                # Some but not all persist fields -> incomplete/ambiguous.
+                # Some but not all persist fields -> report exactly what arrived,
+                # so a client that drops a field (e.g. on its own length rule) is
+                # diagnosable rather than hidden behind a generic message.
+                lengths = {k: len(str(arguments.get(k)))
+                           for k in sorted(completion_fields & keys)}
+                missing = sorted(completion_required - keys)
+                LOGGER.warning(
+                    "closeout persist incomplete: missing=%s received=%s all_keys=%s",
+                    missing, lengths, sorted(keys))
                 raise ToolBridgeError(
-                    400, "closeout persist needs all of: code, facts, texture, exchange")
+                    400,
+                    f"closeout persist is missing {missing}. Server received these "
+                    f"fields (name:length): {lengths}. All arguments seen: {sorted(keys)}. "
+                    f"If a field you sent is absent here, your client dropped it "
+                    f"(often its own maxLength rule) — resend it shorter or in pieces.")
             if "profile_id" in keys:
                 return self._prepare_closeout(arguments["profile_id"])
             raise ToolBridgeError(
