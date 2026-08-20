@@ -2116,6 +2116,41 @@ def create_mcp_app(
             return origin_error
         return Response(status_code=204, headers=_preflight_headers(settings, request))
 
+    def _wire_probe_redact(value: Any, depth: int = 0) -> Any:
+        # Keep structure, cap payload size: long strings are hashed so equal
+        # values across requests still diff as equal without logging content.
+        if isinstance(value, str):
+            if len(value) > 200:
+                digest = hashlib.sha256(value.encode()).hexdigest()[:12]
+                return f"<str len={len(value)} sha256:{digest}>"
+            return value
+        if isinstance(value, dict):
+            return {k: _wire_probe_redact(v, depth + 1) for k, v in value.items()}
+        if isinstance(value, list):
+            return [_wire_probe_redact(v, depth + 1) for v in value]
+        return value
+
+    def _wire_probe_log(request: Request, message: Any) -> None:
+        # WIRE_PROBE=1: log complete headers + JSON-RPC body per /mcp request,
+        # hunting for any conversation-stable, model-invisible field
+        # (headers, initialize clientInfo, params._meta, ...). Auth material
+        # is reduced to a stable hash prefix so tokens never land in logs but
+        # per-token grouping still works.
+        headers = {}
+        for key, val in request.headers.items():
+            if key.lower() in {"authorization", "cookie"}:
+                digest = hashlib.sha256(val.encode()).hexdigest()[:12]
+                headers[key] = f"<redacted sha256:{digest}>"
+            else:
+                headers[key] = val
+        line = {
+            "ts": time.time(),
+            "client": request.client.host if request.client else None,
+            "headers": headers,
+            "body": _wire_probe_redact(message),
+        }
+        print(f"WIREPROBE {json.dumps(line, default=str)}", flush=True)
+
     @app.api_route("/mcp", methods=["GET", "POST"], name="mcp_endpoint")
     async def mcp_endpoint(request: Request):
         origin_error = _origin_error(settings, request)
@@ -2127,6 +2162,10 @@ def create_mcp_app(
         auth_error = _authenticated(settings, request)
         if auth_error:
             return auth_error
+
+        wire_probe = os.environ.get("WIRE_PROBE") == "1"
+        if wire_probe and request.method == "GET":
+            _wire_probe_log(request, None)
 
         headers = {
             "MCP-Protocol-Version": MCP_PROTOCOL_VERSION,
@@ -2151,6 +2190,9 @@ def create_mcp_app(
                 status_code=400,
                 headers=headers,
             )
+
+        if wire_probe:
+            _wire_probe_log(request, message)
 
         if not isinstance(message, dict):
             return JSONResponse(
