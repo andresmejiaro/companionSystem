@@ -2182,6 +2182,16 @@ def create_mcp_app(
             flush=True,
         )
 
+        # Phase 0 probe (part 2): if the client is initializing and did not
+        # already carry a session id, mint one and return it in the response
+        # header. Per Streamable HTTP spec the client MUST echo it on every
+        # subsequent request, which is what we need to observe.
+        _minted_session_id: str | None = None
+        if _probe_method == "initialize" and not request.headers.get("mcp-session-id"):
+            _minted_session_id = secrets.token_urlsafe(24)
+            headers["Mcp-Session-Id"] = _minted_session_id
+            print(f"mcp_probe minted_session_id={_minted_session_id!r}", flush=True)
+
         response = _handle_rpc(message, app)
         accept = request.headers.get("accept", "")
         if "text/event-stream" in accept:
