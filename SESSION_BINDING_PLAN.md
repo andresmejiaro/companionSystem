@@ -2,7 +2,22 @@
 
 ## Status
 
-Ready to implement. This supersedes and replaces
+**Implemented 2026-08-20** in `profile_os/session_binding.py` (store +
+enforcement logic) and wired into `profile_os/mcp_server.py`. Enforcement is
+live: cross-profile writes are hard-blocked on both connectors; cross-profile
+reads are blocked behind a TOTP-gated runtime switch (`/session-gate`) that an
+audit can lift without a redeploy. Bindings + audit persist in a dedicated
+SQLite file (`MCP_SESSION_BINDING_STATE_FILE`, default derived from
+`MCP_OAUTH_STATE_FILE`). The `WIRE_PROBE` scaffolding is removed. Tests in
+`tests/test_session_binding.py`. Decisions taken during build (all from a live
+Q&A with Andrés): hard-block from day one; keep Claude at full parity via
+minted `Mcp-Session-Id` (a return to Anthropic is on the table); guard writes +
+reads + proposals + closeout/exam; header-only fingerprint (no `_meta`
+fallback); no-fingerprint requests fail open but log a distinct greppable
+warning so a vanished header never becomes a needle in a haystack; longevity
+check skipped by choice ("come back when it breaks").
+
+The historical plan below is retained for rationale. It supersedes and replaces
 `MCP_SESSION_BINDING_ABANDONED.md` (deleted in the commit that lands this
 file — see git history for the full dead-end analysis). The plan was
 un-abandoned because a second, wider wire probe found the missing substrate.

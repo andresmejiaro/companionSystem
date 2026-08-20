@@ -103,6 +103,16 @@ OAuth-state volume. Non-compose deployments must set
 `MCP_CLOSEOUT_CODE_STATE_FILE` to persistent storage; otherwise a restart can
 forget which still-valid (30-minute) code was consumed.
 
+Session-bound companion locking (see `SESSION_BINDING_PLAN.md`) persists its
+bindings + audit in its own SQLite file, `MCP_SESSION_BINDING_STATE_FILE`
+(default: `<MCP_OAUTH_STATE_FILE>.bindings.sqlite3`, i.e. the same persistent
+volume). Cross-profile *writes* are always blocked; the cross-profile *reads*
+wall is toggled live — no redeploy — from the admin page
+`https://rumbo.datacodemath.com/session-gate` (admin secret + live TOTP).
+Blocks, rebinds, and no-fingerprint requests land in the `session_audit`
+table and in the `mcp` container logs tagged `session_binding` (grep them:
+`docker compose logs mcp | grep session_binding`).
+
 ## Connecting a remote MCP client (Claude.ai / ChatGPT)
 
 Server URL: `https://rumbo.datacodemath.com/mcp`. Full walkthrough in

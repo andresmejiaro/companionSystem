@@ -32,6 +32,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from starlette.concurrency import run_in_threadpool
 
 from .bridge import ToolBridge, ToolBridgeError
+from .session_binding import SessionBindingStore
 from .request_limits import (
     RequestBodyTooLarge,
     configured_max_request_bytes,
@@ -296,6 +297,40 @@ def _create_profile_page(values: dict[str, str] | None = None,
  autocomplete="off" required style="width:100%;padding:10px;margin:4px 0 16px;font-size:1.2em">
 </label>
 <button type="submit" style="padding:10px 20px">Create</button>
+</form>
+</body></html>"""
+
+
+def _session_gate_page(gate_reads: bool, *, error: str | None = None,
+                       notice: str | None = None) -> str:
+    """Admin page toggling the cross-profile reads wall. Writes stay enforced."""
+    banner = ""
+    if error:
+        banner = f'<p style="color:#c00;font-weight:600">{_html.escape(error)}</p>'
+    elif notice:
+        banner = f'<p style="color:#080;font-weight:600">{_html.escape(notice)}</p>'
+    state = "ON — cross-profile reads are blocked" if gate_reads \
+        else "OFF — cross-profile reads are allowed (writes still blocked)"
+    checked = "checked" if gate_reads else ""
+    return f"""<!doctype html>
+<html><head><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Session reads gate</title></head>
+<body style="font-family:system-ui,sans-serif;max-width:460px;margin:56px auto;padding:0 16px">
+<h2>Cross-profile reads gate</h2>
+<p>Current state: <strong>{_html.escape(state)}</strong></p>
+<p style="color:#555;font-size:.9em">Writes across companions are always blocked.
+This switch only lifts the wall on <em>reads</em> — for an audit — and takes
+effect immediately, no redeploy.</p>
+{banner}
+<form method="POST">
+<label style="display:block;margin:12px 0"><input type="checkbox" name="gate_reads" {checked}>
+ Block cross-profile reads</label>
+<label>Admin secret<br><input name="admin_secret" type="password" autocomplete="off"
+ required style="width:100%;padding:10px;margin:4px 0 12px"></label>
+<label>Authenticator code<br><input name="totp_code" inputmode="numeric"
+ autocomplete="one-time-code" pattern="[0-9]{{6,8}}" required
+ style="width:100%;padding:10px;margin:4px 0 16px;font-size:1.2em"></label>
+<button type="submit" style="padding:10px 20px">Save</button>
 </form>
 </body></html>"""
 
@@ -866,6 +901,10 @@ class MCPSettings:
     # Put this on a persistent volume in deployment so consumed-code replay
     # protection survives an MCP process/container restart.
     closeout_code_state_file: str | None = None
+    # Conversation-binding state (companion locking). Its own persistent file,
+    # kept separate from the closeout ledger so long-lived bindings never
+    # inherit that ledger's ephemeral /tmp default. See SESSION_BINDING_PLAN.md.
+    session_binding_state_file: str | None = None
     oauth_token_ttl_seconds: int = 60 * 60 * 24 * 30
     oauth_allowed_redirect_hosts: list[str] = field(default_factory=lambda: [
         "claude.ai",
@@ -904,6 +943,11 @@ class MCPSettings:
             closeout_code_state_file=(
                 os.environ.get("MCP_CLOSEOUT_CODE_STATE_FILE")
                 or ((os.environ.get("MCP_OAUTH_STATE_FILE") + ".closeout.sqlite3")
+                    if os.environ.get("MCP_OAUTH_STATE_FILE") else None)
+            ),
+            session_binding_state_file=(
+                os.environ.get("MCP_SESSION_BINDING_STATE_FILE")
+                or ((os.environ.get("MCP_OAUTH_STATE_FILE") + ".bindings.sqlite3")
                     if os.environ.get("MCP_OAUTH_STATE_FILE") else None)
             ),
             oauth_token_ttl_seconds=ttl,
@@ -1699,7 +1743,37 @@ def _safe_profile(arguments: dict[str, Any]) -> str:
     return str(value) if value is not None else "-"
 
 
-def _handle_rpc(message: dict[str, Any], app: FastAPI) -> dict[str, Any]:
+def _conversation_fingerprint(request: Request,
+                              minted_session_id: str | None = None) -> str | None:
+    """The out-of-model binding key for this request, or None.
+
+    ChatGPT carries ``x-openai-session`` (stable within a chat, distinct
+    between chats, invisible to the model). Spec-compliant clients (Claude)
+    echo the server-minted ``Mcp-Session-Id``. Header-only by design: both
+    sources ride below the model's reach; the JSON-RPC-body mirror is not
+    trusted. No match -> None (advisory fallback)."""
+    openai_session = request.headers.get("x-openai-session")
+    if openai_session:
+        return openai_session
+    mcp_session = request.headers.get("mcp-session-id") or minted_session_id
+    if mcp_session:
+        return mcp_session
+    return None
+
+
+def _subject_hash(request: Request) -> str | None:
+    """Stable, non-reversible per-account tag for audit grouping. Prefers
+    ChatGPT's ``x-openai-subject``; falls back to the OAuth bearer. Never the
+    raw value."""
+    raw = request.headers.get("x-openai-subject") or request.headers.get("authorization")
+    if not raw:
+        return None
+    return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+
+def _handle_rpc(message: dict[str, Any], app: FastAPI, *,
+                fingerprint: str | None = None,
+                subject_hash: str | None = None) -> dict[str, Any]:
     request_id = message.get("id")
     method = message.get("method")
     params = message.get("params") or {}
@@ -1747,8 +1821,65 @@ def _handle_rpc(message: dict[str, Any], app: FastAPI) -> dict[str, Any]:
 
         started = time.time()
         profile_id = _safe_profile(arguments)
+
+        # Companion locking: block cross-profile writes (and gated reads) from a
+        # conversation bound to a different companion. See SESSION_BINDING_PLAN.md.
+        bindings = getattr(app.state, "bindings", None)
+        if bindings is not None:
+            decision = bindings.evaluate(fingerprint, name, profile_id)
+            bindings.audit(fingerprint=fingerprint, subject_hash=subject_hash,
+                           tool=name, target_profile=profile_id,
+                           decision=decision.reason)
+            if decision.reason == "no-fingerprint":
+                # Fail open, but make the needle findable: a guarded op arrived
+                # from a client carrying neither x-openai-session nor
+                # Mcp-Session-Id. Distinct, greppable tag rather than a silent
+                # allow, so a header disappearing surfaces in the logs.
+                LOGGER.warning(
+                    "session_binding fingerprint=none guarded=%s tool=%s "
+                    "profile_id=%s decision=allow-advisory",
+                    decision.kind, name, profile_id,
+                )
+            if decision.action == "block":
+                bound = decision.bound_profile
+                LOGGER.warning(
+                    "session_binding blocked tool=%s target=%s bound=%s kind=%s",
+                    name, profile_id, bound, decision.kind,
+                )
+                verb = "write into" if decision.kind == "mutation" else "read from"
+                message_text = (
+                    f"blocked: this conversation is bound to {bound!r} and cannot "
+                    f"{verb} {profile_id!r}. To give {profile_id!r} something, use "
+                    f"send_message; to act as {profile_id!r}, summon_companion({profile_id!r}) "
+                    f"first (that switch is logged)."
+                )
+                return _rpc_result(
+                    request_id,
+                    {**_tool_error(message_text),
+                     "structuredContent": {"error": {
+                         "message": message_text, "code": "session_bound",
+                         "bound_profile": bound, "target_profile": profile_id}}},
+                )
+            if fingerprint is not None and decision.bound_profile is not None:
+                bindings.touch(fingerprint)
+
         try:
             value = app.state.runner.call(name, arguments)
+            if name == "summon_companion" and fingerprint is not None \
+                    and isinstance(value, dict):
+                summoned = (value.get("selection") or {}).get("profile_id")
+                if summoned:
+                    previous = bindings.bind(fingerprint, summoned) if bindings else None
+                    if previous is not None:
+                        LOGGER.warning(
+                            "session_binding rebind fingerprint_bound_from=%s to=%s",
+                            previous, summoned,
+                        )
+                    if bindings is not None:
+                        bindings.audit(
+                            fingerprint=fingerprint, subject_hash=subject_hash,
+                            tool=name, target_profile=summoned,
+                            decision="rebind" if previous is not None else "bind")
             if name in {"propose_prompt_edit", "propose_store"} and isinstance(value, dict):
                 settings: MCPSettings = app.state.settings
                 approval_id = (value.get("id") if name == "propose_prompt_edit"
@@ -1799,6 +1930,9 @@ def create_mcp_app(
         state_file=os.environ.get("MCP_OAUTH_STATE_FILE"))
     closeout_state_file = settings.closeout_code_state_file or os.path.join(
         "/tmp", "profile-os-mcp-closeout-codes.sqlite3")
+    binding_state_file = settings.session_binding_state_file or os.path.join(
+        "/tmp", "profile-os-mcp-session-bindings.sqlite3")
+    app.state.bindings = SessionBindingStore(binding_state_file)
     app.state.runner = MCPToolRunner(
         bridge or ToolBridge(),
         closeout_signing_key=settings.closeout_signing_key or settings.oauth_signing_key,
@@ -2021,6 +2155,35 @@ def create_mcp_app(
         return HTMLResponse(_session_inspector_page(profiles, selected_id=profile_id,
                                                     mode=mode, result=result))
 
+    _session_gate_hits: dict[str, list[float]] = {}
+
+    @app.get("/session-gate")
+    async def session_gate_page():
+        return HTMLResponse(_session_gate_page(app.state.bindings.gate_reads()))
+
+    @app.post("/session-gate")
+    async def session_gate_submit(request: Request):
+        """Admin-only runtime switch for the cross-profile *reads* wall. Writes
+        are always enforced; only the reads gate is toggleable, so an audit can
+        temporarily read across profiles without a redeploy. Guarded by admin
+        secret + live TOTP, same bar as OAuth consent."""
+        client_ip = request.client.host if request.client else "unknown"
+        if _rate_limited(_session_gate_hits, client_ip):
+            return HTMLResponse("Too many attempts; try again in a minute.", status_code=429)
+        form = await request.form()
+        secret = str(form.get("admin_secret") or "")
+        totp_code = str(form.get("totp_code") or "")
+        enable = str(form.get("gate_reads")) == "on"
+        if not await app.state.admin_verify(secret, totp_code):
+            return HTMLResponse(
+                _session_gate_page(app.state.bindings.gate_reads(),
+                                   error="Invalid secret or code."),
+                status_code=401)
+        app.state.bindings.set_gate_reads(enable)
+        LOGGER.warning("session_binding reads_gate set to %s", "on" if enable else "off")
+        return HTMLResponse(_session_gate_page(app.state.bindings.gate_reads(),
+                                               notice="Saved."))
+
     @app.post("/approvals/{approval_id}")
     async def approval_decide(approval_id: str, request: Request):
         client_ip = request.client.host if request.client else "unknown"
@@ -2116,41 +2279,6 @@ def create_mcp_app(
             return origin_error
         return Response(status_code=204, headers=_preflight_headers(settings, request))
 
-    def _wire_probe_redact(value: Any, depth: int = 0) -> Any:
-        # Keep structure, cap payload size: long strings are hashed so equal
-        # values across requests still diff as equal without logging content.
-        if isinstance(value, str):
-            if len(value) > 200:
-                digest = hashlib.sha256(value.encode()).hexdigest()[:12]
-                return f"<str len={len(value)} sha256:{digest}>"
-            return value
-        if isinstance(value, dict):
-            return {k: _wire_probe_redact(v, depth + 1) for k, v in value.items()}
-        if isinstance(value, list):
-            return [_wire_probe_redact(v, depth + 1) for v in value]
-        return value
-
-    def _wire_probe_log(request: Request, message: Any) -> None:
-        # WIRE_PROBE=1: log complete headers + JSON-RPC body per /mcp request,
-        # hunting for any conversation-stable, model-invisible field
-        # (headers, initialize clientInfo, params._meta, ...). Auth material
-        # is reduced to a stable hash prefix so tokens never land in logs but
-        # per-token grouping still works.
-        headers = {}
-        for key, val in request.headers.items():
-            if key.lower() in {"authorization", "cookie"}:
-                digest = hashlib.sha256(val.encode()).hexdigest()[:12]
-                headers[key] = f"<redacted sha256:{digest}>"
-            else:
-                headers[key] = val
-        line = {
-            "ts": time.time(),
-            "client": request.client.host if request.client else None,
-            "headers": headers,
-            "body": _wire_probe_redact(message),
-        }
-        print(f"WIREPROBE {json.dumps(line, default=str)}", flush=True)
-
     @app.api_route("/mcp", methods=["GET", "POST"], name="mcp_endpoint")
     async def mcp_endpoint(request: Request):
         origin_error = _origin_error(settings, request)
@@ -2162,10 +2290,6 @@ def create_mcp_app(
         auth_error = _authenticated(settings, request)
         if auth_error:
             return auth_error
-
-        wire_probe = os.environ.get("WIRE_PROBE") == "1"
-        if wire_probe and request.method == "GET":
-            _wire_probe_log(request, None)
 
         headers = {
             "MCP-Protocol-Version": MCP_PROTOCOL_VERSION,
@@ -2191,15 +2315,22 @@ def create_mcp_app(
                 headers=headers,
             )
 
-        if wire_probe:
-            _wire_probe_log(request, message)
-
         if not isinstance(message, dict):
             return JSONResponse(
                 _rpc_error(None, -32600, "invalid request"),
                 status_code=400,
                 headers=headers,
             )
+
+        # Mint an Mcp-Session-Id on initialize when the client did not carry
+        # one, so spec-compliant clients (Claude) echo it on every later
+        # request and become bindable. ChatGPT ignores this and instead
+        # carries x-openai-session (see _conversation_fingerprint).
+        minted_session_id: str | None = None
+        if message.get("method") == "initialize" \
+                and not request.headers.get("mcp-session-id"):
+            minted_session_id = secrets.token_urlsafe(24)
+            headers["Mcp-Session-Id"] = minted_session_id
 
         # JSON-RPC notifications and responses do not receive a JSON body over
         # Streamable HTTP. The initialized notification is the common one.
@@ -2208,7 +2339,9 @@ def create_mcp_app(
         if "method" not in message:
             return Response(status_code=202, headers=headers)
 
-        response = _handle_rpc(message, app)
+        fingerprint = _conversation_fingerprint(request, minted_session_id)
+        response = _handle_rpc(message, app, fingerprint=fingerprint,
+                               subject_hash=_subject_hash(request))
         accept = request.headers.get("accept", "")
         if "text/event-stream" in accept:
             # ChatGPT's Streamable HTTP client is tested against the reference
