@@ -73,6 +73,25 @@ def test_evaluate_fails_open_without_fingerprint_or_binding(tmp_path):
     assert store.evaluate("unknown", "remember", "sidra").reason == "unbound"
 
 
+def test_fingerprints_are_hashed_at_rest(tmp_path):
+    import sqlite3
+    path = tmp_path / "b.sqlite3"
+    store = SessionBindingStore(str(path), fingerprint_key="secret-key")
+    raw = "v1/super-secret-session-token"
+    store.bind(raw, "tara")
+    store.audit(fingerprint=raw, subject_hash=None, tool="remember",
+                target_profile="sidra", decision="block")
+    # Bindings still match by raw fingerprint...
+    assert store.get(raw) == "tara"
+    # ...but the raw value appears nowhere in the file.
+    blob = sqlite3.connect(str(path)).execute(
+        "SELECT group_concat(fingerprint) FROM bindings "
+        "UNION ALL SELECT group_concat(fingerprint) FROM session_audit").fetchall()
+    stored = " ".join(str(r[0]) for r in blob)
+    assert raw not in stored
+    assert "super-secret" not in stored
+
+
 def test_prune_drops_stale_bindings(tmp_path):
     store = _store(tmp_path)
     store.bind("F1", "tara")

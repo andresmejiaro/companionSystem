@@ -17,6 +17,8 @@ detection (the audit log), not prevention.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import sqlite3
 import threading
 import time
@@ -86,7 +88,14 @@ class SessionBindingStore:
     and must not inherit the closeout DB's ephemeral default path.
     """
 
-    def __init__(self, state_file: str, *, default_strict: bool = True):
+    def __init__(self, state_file: str, *, default_strict: bool = True,
+                 fingerprint_key: str | None = None):
+        # Fingerprints (x-openai-session, minted Mcp-Session-Id, x-conv-id) are
+        # session identifiers, some token-like. Never store them raw: this DB
+        # lands in nightly backups. Keep only a keyed digest — enough to match a
+        # conversation to its binding, useless if the file leaks. A keyed HMAC
+        # (not a bare hash) resists reversing the finite session-id space.
+        self._fp_key = fingerprint_key
         import os
         parent = os.path.dirname(state_file)
         if parent:
@@ -132,10 +141,22 @@ class SessionBindingStore:
     def _now() -> int:
         return int(time.time())
 
+    def _digest(self, fingerprint: str | None) -> str | None:
+        """Keyed digest stored in place of the raw fingerprint. Deterministic
+        (same fingerprint -> same digest) so bindings still match; irreversible
+        at rest."""
+        if fingerprint is None:
+            return None
+        if self._fp_key:
+            return hmac.new(self._fp_key.encode(), fingerprint.encode(),
+                            hashlib.sha256).hexdigest()
+        return hashlib.sha256(fingerprint.encode()).hexdigest()
+
     def bind(self, fingerprint: str, profile_id: str) -> str | None:
         """Upsert fingerprint -> profile. Return the previous profile if this
         fingerprint was already bound to a *different* one (a rebind), else
         None. bound_at is preserved on re-summon of the same profile."""
+        key = self._digest(fingerprint)
         now = self._now()
         with self._lock:
             connection = self._connection
@@ -143,19 +164,19 @@ class SessionBindingStore:
             try:
                 row = connection.execute(
                     "SELECT profile_id FROM bindings WHERE fingerprint=?",
-                    (fingerprint,),
+                    (key,),
                 ).fetchone()
                 previous = row[0] if row else None
                 if row is None:
                     connection.execute(
                         "INSERT INTO bindings(fingerprint, profile_id, bound_at, last_seen) "
                         "VALUES (?, ?, ?, ?)",
-                        (fingerprint, profile_id, now, now),
+                        (key, profile_id, now, now),
                     )
                 else:
                     connection.execute(
                         "UPDATE bindings SET profile_id=?, last_seen=? WHERE fingerprint=?",
-                        (profile_id, now, fingerprint),
+                        (profile_id, now, key),
                     )
                 connection.commit()
             except Exception:
@@ -165,7 +186,7 @@ class SessionBindingStore:
 
     def get(self, fingerprint: str) -> str | None:
         row = self._connection.execute(
-            "SELECT profile_id FROM bindings WHERE fingerprint=?", (fingerprint,)
+            "SELECT profile_id FROM bindings WHERE fingerprint=?", (self._digest(fingerprint),)
         ).fetchone()
         return row[0] if row else None
 
@@ -173,7 +194,7 @@ class SessionBindingStore:
         with self._lock:
             self._connection.execute(
                 "UPDATE bindings SET last_seen=? WHERE fingerprint=?",
-                (self._now(), fingerprint),
+                (self._now(), self._digest(fingerprint)),
             )
             self._connection.commit()
 
@@ -200,7 +221,8 @@ class SessionBindingStore:
             self._connection.execute(
                 "INSERT INTO session_audit(ts, fingerprint, subject_hash, tool, "
                 "target_profile, decision) VALUES (?, ?, ?, ?, ?, ?)",
-                (self._now(), fingerprint, subject_hash, tool, target_profile, decision),
+                (self._now(), self._digest(fingerprint), subject_hash, tool,
+                 target_profile, decision),
             )
             self._connection.commit()
 

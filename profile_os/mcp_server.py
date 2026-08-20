@@ -1979,7 +1979,8 @@ def create_mcp_app(
         "/tmp", "profile-os-mcp-closeout-codes.sqlite3")
     binding_state_file = settings.session_binding_state_file or os.path.join(
         "/tmp", "profile-os-mcp-session-bindings.sqlite3")
-    app.state.bindings = SessionBindingStore(binding_state_file)
+    app.state.bindings = SessionBindingStore(
+        binding_state_file, fingerprint_key=settings.oauth_signing_key)
     app.state.runner = MCPToolRunner(
         bridge or ToolBridge(),
         closeout_signing_key=settings.closeout_signing_key or settings.oauth_signing_key,

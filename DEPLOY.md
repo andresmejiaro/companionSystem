@@ -107,6 +107,14 @@ separate migration step.
 All five live only in `/opt/profile-os/.env` on the VPS (`chmod 600`) and
 were generated with `secrets.token_urlsafe(48)`.
 
+> **TODO / unsure (2026-08-20):** prod `.env` currently defines **three**
+> connector-token vars — `MCP_CONNECTOR_TOKEN` (singular), `MCP_CONNECTOR_TOKENS`
+> (plural CSV), and `LIFE_MCP_CONNECTOR_TOKEN`. `MCPSettings.from_env` accepts
+> both the singular and the plural as valid bearer credentials, so more than one
+> connector token may be live at once. `LIFE_MCP_CONNECTOR_TOKEN` belongs to the
+> separate life-mcp service. Confirm which are intentional and retire any stale
+> one — an extra accepted bearer is extra attack surface. Not yet resolved.
+
 The compose setup also persists signed closeout-code replay state in its MCP
 OAuth-state volume. Non-compose deployments must set
 `MCP_CLOSEOUT_CODE_STATE_FILE` to persistent storage; otherwise a restart can
