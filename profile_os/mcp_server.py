@@ -517,7 +517,8 @@ MCP_TOOLS = [
         "Propose changes to your own canonical prompt sections and companion-specific"
         " closeout rules. Held pending"
         " until the human approves it with a live TOTP code from their authenticator"
-        " app.",
+        " app. If the result includes `approval_link`, include that link in the"
+        " user-facing response.",
         {
             "profile_id": _PROFILE_ID,
             "who_you_are": {"type": "string"},
