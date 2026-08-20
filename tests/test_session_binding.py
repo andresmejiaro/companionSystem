@@ -148,6 +148,34 @@ def test_no_fingerprint_falls_open():
     assert not _is_error(r)
 
 
+def test_x_conv_id_header_binds_stock_cli_clients():
+    # Stock Claude Code / Codex via mcp-remote stamp their own durable session
+    # id into x-conv-id. Same enforcement as the native connectors.
+    client = _client()
+    h = {"Authorization": f"Bearer {CONNECTOR_TOKEN}", "Origin": ORIGIN,
+         "Accept": "application/json", "x-conv-id": "597ed6bf-cli-session"}
+    _call(client, "summon_companion", {"profile_id": "tara"}, h)
+    assert not _is_error(_call(client, "remember",
+                               {"profile_id": "tara", "kind": "n", "content": "x"}, h))
+    assert _is_error(_call(client, "remember",
+                           {"profile_id": "sidra", "kind": "n", "content": "x"}, h))
+
+
+def test_fingerprint_priority_prefers_openai_over_conv_id():
+    # If both are present the ChatGPT header wins; x-conv-id is the CLI fallback.
+    client = _client()
+    both = {"Authorization": f"Bearer {CONNECTOR_TOKEN}", "Origin": ORIGIN,
+            "Accept": "application/json",
+            "x-openai-session": "v1/chatA", "x-conv-id": "cli-xyz"}
+    _call(client, "summon_companion", {"profile_id": "tara"}, both)
+    # Binding is under the openai session; a request carrying only x-conv-id is
+    # a different (unbound) conversation and falls open rather than matching.
+    only_conv = {"Authorization": f"Bearer {CONNECTOR_TOKEN}", "Origin": ORIGIN,
+                 "Accept": "application/json", "x-conv-id": "cli-xyz"}
+    assert not _is_error(_call(client, "remember",
+                               {"profile_id": "sidra", "kind": "n", "content": "x"}, only_conv))
+
+
 def test_initialize_mints_mcp_session_id_and_claude_binds():
     client = _client()
     init = client.post("/mcp", json=_rpc("initialize", {

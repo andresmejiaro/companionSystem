@@ -1722,7 +1722,7 @@ def _preflight_headers(settings: MCPSettings, request: Request) -> dict[str, str
     headers.update({
         "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
         "Access-Control-Allow-Headers": (
-            "Authorization, Content-Type, Accept, MCP-Protocol-Version, Mcp-Session-Id"
+            "Authorization, Content-Type, Accept, MCP-Protocol-Version, Mcp-Session-Id, x-conv-id"
         ),
         "Access-Control-Max-Age": "600",
     })
@@ -1749,15 +1749,27 @@ def _conversation_fingerprint(request: Request,
 
     ChatGPT carries ``x-openai-session`` (stable within a chat, distinct
     between chats, invisible to the model). Spec-compliant clients (Claude)
-    echo the server-minted ``Mcp-Session-Id``. Header-only by design: both
-    sources ride below the model's reach; the JSON-RPC-body mirror is not
-    trusted. No match -> None (advisory fallback)."""
+    echo the server-minted ``Mcp-Session-Id``. Stock CLI agents (Claude Code,
+    Codex) emit neither, but reach us through the ``mcp-remote`` bridge, which
+    can stamp the client's *own* durable session id into ``x-conv-id`` (e.g.
+    ``--header x-conv-id:${CLAUDE_CODE_SESSION_ID}``) — see SESSION_BINDING_PLAN.md.
+
+    This is a trust/friction boundary, not a wall: an agent that hunts for its
+    own session id and hand-rolls a request can forge ``x-conv-id``. That is
+    the deliberate, loud tier we accept; the point is to make accidental
+    cross-companion writes impossible and intentional ones visible, on stock
+    clients with no extra software. Header-only by design: all three sources
+    ride on the transport, not in the JSON-RPC body the model composes. No
+    match -> None (advisory fallback)."""
     openai_session = request.headers.get("x-openai-session")
     if openai_session:
         return openai_session
     mcp_session = request.headers.get("mcp-session-id") or minted_session_id
     if mcp_session:
         return mcp_session
+    conv_id = request.headers.get("x-conv-id")
+    if conv_id:
+        return conv_id
     return None
 
 

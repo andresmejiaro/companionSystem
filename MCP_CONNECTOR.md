@@ -217,6 +217,35 @@ Every MCP tool call logs one structured line through Python logging with tool
 name, profile id when present, outcome, backend status on backend errors, and
 elapsed time. Tool arguments and secrets are not logged.
 
+## Companion locking on stock CLI clients (Claude Code / Codex)
+
+`/mcp` binds each conversation to the companion it summons and blocks
+cross-companion writes (see `SESSION_BINDING_PLAN.md`). ChatGPT and the
+claude.ai connector are fingerprinted automatically. Stock Claude Code and
+Codex emit no conversation id, so bind them by stamping their own durable
+session id into the `x-conv-id` header via the `mcp-remote` bridge — no
+wrapper or custom software:
+
+```jsonc
+// Claude Code .mcp.json (Codex ~/.codex/config.toml is analogous)
+{
+  "mcpServers": {
+    "companions": {
+      "command": "npx",
+      "args": ["mcp-remote", "https://rumbo.datacodemath.com/mcp",
+               "--header", "x-conv-id:${CLAUDE_CODE_SESSION_ID}"]
+    }
+  }
+}
+```
+
+`CLAUDE_CODE_SESSION_ID` is exported by Claude Code and inherited by the
+spawned `mcp-remote` child; it equals the session's transcript UUID and is
+resume-stable. Codex uses the same pattern once its session-id env var is
+confirmed. This is a trust/friction boundary, not a hard wall: it stops
+accidental cross-companion writes and makes deliberate ones conspicuous — it
+does not stop an agent that forges the header on purpose.
+
 ## Security boundaries
 
 - Backend remains the source of truth for profiles, prompts, compact state,

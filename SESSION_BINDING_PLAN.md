@@ -68,7 +68,8 @@ Per request, compute the conversation fingerprint, first match wins:
 2. `Mcp-Session-Id` header (Claude and spec-compliant clients; keep the
    minting-on-initialize behavior from commit 339616e, which was reverted
    in cc999c4 — re-land it)
-3. None → no fingerprint (see Fallback).
+3. `x-conv-id` header (stock CLI agents — see "Covering stock CLI clients")
+4. None → no fingerprint (see Fallback).
 
 ### Binding
 
@@ -163,6 +164,47 @@ after hours / a day, make one tool call each, then on the VPS:
 conversation-stable and the Rebind rule is rarely exercised. If they
 rotated → the design still works (rotation looks like a new chat), just
 expect more "unbound write" log rows and keep v1's allow+log stance.
+
+## Covering stock CLI clients (Claude Code / Codex) — added 2026-08-20
+
+The problem: Claude Code and Codex are general companion surfaces (any
+companion may reach for one to write a file or a letter), so they need the
+same summon + multi-companion + per-conversation binding as ChatGPT. But
+neither emits a per-conversation key on the wire — Claude Code doesn't echo
+`Mcp-Session-Id` and sends no conversation id (open, unanswered bug
+anthropics/claude-code#41836); Codex is the same. The server cannot observe
+one either: behind Caddy every request is `127.0.0.1`, TLS terminates
+upstream, User-Agent is static. The key must be *injected client-side*.
+
+The stock-client solution (no wrapper, no custom software): both CLIs reach
+a remote MCP through the standard `mcp-remote` bridge, which supports
+`--header "X:${ENV}"` with env expansion. Both clients already export their
+own durable session id into the environment their MCP children inherit —
+verified `CLAUDE_CODE_SESSION_ID` (equals the transcript UUID, resume-stable;
+Codex has the `codex resume <uuid>` rollout id, env-var name TBC when credits
+return). So the config is one line:
+
+```jsonc
+// Claude Code / Codex, via mcp-remote
+"args": ["mcp-remote", "https://rumbo.datacodemath.com/mcp",
+         "--header", "x-conv-id:${CLAUDE_CODE_SESSION_ID}"]
+```
+
+`x-conv-id` is fingerprint source #3 (after the two native headers). Because
+it's the client's real session id, it's resume-stable — better than a minted
+per-process uuid, which would rotate on reconnect. Granularity is
+per-process = per-active-conversation: concurrent companions run as separate
+CLI processes (separate ids, isolated); sequential `/clear` in one process
+shares the id and is handled by the rebind rule.
+
+**This is a trust/friction boundary, not a wall — by explicit decision.**
+The model can read its own `CLAUDE_CODE_SESSION_ID` and, in a coding session,
+hand-roll a `curl` to `/mcp` with a forged `x-conv-id`. That is accepted: it
+is the deliberate, loud tier (visible in the transcript). The boundary's job
+is to make *accidental* cross-companion writes impossible and *intentional*
+ones require conspicuous effort — to give a determined agent pause, not to
+stop it. It runs on stock Claude Code / Codex with nothing installed beyond
+the `mcp-remote` bridge they already use.
 
 ## What this does NOT do
 
