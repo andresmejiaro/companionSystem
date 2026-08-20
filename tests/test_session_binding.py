@@ -233,15 +233,21 @@ def test_fingerprint_priority_prefers_openai_over_conv_id():
                                {"profile_id": "sidra", "kind": "n", "content": "x"}, only_conv))
 
 
-def test_initialize_mints_mcp_session_id_and_claude_binds():
+def test_mcp_session_id_is_not_minted_or_used_as_a_fingerprint():
+    # claude.ai reuses one Mcp-Session-Id across different conversations, so it
+    # is NOT a per-conversation key: we neither mint it nor bind to it, and
+    # such requests fall through to advisory (no false cross-conversation block).
     client = _client()
     init = client.post("/mcp", json=_rpc("initialize", {
         "protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t"}},
     ), headers={"Authorization": f"Bearer {CONNECTOR_TOKEN}", "Origin": ORIGIN,
                 "Accept": "application/json"})
-    session_id = init.headers.get("Mcp-Session-Id")
-    assert session_id
-    h = _headers(session_id, extra_openai=False)
+    assert init.headers.get("Mcp-Session-Id") is None  # not minted
+    # A claude.ai-style request carrying only Mcp-Session-Id is unbound/advisory.
+    h = _headers("shared-session", extra_openai=False)  # sets Mcp-Session-Id
     _call(client, "summon_companion", {"profile_id": "tara"}, h)
-    assert _is_error(_call(client, "remember",
-                           {"profile_id": "sidra", "kind": "n", "content": "x"}, h))
+    # Same shared id summoning a different companion is NOT switch-blocked...
+    assert not _is_error(_call(client, "summon_companion", {"profile_id": "sidra"}, h))
+    # ...and a cross-write falls open (advisory) rather than being enforced.
+    assert not _is_error(_call(client, "remember",
+                               {"profile_id": "sidra", "kind": "n", "content": "x"}, h))

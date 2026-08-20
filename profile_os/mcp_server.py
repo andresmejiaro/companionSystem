@@ -1753,25 +1753,24 @@ def _conversation_fingerprint(request: Request,
     """The out-of-model binding key for this request, or None.
 
     ChatGPT carries ``x-openai-session`` (stable within a chat, distinct
-    between chats, invisible to the model). Spec-compliant clients (Claude)
-    echo the server-minted ``Mcp-Session-Id``. Stock CLI agents (Claude Code,
-    Codex) emit neither, but reach us through the ``mcp-remote`` bridge, which
-    can stamp the client's *own* durable session id into ``x-conv-id`` (e.g.
+    between chats, invisible to the model). Stock CLI agents (Claude Code,
+    Codex) reach us through the ``mcp-remote`` bridge, which stamps the
+    client's own session id into ``x-conv-id`` (e.g.
     ``--header x-conv-id:${CLAUDE_CODE_SESSION_ID}``) — see SESSION_BINDING_PLAN.md.
 
+    ``Mcp-Session-Id`` is deliberately NOT used: the claude.ai connector
+    reuses one minted session id across *different* conversations (verified in
+    prod 2026-08-20 — summoning rumbo in a second chat was switch-blocked
+    because it collided with vera's binding from a first chat). It is therefore
+    not per-conversation and unsafe as a binding key; claude.ai falls through to
+    advisory (None) until the model-carried session_token lands.
+
     This is a trust/friction boundary, not a wall: an agent that hunts for its
-    own session id and hand-rolls a request can forge ``x-conv-id``. That is
-    the deliberate, loud tier we accept; the point is to make accidental
-    cross-companion writes impossible and intentional ones visible, on stock
-    clients with no extra software. Header-only by design: all three sources
-    ride on the transport, not in the JSON-RPC body the model composes. No
-    match -> None (advisory fallback)."""
+    own session id and hand-rolls a request can forge ``x-conv-id``. Header-only
+    by design; no match -> None (advisory fallback)."""
     openai_session = request.headers.get("x-openai-session")
     if openai_session:
         return openai_session
-    mcp_session = request.headers.get("mcp-session-id") or minted_session_id
-    if mcp_session:
-        return mcp_session
     conv_id = request.headers.get("x-conv-id")
     if conv_id:
         return conv_id
@@ -2372,15 +2371,10 @@ def create_mcp_app(
                 headers=headers,
             )
 
-        # Mint an Mcp-Session-Id on initialize when the client did not carry
-        # one, so spec-compliant clients (Claude) echo it on every later
-        # request and become bindable. ChatGPT ignores this and instead
-        # carries x-openai-session (see _conversation_fingerprint).
-        minted_session_id: str | None = None
-        if message.get("method") == "initialize" \
-                and not request.headers.get("mcp-session-id"):
-            minted_session_id = secrets.token_urlsafe(24)
-            headers["Mcp-Session-Id"] = minted_session_id
+        # Mcp-Session-Id is intentionally NOT minted: the claude.ai connector
+        # reuses one id across different conversations, so binding to it caused
+        # false cross-conversation switch-blocks (prod 2026-08-20). claude.ai
+        # therefore runs advisory until the model-carried session_token lands.
 
         # JSON-RPC notifications and responses do not receive a JSON body over
         # Streamable HTTP. The initialized notification is the common one.
@@ -2389,7 +2383,7 @@ def create_mcp_app(
         if "method" not in message:
             return Response(status_code=202, headers=headers)
 
-        fingerprint = _conversation_fingerprint(request, minted_session_id)
+        fingerprint = _conversation_fingerprint(request)
         response = _handle_rpc(message, app, fingerprint=fingerprint,
                                subject_hash=_subject_hash(request))
         accept = request.headers.get("accept", "")
