@@ -1472,17 +1472,27 @@ class MCPToolRunner:
         if name == "delete_file":
             return self.bridge.delete_file(arguments["profile_id"], arguments["filename"])
         if name == "closeout":
+            # Discriminate prepare vs persist by *content*, not an exact key
+            # set: the model may echo extra keys (e.g. profile_id on persist, or
+            # a session_token — though that is stripped before dispatch), and a
+            # strict subset check would reject those. _complete_closeout reads
+            # only the fields it needs and derives the profile from the signed
+            # code, so extra keys are harmless.
             keys = set(arguments)
-            if keys == {"profile_id"}:
-                return self._prepare_closeout(arguments["profile_id"])
             completion_required = {"code", "facts", "texture", "exchange"}
-            completion_allowed = completion_required | {"notes"}
-            if completion_required <= keys and keys <= completion_allowed:
+            completion_fields = completion_required | {"notes"}
+            if completion_required <= keys:
                 return self._complete_closeout(arguments)
+            if keys & completion_fields:
+                # Some but not all persist fields -> incomplete/ambiguous.
+                raise ToolBridgeError(
+                    400, "closeout persist needs all of: code, facts, texture, exchange")
+            if "profile_id" in keys:
+                return self._prepare_closeout(arguments["profile_id"])
             raise ToolBridgeError(
                 400,
-                "closeout accepts exactly {profile_id} to prepare, or "
-                "{code, facts, texture, exchange, notes?} to persist",
+                "closeout needs profile_id to prepare, or "
+                "code + facts + texture + exchange (+ optional notes) to persist",
             )
         if name == "list_stores":
             return self.bridge.list_stores(arguments["profile_id"])
