@@ -195,26 +195,40 @@ anthropics/claude-code#41836); Codex is the same. The server cannot observe
 one either: behind Caddy every request is `127.0.0.1`, TLS terminates
 upstream, User-Agent is static. The key must be *injected client-side*.
 
-The stock-client solution (no wrapper, no custom software): both CLIs reach
-a remote MCP through the standard `mcp-remote` bridge, which supports
-`--header "X:${ENV}"` with env expansion. Both clients already export their
-own durable session id into the environment their MCP children inherit —
-verified `CLAUDE_CODE_SESSION_ID` (equals the transcript UUID, resume-stable;
-Codex has the `codex resume <uuid>` rollout id, env-var name TBC when credits
-return). So the config is one line:
+The stock-client solution (no custom client, just the standard `mcp-remote`
+bridge both CLIs already use). `x-conv-id` is fingerprint source #3, after the
+two native headers. There are two ways to fill it, and which one applies was
+settled empirically:
 
-```jsonc
-// Claude Code / Codex, via mcp-remote
-"args": ["mcp-remote", "https://rumbo.datacodemath.com/mcp",
-         "--header", "x-conv-id:${CLAUDE_CODE_SESSION_ID}"]
+- **Claude Code** exports `CLAUDE_CODE_SESSION_ID` (equals the transcript UUID,
+  resume-stable). If its `.mcp.json` `${VAR}` expansion resolves against the
+  Claude Code process env, this is the nicest source (resume-stable):
+  `--header x-conv-id:${CLAUDE_CODE_SESSION_ID}`.
+- **Codex does NOT expose one.** Verified 2026-08-20 with an env-probe MCP
+  server registered in Codex and triggered via `codex exec`: Codex scrubs the
+  environment for stdio MCP children — they receive only
+  `HOME, LANG, LOGNAME, PATH, SHELL, USER`. The session id Codex prints
+  (`codex resume <uuid>`) never reaches the child. So no native id, and no
+  ambient env passes through by default (`shell_environment_policy`).
+
+Because of Codex, the **uniform** answer that works on both without depending
+on any client's env behavior is a tiny wrapper that mints the id itself at
+spawn — `scripts/companions-mcp.sh`: it generates a per-spawn UUID and bakes
+it into `mcp-remote --header x-conv-id:<uuid>`. The client spawns it once per
+session (that spawn is the per-conversation boundary), so no env var is needed.
+Register it as the MCP command:
+
+```
+Codex:       codex mcp add companions -- /path/to/companions-mcp.sh
+Claude Code: "companions": {"command": "/path/to/companions-mcp.sh"}
 ```
 
-`x-conv-id` is fingerprint source #3 (after the two native headers). Because
-it's the client's real session id, it's resume-stable — better than a minted
-per-process uuid, which would rotate on reconnect. Granularity is
-per-process = per-active-conversation: concurrent companions run as separate
-CLI processes (separate ids, isolated); sequential `/clear` in one process
-shares the id and is handled by the rebind rule.
+Granularity is per-spawn = per-active-conversation: concurrent companions run
+as separate CLI processes (separate ids, isolated); sequential `/clear` in one
+process shares the id and is handled by the rebind rule. The wrapper's uuid
+rotates on resume (harmless — looks like a new conversation, rebinds); to make
+a session resume-stable, export `COMPANIONS_CONV_ID` before launching, or on
+Claude Code use `${CLAUDE_CODE_SESSION_ID}` directly.
 
 **This is a trust/friction boundary, not a wall — by explicit decision.**
 The model can read its own `CLAUDE_CODE_SESSION_ID` and, in a coding session,

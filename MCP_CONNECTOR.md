@@ -221,28 +221,26 @@ elapsed time. Tool arguments and secrets are not logged.
 
 `/mcp` binds each conversation to the companion it summons and blocks
 cross-companion writes (see `SESSION_BINDING_PLAN.md`). ChatGPT and the
-claude.ai connector are fingerprinted automatically. Stock Claude Code and
-Codex emit no conversation id, so bind them by stamping their own durable
-session id into the `x-conv-id` header via the `mcp-remote` bridge — no
-wrapper or custom software:
+claude.ai connector are fingerprinted automatically. Stock Claude Code and Codex emit no conversation id, so bind them by stamping a
+per-session id into the `x-conv-id` header via the `mcp-remote` bridge. Use the
+wrapper `scripts/companions-mcp.sh`, which mints a fresh id per spawn — this is
+the uniform path because **Codex scrubs the environment for MCP children**
+(verified: they get only `HOME/LANG/LOGNAME/PATH/SHELL/USER`), so its native
+session id can't be passed by env the way Claude Code's can.
 
-```jsonc
-// Claude Code .mcp.json (Codex ~/.codex/config.toml is analogous)
-{
-  "mcpServers": {
-    "companions": {
-      "command": "npx",
-      "args": ["mcp-remote", "https://rumbo.datacodemath.com/mcp",
-               "--header", "x-conv-id:${CLAUDE_CODE_SESSION_ID}"]
-    }
-  }
-}
+```
+# Codex
+codex mcp add companions -- /abs/path/scripts/companions-mcp.sh
+
+# Claude Code .mcp.json
+{ "mcpServers": { "companions": { "command": "/abs/path/scripts/companions-mcp.sh" } } }
 ```
 
-`CLAUDE_CODE_SESSION_ID` is exported by Claude Code and inherited by the
-spawned `mcp-remote` child; it equals the session's transcript UUID and is
-resume-stable. Codex uses the same pattern once its session-id env var is
-confirmed. This is a trust/friction boundary, not a hard wall: it stops
+Each spawn is one conversation; concurrent sessions get distinct ids and are
+isolated. The id rotates on resume (harmless rebind); export
+`COMPANIONS_CONV_ID` to pin it, or on Claude Code point the header at
+`${CLAUDE_CODE_SESSION_ID}` (its transcript UUID, resume-stable) instead of the
+wrapper. This is a trust/friction boundary, not a hard wall: it stops
 accidental cross-companion writes and makes deliberate ones conspicuous — it
 does not stop an agent that forges the header on purpose.
 
