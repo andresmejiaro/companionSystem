@@ -2176,11 +2176,10 @@ def create_mcp_app(
                 f" tool={_params.get('name')!r}"
                 f" profile_id={(_params.get('arguments') or {}).get('profile_id')!r}"
             )
-        LOGGER.info(
-            "mcp_probe session_id=%r method=%r%s",
-            request.headers.get("mcp-session-id"),
-            _probe_method,
-            _probe_extra,
+        print(
+            f"mcp_probe session_id={request.headers.get('mcp-session-id')!r} "
+            f"method={_probe_method!r}{_probe_extra}",
+            flush=True,
         )
 
         response = _handle_rpc(message, app)
