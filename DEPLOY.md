@@ -21,12 +21,21 @@ Single-user Profile OS deployment on a Hetzner VPS, deployed 2026-07-09.
 - SSH: password auth disabled, key-only (`/etc/ssh/sshd_config.d/99-hardening.conf`)
 - Docker Engine + compose plugin installed from Docker's `noble` apt repo
   (Ubuntu 26.04 is too new for Docker's own repo; pinned to 24.04's)
-- Caddy installed from the official apt repo; `/etc/caddy/Caddyfile`:
+- Caddy installed from the official apt repo. The `rumbo.datacodemath.com`
+  block routes an **explicit path allowlist** to the mcp container and sends
+  everything else to the backend:
   ```
   rumbo.datacodemath.com {
-  	reverse_proxy 127.0.0.1:8080
+    @mcp path /mcp /mcp/* /.well-known/* /oauth/* /approvals/* \
+             /create-profile /session-inspector /session-gate /health
+    handle @mcp { reverse_proxy 127.0.0.1:8080 }
+    handle    { reverse_proxy 127.0.0.1:8000 }
   }
   ```
+  **Gotcha:** any *new* public mcp route (like `/session-gate`) must be added
+  to the `@mcp path` list and Caddy reloaded (`systemctl reload caddy`) —
+  otherwise it falls through to the backend and 404s even though the mcp app
+  serves it.
 - `/opt/profile-os/.env` holds three generated secrets
   (`PROFILE_OS_MCP_BACKEND_BEARER`, `MCP_CONNECTOR_TOKEN`,
   `MCP_OAUTH_SIGNING_KEY` — each `secrets.token_urlsafe(48)`), plus
