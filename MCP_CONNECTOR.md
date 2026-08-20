@@ -221,28 +221,21 @@ elapsed time. Tool arguments and secrets are not logged.
 
 `/mcp` binds each conversation to the companion it summons and blocks
 cross-companion writes (see `SESSION_BINDING_PLAN.md`). ChatGPT and the
-claude.ai connector are fingerprinted automatically. Stock Claude Code and Codex emit no conversation id, so bind them by stamping a
-per-session id into the `x-conv-id` header via the `mcp-remote` bridge. Use the
-wrapper `scripts/companions-mcp.sh`, which mints a fresh id per spawn — this is
-the uniform path because **Codex scrubs the environment for MCP children**
-(verified: they get only `HOME/LANG/LOGNAME/PATH/SHELL/USER`), so its native
-session id can't be passed by env the way Claude Code's can.
+claude.ai connector are fingerprinted automatically. The binding is **token-only** and needs **no client configuration** on any
+surface (ChatGPT, claude.ai, Claude Code, Codex — stock connectors, nothing to
+install). `summon_companion` returns a `session_token`; the model includes it as
+the `session_token` argument on every subsequent call, which locks the
+conversation to that companion. Calls without the token (or after switching
+companions) are refused. Transport headers are not used — that avoids the
+per-surface surprises they caused (e.g. claude.ai reusing one `Mcp-Session-Id`
+across conversations). `scripts/companions-mcp.sh` from the earlier header-based
+design is **obsolete**; ignore it.
 
-```
-# Codex
-codex mcp add companions -- /abs/path/scripts/companions-mcp.sh
-
-# Claude Code .mcp.json
-{ "mcpServers": { "companions": { "command": "/abs/path/scripts/companions-mcp.sh" } } }
-```
-
-Each spawn is one conversation; concurrent sessions get distinct ids and are
-isolated. The id rotates on resume (harmless rebind); export
-`COMPANIONS_CONV_ID` to pin it, or on Claude Code point the header at
-`${CLAUDE_CODE_SESSION_ID}` (its transcript UUID, resume-stable) instead of the
-wrapper. This is a trust/friction boundary, not a hard wall: it stops
-accidental cross-companion writes and makes deliberate ones conspicuous — it
-does not stop an agent that forges the header on purpose.
+This is a trust/friction boundary, not a hard wall: the token is visible to the
+model, so it stops accidental cross-companion access and makes deliberate
+crossing conspicuous (audit log) — it does not stop a model that deliberately
+copies its own token. The `/session-gate` TOTP switch flips the whole thing to
+"trusted" (advisory) for an audit.
 
 ## Security boundaries
 

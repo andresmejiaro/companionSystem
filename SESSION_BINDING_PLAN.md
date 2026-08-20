@@ -1,23 +1,38 @@
 # Session-bound companion locking — implementation plan (2026-08-20)
 
-## Status
+## Status — FINAL: token-only (commit 10e461c, live 2026-08-20)
 
-**Implemented 2026-08-20** in `profile_os/session_binding.py` (store +
-enforcement logic) and wired into `profile_os/mcp_server.py`. Enforcement is
-live: cross-profile writes are hard-blocked on all clients; by default each
-session is locked to one companion (a summon of a different companion is
-blocked, `session_locked`) and cross-profile reads are blocked. One TOTP-gated
-"revert to trusted" switch (`/session-gate`) relaxes both the one-companion
-lock and the reads wall together, without a redeploy. Bindings + audit persist in a dedicated
-SQLite file (`MCP_SESSION_BINDING_STATE_FILE`, default derived from
-`MCP_OAUTH_STATE_FILE`). The `WIRE_PROBE` scaffolding is removed. Tests in
-`tests/test_session_binding.py`. Decisions taken during build (all from a live
-Q&A with Andrés): hard-block from day one; keep Claude at full parity via
-minted `Mcp-Session-Id` (a return to Anthropic is on the table); guard writes +
-reads + proposals + closeout/exam; header-only fingerprint (no `_meta`
-fallback); no-fingerprint requests fail open but log a distinct greppable
-warning so a vanished header never becomes a needle in a haystack; longevity
-check skipped by choice ("come back when it breaks").
+The shipped shape is **token-only**. `summon_companion` mints a `session_token`
+and returns it in its result; the model must echo it as the `session_token`
+argument on **every** subsequent tool call. Enforcement (in
+`profile_os/session_binding.py` + `profile_os/mcp_server.py`):
+
+- **No transport headers are read.** `x-openai-session`, `x-conv-id`, and
+  `Mcp-Session-Id` were all tried and **dropped** — each carried a surprise
+  (notably claude.ai reusing one `Mcp-Session-Id` across different
+  conversations, which false-blocked a second summon). The token is the one
+  uniform key on every surface, with zero client config.
+- **strict** (default): a guarded call with no valid token →
+  `session_token_required`; switching companions mid-session → `session_locked`;
+  cross-profile write → `session_bound`; cross-profile read blocked.
+- **trusted** (one TOTP-gated `/session-gate` switch): no-token calls fall open
+  (advisory), switching allowed, cross-reads allowed; cross-**writes** still
+  blocked when a token identifies a session.
+- Guarded set: writes (memory/records/files/ironsworn/proposals/closeout/
+  exam_attempt) + reads; `send_message` is the exempt escape hatch.
+- Tokens are HMAC-hashed at rest. State in `MCP_SESSION_BINDING_STATE_FILE`
+  (tables `sessions`, `session_events`; the old `bindings`/`session_audit`
+  tables are inert). `scripts/companions-mcp.sh` (the x-conv-id wrapper) is now
+  **obsolete** — no wrapper is needed.
+
+**Honest ceiling:** the token is visible to the model, so this is ceremony, not
+a cryptographic wall — a determined model can copy its own token. It makes
+*accidental* cross-companion access impossible and *deliberate* crossing
+conspicuous (audit), on every client, with nothing to install. That trade was
+chosen deliberately (low friction, uniform, no surprises).
+
+The header-based design and its history are retained below for rationale only;
+the token-only status above supersedes it.
 
 The historical plan below is retained for rationale. It supersedes and replaces
 `MCP_SESSION_BINDING_ABANDONED.md` (deleted in the commit that lands this
