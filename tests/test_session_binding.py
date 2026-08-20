@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import tempfile
+import uuid
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -46,10 +50,21 @@ def test_evaluate_reads_follow_the_gate(tmp_path):
     store = _store(tmp_path)
     store.bind("F1", "tara")
     assert store.evaluate("F1", "search_memories", "sidra").action == "block"
-    store.set_gate_reads(False)
+    store.set_strict_mode(False)  # revert to trusted
     assert store.evaluate("F1", "search_memories", "sidra").action == "allow"
-    # Writes stay blocked regardless of the reads gate.
+    # Writes stay blocked regardless of the trust switch.
     assert store.evaluate("F1", "remember", "sidra").action == "block"
+
+
+def test_switch_blocked_reports_only_a_real_strict_switch(tmp_path):
+    store = _store(tmp_path)
+    assert store.switch_blocked("F1", "tara") is None          # first summon
+    store.bind("F1", "tara")
+    assert store.switch_blocked("F1", "tara") is None           # same companion
+    assert store.switch_blocked("F1", "sidra") == "tara"        # strict: blocked
+    assert store.switch_blocked(None, "sidra") is None          # no fingerprint
+    store.set_strict_mode(False)
+    assert store.switch_blocked("F1", "sidra") is None          # trusted: allowed
 
 
 def test_evaluate_fails_open_without_fingerprint_or_binding(tmp_path):
@@ -68,6 +83,8 @@ def test_prune_drops_stale_bindings(tmp_path):
 # --- end-to-end enforcement over /mcp ------------------------------------
 
 def _client(bridge=None):
+    # Isolate each client's binding store; the default path is a shared /tmp file.
+    binding_file = str(Path(tempfile.gettempdir()) / f"bindings-{uuid.uuid4().hex}.sqlite3")
     settings = MCPSettings(
         auth_required=True,
         connector_tokens=[CONNECTOR_TOKEN],
@@ -75,6 +92,7 @@ def _client(bridge=None):
         public_base_url=PUBLIC_BASE,
         oauth_issuer=PUBLIC_BASE,
         oauth_signing_key="test-signing-key",
+        session_binding_state_file=binding_file,
     )
     return TestClient(create_mcp_app(bridge=bridge or FakeBridge(), settings=settings))
 
@@ -129,11 +147,31 @@ def test_concurrent_chats_bind_independently():
                            _headers("v1/chatB")))
 
 
-def test_rebind_flips_the_wall():
+def test_strict_default_blocks_switching_companions_in_one_session():
     client = _client()
     h = _headers("v1/chatA")
     _call(client, "summon_companion", {"profile_id": "tara"}, h)
-    _call(client, "summon_companion", {"profile_id": "sidra"}, h)  # rebind
+    # A re-summon of the same companion is fine.
+    assert not _is_error(_call(client, "summon_companion", {"profile_id": "tara"}, h))
+    # Switching to a different companion is blocked (one companion per session).
+    switch = _call(client, "summon_companion", {"profile_id": "sidra"}, h)
+    assert _is_error(switch)
+    err = switch.json()["result"]["structuredContent"]["error"]
+    assert err["code"] == "session_locked"
+    assert err["bound_profile"] == "tara"
+    # The block did not rebind: tara writes still pass, sidra writes still fail.
+    assert not _is_error(_call(client, "remember",
+                               {"profile_id": "tara", "kind": "n", "content": "x"}, h))
+    assert _is_error(_call(client, "remember",
+                           {"profile_id": "sidra", "kind": "n", "content": "x"}, h))
+
+
+def test_trusted_mode_allows_switching_and_flips_the_wall():
+    client = _client()
+    client.app.state.bindings.set_strict_mode(False)  # revert to trusted
+    h = _headers("v1/chatA")
+    _call(client, "summon_companion", {"profile_id": "tara"}, h)
+    assert not _is_error(_call(client, "summon_companion", {"profile_id": "sidra"}, h))  # rebind
     assert not _is_error(_call(client, "remember",
                                {"profile_id": "sidra", "kind": "n", "content": "x"}, h))
     assert _is_error(_call(client, "remember",

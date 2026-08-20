@@ -86,7 +86,7 @@ class SessionBindingStore:
     and must not inherit the closeout DB's ephemeral default path.
     """
 
-    def __init__(self, state_file: str, *, default_gate_reads: bool = True):
+    def __init__(self, state_file: str, *, default_strict: bool = True):
         import os
         parent = os.path.dirname(state_file)
         if parent:
@@ -117,9 +117,13 @@ class SessionBindingStore:
             );
             """
         )
+        # One master switch. strict=1 (default) = the trust boundary is up:
+        # one companion per session (no mid-session identity switch) and no
+        # cross-profile reads. strict=0 = "revert to trusted": both relaxed at
+        # once, for an audit or a deliberately trusted session.
         self._connection.execute(
-            "INSERT OR IGNORE INTO gate_settings(key, value) VALUES ('gate_reads', ?)",
-            (1 if default_gate_reads else 0,),
+            "INSERT OR IGNORE INTO gate_settings(key, value) VALUES ('strict_mode', ?)",
+            (1 if default_strict else 0,),
         )
         self._connection.commit()
         self._lock = threading.Lock()
@@ -173,17 +177,20 @@ class SessionBindingStore:
             )
             self._connection.commit()
 
-    def gate_reads(self) -> bool:
+    def strict_mode(self) -> bool:
+        """True = trust boundary up (one companion per session, no cross-profile
+        reads). False = reverted to trusted (both relaxed)."""
         row = self._connection.execute(
-            "SELECT value FROM gate_settings WHERE key='gate_reads'"
+            "SELECT value FROM gate_settings WHERE key='strict_mode'"
         ).fetchone()
         return bool(row[0]) if row else True
 
-    def set_gate_reads(self, enabled: bool) -> None:
+    def set_strict_mode(self, strict: bool) -> None:
         with self._lock:
             self._connection.execute(
-                "UPDATE gate_settings SET value=? WHERE key='gate_reads'",
-                (1 if enabled else 0,),
+                "INSERT INTO gate_settings(key, value) VALUES ('strict_mode', ?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (1 if strict else 0,),
             )
             self._connection.commit()
 
@@ -222,6 +229,20 @@ class SessionBindingStore:
             return Decision("allow", kind, None, "unbound")
         if bound == target_profile:
             return Decision("allow", kind, bound, "allow")
-        if kind == "read" and not self.gate_reads():
+        if kind == "read" and not self.strict_mode():
             return Decision("allow", kind, bound, "reads-open")
         return Decision("block", kind, bound, "block")
+
+    def switch_blocked(self, fingerprint: str | None, target_profile: str | None) -> str | None:
+        """For summon_companion: return the currently-bound profile if switching
+        to `target_profile` must be blocked (one companion per session), else
+        None. First summon, same-companion re-summon, no fingerprint, and
+        trusted mode all return None (allowed)."""
+        if fingerprint is None or not target_profile:
+            return None
+        if not self.strict_mode():
+            return None
+        bound = self.get(fingerprint)
+        if bound is None or bound == target_profile:
+            return None
+        return bound

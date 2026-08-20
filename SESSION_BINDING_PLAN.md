@@ -4,9 +4,11 @@
 
 **Implemented 2026-08-20** in `profile_os/session_binding.py` (store +
 enforcement logic) and wired into `profile_os/mcp_server.py`. Enforcement is
-live: cross-profile writes are hard-blocked on both connectors; cross-profile
-reads are blocked behind a TOTP-gated runtime switch (`/session-gate`) that an
-audit can lift without a redeploy. Bindings + audit persist in a dedicated
+live: cross-profile writes are hard-blocked on all clients; by default each
+session is locked to one companion (a summon of a different companion is
+blocked, `session_locked`) and cross-profile reads are blocked. One TOTP-gated
+"revert to trusted" switch (`/session-gate`) relaxes both the one-companion
+lock and the reads wall together, without a redeploy. Bindings + audit persist in a dedicated
 SQLite file (`MCP_SESSION_BINDING_STATE_FILE`, default derived from
 `MCP_OAUTH_STATE_FILE`). The `WIRE_PROBE` scaffolding is removed. Tests in
 `tests/test_session_binding.py`. Decisions taken during build (all from a live
@@ -90,20 +92,37 @@ Per request, compute the conversation fingerprint, first match wins:
     only if no *other* fingerprint from the same OAuth subject was bound
     to a different profile within the last N minutes **and** log it;
     simpler v1: allow + log ("unbound write"), tighten later with data.
-- **Reads**: unrestricted in v1 (the incident was a write). Cross-profile
-  reads can be gated later behind the same mechanism if wanted.
+- **Reads**: blocked cross-profile by default (strict), lifted only in
+  trusted mode (see Trust switch). Cross-profile *writes* are always blocked.
 
-### Rebind rule (handles rotation)
+### Summon / rebind rule — one companion per session (revised 2026-08-20)
 
 A summon under an unknown fingerprint always succeeds and creates a new
-binding — that is just "a new chat" (or a rotated id). A summon of
-profile Z under a fingerprint already bound to X **re-binds** the
-fingerprint to Z but logs loudly (see Audit). Rationale: mid-chat identity
-switching is a legitimate pattern for Andrés; the wall's job is to stop
-*silent one-argument cross-writes*, and after a re-bind any write to X
-would now be blocked. A deliberate summon-then-write is visible in the
-transcript and the audit log — detection, not prevention, is the accepted
-ceiling for intent (no OTP allowed).
+binding — that is just "a new chat" (or a rotated id). A re-summon of the
+*same* companion is idempotent and always allowed.
+
+**Default is strict: one companion per session.** A summon of a *different*
+profile Z under a fingerprint already bound to X is **blocked** (structured
+error `session_locked`), and does *not* rebind — X stays bound, its writes
+keep passing, Z's writes keep failing. The block happens after the backend
+resolves Z (so aliases don't false-trigger) but Z's identity packet is never
+returned to a session bound to X. To work as Z, start a new conversation (new
+fingerprint), or have the human flip the trust switch.
+
+Switching is allowed only when the session is **reverted to trusted** (see
+Trust switch), in which case the old rebind-and-log behavior applies. Earlier
+this doc treated mid-session switching as always-legitimate; that was reversed
+— accidental identity drift is now impossible by default, and deliberate
+switching is a conscious, human-gated act.
+
+### Trust switch ("revert to trusted")
+
+One master flag (`strict_mode`, default on), toggled at the TOTP-gated admin
+page `/session-gate`. **Strict** (default): one companion per session +
+cross-profile reads blocked. **Trusted**: both relaxed at once — mid-session
+`summon` switching and cross-profile reads allowed, e.g. for an audit.
+Cross-profile *writes* are blocked in both states. Takes effect immediately,
+no redeploy.
 
 ### Fallback (no fingerprint at all)
 

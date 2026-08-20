@@ -115,8 +115,10 @@ forget which still-valid (30-minute) code was consumed.
 Session-bound companion locking (see `SESSION_BINDING_PLAN.md`) persists its
 bindings + audit in its own SQLite file, `MCP_SESSION_BINDING_STATE_FILE`
 (default: `<MCP_OAUTH_STATE_FILE>.bindings.sqlite3`, i.e. the same persistent
-volume). Cross-profile *writes* are always blocked; the cross-profile *reads*
-wall is toggled live — no redeploy — from the admin page
+volume). Cross-profile *writes* are always blocked. By default each session is locked
+to one companion (switching companions mid-session is blocked) and
+cross-profile reads are blocked; one "revert to trusted" switch relaxes both
+together, live — no redeploy — from the admin page
 `https://rumbo.datacodemath.com/session-gate` (admin secret + live TOTP).
 Blocks, rebinds, and no-fingerprint requests land in the `session_audit`
 table and in the `mcp` container logs tagged `session_binding` (grep them:

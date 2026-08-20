@@ -301,30 +301,35 @@ def _create_profile_page(values: dict[str, str] | None = None,
 </body></html>"""
 
 
-def _session_gate_page(gate_reads: bool, *, error: str | None = None,
+def _session_gate_page(strict: bool, *, error: str | None = None,
                        notice: str | None = None) -> str:
-    """Admin page toggling the cross-profile reads wall. Writes stay enforced."""
+    """Admin page for the one 'revert to trusted' switch. Cross-profile writes
+    stay enforced in both states."""
     banner = ""
     if error:
         banner = f'<p style="color:#c00;font-weight:600">{_html.escape(error)}</p>'
     elif notice:
         banner = f'<p style="color:#080;font-weight:600">{_html.escape(notice)}</p>'
-    state = "ON — cross-profile reads are blocked" if gate_reads \
-        else "OFF — cross-profile reads are allowed (writes still blocked)"
-    checked = "checked" if gate_reads else ""
+    state = ("STRICT — one companion per session; cross-profile reads blocked"
+             if strict else
+             "TRUSTED — mid-session companion switching and cross-profile reads allowed")
+    checked = "checked" if strict else ""
     return f"""<!doctype html>
 <html><head><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Session reads gate</title></head>
+<title>Session trust gate</title></head>
 <body style="font-family:system-ui,sans-serif;max-width:460px;margin:56px auto;padding:0 16px">
-<h2>Cross-profile reads gate</h2>
+<h2>Session trust boundary</h2>
 <p>Current state: <strong>{_html.escape(state)}</strong></p>
-<p style="color:#555;font-size:.9em">Writes across companions are always blocked.
-This switch only lifts the wall on <em>reads</em> — for an audit — and takes
-effect immediately, no redeploy.</p>
+<p style="color:#555;font-size:.9em">Cross-profile <em>writes</em> are always
+blocked. This one switch is the trust boundary: <strong>strict</strong> (default)
+locks each session to one companion and blocks cross-profile reads;
+unchecking <strong>reverts to trusted</strong> — allowing mid-session
+<code>summon</code> switches and cross-profile reads at once, e.g. for an audit.
+Takes effect immediately, no redeploy.</p>
 {banner}
 <form method="POST">
-<label style="display:block;margin:12px 0"><input type="checkbox" name="gate_reads" {checked}>
- Block cross-profile reads</label>
+<label style="display:block;margin:12px 0"><input type="checkbox" name="strict" {checked}>
+ Strict (one companion per session, no cross-profile reads)</label>
 <label>Admin secret<br><input name="admin_secret" type="password" autocomplete="off"
  required style="width:100%;padding:10px;margin:4px 0 12px"></label>
 <label>Authenticator code<br><input name="totp_code" inputmode="numeric"
@@ -1878,20 +1883,50 @@ def _handle_rpc(message: dict[str, Any], app: FastAPI, *,
         try:
             value = app.state.runner.call(name, arguments)
             if name == "summon_companion" and fingerprint is not None \
-                    and isinstance(value, dict):
+                    and isinstance(value, dict) and bindings is not None:
                 summoned = (value.get("selection") or {}).get("profile_id")
                 if summoned:
-                    previous = bindings.bind(fingerprint, summoned) if bindings else None
+                    # One companion per session: a summon of a *different*
+                    # companion in a bound conversation is blocked unless the
+                    # session has been reverted to trusted. Resolve first (via
+                    # the hydrated result) so aliases don't false-trigger, then
+                    # discard the packet — Y's identity is never returned to a
+                    # session bound to X.
+                    switch_from = bindings.switch_blocked(fingerprint, summoned)
+                    if switch_from is not None:
+                        LOGGER.warning(
+                            "session_binding switch-blocked bound=%s attempted=%s",
+                            switch_from, summoned,
+                        )
+                        bindings.audit(
+                            fingerprint=fingerprint, subject_hash=subject_hash,
+                            tool=name, target_profile=summoned,
+                            decision="switch-blocked")
+                        message_text = (
+                            f"blocked: this conversation is bound to {switch_from!r} "
+                            f"(one companion per session). To work as {summoned!r}, "
+                            f"start a new conversation, or have the human revert this "
+                            f"session to trusted. To reach {summoned!r} from here, use "
+                            f"send_message."
+                        )
+                        return _rpc_result(
+                            request_id,
+                            {**_tool_error(message_text),
+                             "structuredContent": {"error": {
+                                 "message": message_text, "code": "session_locked",
+                                 "bound_profile": switch_from,
+                                 "attempted_profile": summoned}}},
+                        )
+                    previous = bindings.bind(fingerprint, summoned)
                     if previous is not None:
                         LOGGER.warning(
                             "session_binding rebind fingerprint_bound_from=%s to=%s",
                             previous, summoned,
                         )
-                    if bindings is not None:
-                        bindings.audit(
-                            fingerprint=fingerprint, subject_hash=subject_hash,
-                            tool=name, target_profile=summoned,
-                            decision="rebind" if previous is not None else "bind")
+                    bindings.audit(
+                        fingerprint=fingerprint, subject_hash=subject_hash,
+                        tool=name, target_profile=summoned,
+                        decision="rebind" if previous is not None else "bind")
             if name in {"propose_prompt_edit", "propose_store"} and isinstance(value, dict):
                 settings: MCPSettings = app.state.settings
                 approval_id = (value.get("id") if name == "propose_prompt_edit"
@@ -2171,29 +2206,31 @@ def create_mcp_app(
 
     @app.get("/session-gate")
     async def session_gate_page():
-        return HTMLResponse(_session_gate_page(app.state.bindings.gate_reads()))
+        return HTMLResponse(_session_gate_page(app.state.bindings.strict_mode()))
 
     @app.post("/session-gate")
     async def session_gate_submit(request: Request):
-        """Admin-only runtime switch for the cross-profile *reads* wall. Writes
-        are always enforced; only the reads gate is toggleable, so an audit can
-        temporarily read across profiles without a redeploy. Guarded by admin
-        secret + live TOTP, same bar as OAuth consent."""
+        """Admin-only 'revert to trusted' switch. Cross-profile writes are always
+        enforced; this one flag toggles both the one-companion-per-session lock
+        and the cross-profile reads wall together, so a trusted/audit session can
+        relax them without a redeploy. Guarded by admin secret + live TOTP, same
+        bar as OAuth consent."""
         client_ip = request.client.host if request.client else "unknown"
         if _rate_limited(_session_gate_hits, client_ip):
             return HTMLResponse("Too many attempts; try again in a minute.", status_code=429)
         form = await request.form()
         secret = str(form.get("admin_secret") or "")
         totp_code = str(form.get("totp_code") or "")
-        enable = str(form.get("gate_reads")) == "on"
+        strict = str(form.get("strict")) == "on"
         if not await app.state.admin_verify(secret, totp_code):
             return HTMLResponse(
-                _session_gate_page(app.state.bindings.gate_reads(),
+                _session_gate_page(app.state.bindings.strict_mode(),
                                    error="Invalid secret or code."),
                 status_code=401)
-        app.state.bindings.set_gate_reads(enable)
-        LOGGER.warning("session_binding reads_gate set to %s", "on" if enable else "off")
-        return HTMLResponse(_session_gate_page(app.state.bindings.gate_reads(),
+        app.state.bindings.set_strict_mode(strict)
+        LOGGER.warning("session_binding trust boundary set to %s",
+                       "strict" if strict else "trusted")
+        return HTMLResponse(_session_gate_page(app.state.bindings.strict_mode(),
                                                notice="Saved."))
 
     @app.post("/approvals/{approval_id}")
