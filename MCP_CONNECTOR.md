@@ -217,26 +217,6 @@ Every MCP tool call logs one structured line through Python logging with tool
 name, profile id when present, outcome, backend status on backend errors, and
 elapsed time. Tool arguments and secrets are not logged.
 
-## Companion locking on stock CLI clients (Claude Code / Codex)
-
-`/mcp` binds each conversation to the companion it summons and blocks
-cross-companion writes (see `SESSION_BINDING_PLAN.md`). ChatGPT and the
-claude.ai connector are fingerprinted automatically. The binding is **token-only** and needs **no client configuration** on any
-surface (ChatGPT, claude.ai, Claude Code, Codex — stock connectors, nothing to
-install). `summon_companion` returns a `session_token`; the model includes it as
-the `session_token` argument on every subsequent call, which locks the
-conversation to that companion. Calls without the token (or after switching
-companions) are refused. Transport headers are not used — that avoids the
-per-surface surprises they caused (e.g. claude.ai reusing one `Mcp-Session-Id`
-across conversations). `scripts/companions-mcp.sh` from the earlier header-based
-design is **obsolete**; ignore it.
-
-This is a trust/friction boundary, not a hard wall: the token is visible to the
-model, so it stops accidental cross-companion access and makes deliberate
-crossing conspicuous (audit log) — it does not stop a model that deliberately
-copies its own token. The `/session-gate` TOTP switch flips the whole thing to
-"trusted" (advisory) for an audit.
-
 ## Security boundaries
 
 - Backend remains the source of truth for profiles, prompts, compact state,

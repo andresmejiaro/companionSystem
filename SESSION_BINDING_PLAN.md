@@ -1,40 +1,8 @@
 # Session-bound companion locking — implementation plan (2026-08-20)
 
-## Status — FINAL: token-only (commit 10e461c, live 2026-08-20)
+## Status
 
-The shipped shape is **token-only**. `summon_companion` mints a `session_token`
-and returns it in its result; the model must echo it as the `session_token`
-argument on **every** subsequent tool call. Enforcement (in
-`profile_os/session_binding.py` + `profile_os/mcp_server.py`):
-
-- **No transport headers are read.** `x-openai-session`, `x-conv-id`, and
-  `Mcp-Session-Id` were all tried and **dropped** — each carried a surprise
-  (notably claude.ai reusing one `Mcp-Session-Id` across different
-  conversations, which false-blocked a second summon). The token is the one
-  uniform key on every surface, with zero client config.
-- **strict** (default): a guarded call with no valid token →
-  `session_token_required`; switching companions mid-session → `session_locked`;
-  cross-profile write → `session_bound`; cross-profile read blocked.
-- **trusted** (one TOTP-gated `/session-gate` switch): no-token calls fall open
-  (advisory), switching allowed, cross-reads allowed; cross-**writes** still
-  blocked when a token identifies a session.
-- Guarded set: writes (memory/records/files/ironsworn/proposals/closeout/
-  exam_attempt) + reads; `send_message` is the exempt escape hatch.
-- Tokens are HMAC-hashed at rest. State in `MCP_SESSION_BINDING_STATE_FILE`
-  (tables `sessions`, `session_events`; the old `bindings`/`session_audit`
-  tables are inert). `scripts/companions-mcp.sh` (the x-conv-id wrapper) is now
-  **obsolete** — no wrapper is needed.
-
-**Honest ceiling:** the token is visible to the model, so this is ceremony, not
-a cryptographic wall — a determined model can copy its own token. It makes
-*accidental* cross-companion access impossible and *deliberate* crossing
-conspicuous (audit), on every client, with nothing to install. That trade was
-chosen deliberately (low friction, uniform, no surprises).
-
-The header-based design and its history are retained below for rationale only;
-the token-only status above supersedes it.
-
-The historical plan below is retained for rationale. It supersedes and replaces
+Ready to implement. This supersedes and replaces
 `MCP_SESSION_BINDING_ABANDONED.md` (deleted in the commit that lands this
 file — see git history for the full dead-end analysis). The plan was
 un-abandoned because a second, wider wire probe found the missing substrate.
@@ -85,8 +53,7 @@ Per request, compute the conversation fingerprint, first match wins:
 2. `Mcp-Session-Id` header (Claude and spec-compliant clients; keep the
    minting-on-initialize behavior from commit 339616e, which was reverted
    in cc999c4 — re-land it)
-3. `x-conv-id` header (stock CLI agents — see "Covering stock CLI clients")
-4. None → no fingerprint (see Fallback).
+3. None → no fingerprint (see Fallback).
 
 ### Binding
 
@@ -107,37 +74,20 @@ Per request, compute the conversation fingerprint, first match wins:
     only if no *other* fingerprint from the same OAuth subject was bound
     to a different profile within the last N minutes **and** log it;
     simpler v1: allow + log ("unbound write"), tighten later with data.
-- **Reads**: blocked cross-profile by default (strict), lifted only in
-  trusted mode (see Trust switch). Cross-profile *writes* are always blocked.
+- **Reads**: unrestricted in v1 (the incident was a write). Cross-profile
+  reads can be gated later behind the same mechanism if wanted.
 
-### Summon / rebind rule — one companion per session (revised 2026-08-20)
+### Rebind rule (handles rotation)
 
 A summon under an unknown fingerprint always succeeds and creates a new
-binding — that is just "a new chat" (or a rotated id). A re-summon of the
-*same* companion is idempotent and always allowed.
-
-**Default is strict: one companion per session.** A summon of a *different*
-profile Z under a fingerprint already bound to X is **blocked** (structured
-error `session_locked`), and does *not* rebind — X stays bound, its writes
-keep passing, Z's writes keep failing. The block happens after the backend
-resolves Z (so aliases don't false-trigger) but Z's identity packet is never
-returned to a session bound to X. To work as Z, start a new conversation (new
-fingerprint), or have the human flip the trust switch.
-
-Switching is allowed only when the session is **reverted to trusted** (see
-Trust switch), in which case the old rebind-and-log behavior applies. Earlier
-this doc treated mid-session switching as always-legitimate; that was reversed
-— accidental identity drift is now impossible by default, and deliberate
-switching is a conscious, human-gated act.
-
-### Trust switch ("revert to trusted")
-
-One master flag (`strict_mode`, default on), toggled at the TOTP-gated admin
-page `/session-gate`. **Strict** (default): one companion per session +
-cross-profile reads blocked. **Trusted**: both relaxed at once — mid-session
-`summon` switching and cross-profile reads allowed, e.g. for an audit.
-Cross-profile *writes* are blocked in both states. Takes effect immediately,
-no redeploy.
+binding — that is just "a new chat" (or a rotated id). A summon of
+profile Z under a fingerprint already bound to X **re-binds** the
+fingerprint to Z but logs loudly (see Audit). Rationale: mid-chat identity
+switching is a legitimate pattern for Andrés; the wall's job is to stop
+*silent one-argument cross-writes*, and after a re-bind any write to X
+would now be blocked. A deliberate summon-then-write is visible in the
+transcript and the audit log — detection, not prevention, is the accepted
+ceiling for intent (no OTP allowed).
 
 ### Fallback (no fingerprint at all)
 
@@ -198,61 +148,6 @@ after hours / a day, make one tool call each, then on the VPS:
 conversation-stable and the Rebind rule is rarely exercised. If they
 rotated → the design still works (rotation looks like a new chat), just
 expect more "unbound write" log rows and keep v1's allow+log stance.
-
-## Covering stock CLI clients (Claude Code / Codex) — added 2026-08-20
-
-The problem: Claude Code and Codex are general companion surfaces (any
-companion may reach for one to write a file or a letter), so they need the
-same summon + multi-companion + per-conversation binding as ChatGPT. But
-neither emits a per-conversation key on the wire — Claude Code doesn't echo
-`Mcp-Session-Id` and sends no conversation id (open, unanswered bug
-anthropics/claude-code#41836); Codex is the same. The server cannot observe
-one either: behind Caddy every request is `127.0.0.1`, TLS terminates
-upstream, User-Agent is static. The key must be *injected client-side*.
-
-The stock-client solution (no custom client, just the standard `mcp-remote`
-bridge both CLIs already use). `x-conv-id` is fingerprint source #3, after the
-two native headers. There are two ways to fill it, and which one applies was
-settled empirically:
-
-- **Claude Code** exports `CLAUDE_CODE_SESSION_ID` (equals the transcript UUID,
-  resume-stable). If its `.mcp.json` `${VAR}` expansion resolves against the
-  Claude Code process env, this is the nicest source (resume-stable):
-  `--header x-conv-id:${CLAUDE_CODE_SESSION_ID}`.
-- **Codex does NOT expose one.** Verified 2026-08-20 with an env-probe MCP
-  server registered in Codex and triggered via `codex exec`: Codex scrubs the
-  environment for stdio MCP children — they receive only
-  `HOME, LANG, LOGNAME, PATH, SHELL, USER`. The session id Codex prints
-  (`codex resume <uuid>`) never reaches the child. So no native id, and no
-  ambient env passes through by default (`shell_environment_policy`).
-
-Because of Codex, the **uniform** answer that works on both without depending
-on any client's env behavior is a tiny wrapper that mints the id itself at
-spawn — `scripts/companions-mcp.sh`: it generates a per-spawn UUID and bakes
-it into `mcp-remote --header x-conv-id:<uuid>`. The client spawns it once per
-session (that spawn is the per-conversation boundary), so no env var is needed.
-Register it as the MCP command:
-
-```
-Codex:       codex mcp add companions -- /path/to/companions-mcp.sh
-Claude Code: "companions": {"command": "/path/to/companions-mcp.sh"}
-```
-
-Granularity is per-spawn = per-active-conversation: concurrent companions run
-as separate CLI processes (separate ids, isolated); sequential `/clear` in one
-process shares the id and is handled by the rebind rule. The wrapper's uuid
-rotates on resume (harmless — looks like a new conversation, rebinds); to make
-a session resume-stable, export `COMPANIONS_CONV_ID` before launching, or on
-Claude Code use `${CLAUDE_CODE_SESSION_ID}` directly.
-
-**This is a trust/friction boundary, not a wall — by explicit decision.**
-The model can read its own `CLAUDE_CODE_SESSION_ID` and, in a coding session,
-hand-roll a `curl` to `/mcp` with a forged `x-conv-id`. That is accepted: it
-is the deliberate, loud tier (visible in the transcript). The boundary's job
-is to make *accidental* cross-companion writes impossible and *intentional*
-ones require conspicuous effort — to give a determined agent pause, not to
-stop it. It runs on stock Claude Code / Codex with nothing installed beyond
-the `mcp-remote` bridge they already use.
 
 ## What this does NOT do
 

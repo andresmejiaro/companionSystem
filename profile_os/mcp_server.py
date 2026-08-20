@@ -32,7 +32,6 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from starlette.concurrency import run_in_threadpool
 
 from .bridge import ToolBridge, ToolBridgeError
-from .session_binding import SessionBindingStore
 from .request_limits import (
     RequestBodyTooLarge,
     configured_max_request_bytes,
@@ -297,45 +296,6 @@ def _create_profile_page(values: dict[str, str] | None = None,
  autocomplete="off" required style="width:100%;padding:10px;margin:4px 0 16px;font-size:1.2em">
 </label>
 <button type="submit" style="padding:10px 20px">Create</button>
-</form>
-</body></html>"""
-
-
-def _session_gate_page(strict: bool, *, error: str | None = None,
-                       notice: str | None = None) -> str:
-    """Admin page for the one 'revert to trusted' switch. Cross-profile writes
-    stay enforced in both states."""
-    banner = ""
-    if error:
-        banner = f'<p style="color:#c00;font-weight:600">{_html.escape(error)}</p>'
-    elif notice:
-        banner = f'<p style="color:#080;font-weight:600">{_html.escape(notice)}</p>'
-    state = ("STRICT — one companion per session; cross-profile reads blocked"
-             if strict else
-             "TRUSTED — mid-session companion switching and cross-profile reads allowed")
-    checked = "checked" if strict else ""
-    return f"""<!doctype html>
-<html><head><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Session trust gate</title></head>
-<body style="font-family:system-ui,sans-serif;max-width:460px;margin:56px auto;padding:0 16px">
-<h2>Session trust boundary</h2>
-<p>Current state: <strong>{_html.escape(state)}</strong></p>
-<p style="color:#555;font-size:.9em">Cross-profile <em>writes</em> are always
-blocked. This one switch is the trust boundary: <strong>strict</strong> (default)
-locks each session to one companion and blocks cross-profile reads;
-unchecking <strong>reverts to trusted</strong> — allowing mid-session
-<code>summon</code> switches and cross-profile reads at once, e.g. for an audit.
-Takes effect immediately, no redeploy.</p>
-{banner}
-<form method="POST">
-<label style="display:block;margin:12px 0"><input type="checkbox" name="strict" {checked}>
- Strict (one companion per session, no cross-profile reads)</label>
-<label>Admin secret<br><input name="admin_secret" type="password" autocomplete="off"
- required style="width:100%;padding:10px;margin:4px 0 12px"></label>
-<label>Authenticator code<br><input name="totp_code" inputmode="numeric"
- autocomplete="one-time-code" pattern="[0-9]{{6,8}}" required
- style="width:100%;padding:10px;margin:4px 0 16px;font-size:1.2em"></label>
-<button type="submit" style="padding:10px 20px">Save</button>
 </form>
 </body></html>"""
 
@@ -757,19 +717,12 @@ MCP_TOOLS = [
         {
             "profile_id": _PROFILE_ID,
             "code": {"type": "string", "minLength": 1},
-            # Length limits live in the descriptions, not as schema maxLength:
-            # some MCP clients silently DROP a field that exceeds an advertised
-            # maxLength, which made an over-long facts vanish and closeout fail
-            # with a misleading "needs all of" (prod 2026-08-20). The backend
-            # still enforces these caps and returns an explicit "exceeds N" error.
-            "facts": {"type": "string",
-                      "description": "Keep under 1200 characters."},
-            "texture": {"type": "string",
-                        "description": "Concrete cues that help the next session retain rapport and tone; not a generic adjective. Preserve only what remains relevant. Keep under 700 characters."},
-            "exchange": {"type": "string",
-                         "description": "Verbatim 1–3-turn excerpt; never paraphrase or paste a transcript. Keep under 800 characters."},
-            "notes": {"type": "string", "default": "",
-                      "description": "Optional. Keep under 700 characters."},
+            "facts": {"type": "string", "maxLength": 1200},
+            "texture": {"type": "string", "maxLength": 700,
+                        "description": "Concrete cues that help the next session retain rapport and tone; not a generic adjective. Preserve only what remains relevant."},
+            "exchange": {"type": "string", "maxLength": 800,
+                         "description": "Verbatim 1–3-turn excerpt; never paraphrase or paste a transcript."},
+            "notes": {"type": "string", "maxLength": 700, "default": ""},
         },
         [],
     ),
@@ -887,37 +840,14 @@ MCP_TOOLS = [
 MCP_TOOL_NAMES = {tool["name"] for tool in MCP_TOOLS}
 
 
-_SESSION_TOKEN_PROP = {
-    "type": "string",
-    "description": (
-        "Session token returned by summon_companion. Include it on every tool call "
-        "in this conversation; it locks the conversation to one companion. Calls "
-        "without it (or after switching companions) are refused."),
-}
-
-
-def _with_session_token(tool: dict[str, Any]) -> dict[str, Any]:
-    """Advertise an optional session_token argument on every tool. inputSchema
-    sets additionalProperties:false, so the model may only send it if declared."""
-    schema = tool.get("inputSchema")
-    if not isinstance(schema, dict):
-        return tool
-    props = schema.get("properties") or {}
-    if "session_token" in props:
-        return tool
-    return {**tool, "inputSchema": {**schema,
-            "properties": {**props, "session_token": _SESSION_TOKEN_PROP}}}
-
-
 def _advertised_tools() -> list[dict[str, Any]]:
     # ChatGPT's connector setup rejects the full tool list when it cannot
     # validate an output schema.  Keep discovery reliably available by
     # default; operators with a host that supports output schemas can opt in
     # with MCP_OMIT_OUTPUT_SCHEMAS=0.
     if os.environ.get("MCP_OMIT_OUTPUT_SCHEMAS", "1") == "0":
-        return [_with_session_token(tool) for tool in MCP_TOOLS]
-    return [_with_session_token({k: v for k, v in tool.items() if k != "outputSchema"})
-            for tool in MCP_TOOLS]
+        return MCP_TOOLS
+    return [{k: v for k, v in tool.items() if k != "outputSchema"} for tool in MCP_TOOLS]
 
 
 @dataclass
@@ -936,10 +866,6 @@ class MCPSettings:
     # Put this on a persistent volume in deployment so consumed-code replay
     # protection survives an MCP process/container restart.
     closeout_code_state_file: str | None = None
-    # Conversation-binding state (companion locking). Its own persistent file,
-    # kept separate from the closeout ledger so long-lived bindings never
-    # inherit that ledger's ephemeral /tmp default. See SESSION_BINDING_PLAN.md.
-    session_binding_state_file: str | None = None
     oauth_token_ttl_seconds: int = 60 * 60 * 24 * 30
     oauth_allowed_redirect_hosts: list[str] = field(default_factory=lambda: [
         "claude.ai",
@@ -978,11 +904,6 @@ class MCPSettings:
             closeout_code_state_file=(
                 os.environ.get("MCP_CLOSEOUT_CODE_STATE_FILE")
                 or ((os.environ.get("MCP_OAUTH_STATE_FILE") + ".closeout.sqlite3")
-                    if os.environ.get("MCP_OAUTH_STATE_FILE") else None)
-            ),
-            session_binding_state_file=(
-                os.environ.get("MCP_SESSION_BINDING_STATE_FILE")
-                or ((os.environ.get("MCP_OAUTH_STATE_FILE") + ".bindings.sqlite3")
                     if os.environ.get("MCP_OAUTH_STATE_FILE") else None)
             ),
             oauth_token_ttl_seconds=ttl,
@@ -1479,39 +1400,17 @@ class MCPToolRunner:
         if name == "delete_file":
             return self.bridge.delete_file(arguments["profile_id"], arguments["filename"])
         if name == "closeout":
-            # Discriminate prepare vs persist by *content*, not an exact key
-            # set: the model may echo extra keys (e.g. profile_id on persist, or
-            # a session_token — though that is stripped before dispatch), and a
-            # strict subset check would reject those. _complete_closeout reads
-            # only the fields it needs and derives the profile from the signed
-            # code, so extra keys are harmless.
             keys = set(arguments)
-            completion_required = {"code", "facts", "texture", "exchange"}
-            completion_fields = completion_required | {"notes"}
-            if completion_required <= keys:
-                return self._complete_closeout(arguments)
-            if keys & completion_fields:
-                # Some but not all persist fields -> report exactly what arrived,
-                # so a client that drops a field (e.g. on its own length rule) is
-                # diagnosable rather than hidden behind a generic message.
-                lengths = {k: len(str(arguments.get(k)))
-                           for k in sorted(completion_fields & keys)}
-                missing = sorted(completion_required - keys)
-                LOGGER.warning(
-                    "closeout persist incomplete: missing=%s received=%s all_keys=%s",
-                    missing, lengths, sorted(keys))
-                raise ToolBridgeError(
-                    400,
-                    f"closeout persist is missing {missing}. Server received these "
-                    f"fields (name:length): {lengths}. All arguments seen: {sorted(keys)}. "
-                    f"If a field you sent is absent here, your client dropped it "
-                    f"(often its own maxLength rule) — resend it shorter or in pieces.")
-            if "profile_id" in keys:
+            if keys == {"profile_id"}:
                 return self._prepare_closeout(arguments["profile_id"])
+            completion_required = {"code", "facts", "texture", "exchange"}
+            completion_allowed = completion_required | {"notes"}
+            if completion_required <= keys and keys <= completion_allowed:
+                return self._complete_closeout(arguments)
             raise ToolBridgeError(
                 400,
-                "closeout needs profile_id to prepare, or "
-                "code + facts + texture + exchange (+ optional notes) to persist",
+                "closeout accepts exactly {profile_id} to prepare, or "
+                "{code, facts, texture, exchange, notes?} to persist",
             )
         if name == "list_stores":
             return self.bridge.list_stores(arguments["profile_id"])
@@ -1779,7 +1678,7 @@ def _preflight_headers(settings: MCPSettings, request: Request) -> dict[str, str
     headers.update({
         "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
         "Access-Control-Allow-Headers": (
-            "Authorization, Content-Type, Accept, MCP-Protocol-Version, Mcp-Session-Id, x-conv-id"
+            "Authorization, Content-Type, Accept, MCP-Protocol-Version, Mcp-Session-Id"
         ),
         "Access-Control-Max-Age": "600",
     })
@@ -1800,47 +1699,7 @@ def _safe_profile(arguments: dict[str, Any]) -> str:
     return str(value) if value is not None else "-"
 
 
-def _session_block_response(request_id: Any, decision: Any,
-                            target_profile: str) -> dict[str, Any] | None:
-    """JSON-RPC tool error for a blocked guarded call, worded by reason so the
-    model knows how to recover."""
-    bound = decision.bound_profile
-    if decision.reason == "no-session":
-        message = (
-            "blocked: no session_token. Call summon_companion first and include the "
-            "session_token it returns as the session_token argument on every call "
-            "(including this one). Then retry.")
-        code = "session_token_required"
-    elif decision.reason == "cross":
-        verb = "write into" if decision.kind == "mutation" else "read from"
-        message = (
-            f"blocked: this conversation is bound to {bound!r} and cannot {verb} "
-            f"{target_profile!r}. To give {target_profile!r} something, use send_message; "
-            f"to act as {target_profile!r}, start a new conversation and summon it.")
-        code = "session_bound"
-    else:
-        return None
-    return _rpc_result(
-        request_id,
-        {**_tool_error(message),
-         "structuredContent": {"error": {
-             "message": message, "code": code,
-             "bound_profile": bound, "target_profile": target_profile}}},
-    )
-
-
-def _subject_hash(request: Request) -> str | None:
-    """Stable, non-reversible per-account tag for audit grouping. Prefers
-    ChatGPT's ``x-openai-subject``; falls back to the OAuth bearer. Never the
-    raw value."""
-    raw = request.headers.get("x-openai-subject") or request.headers.get("authorization")
-    if not raw:
-        return None
-    return hashlib.sha256(raw.encode()).hexdigest()[:16]
-
-
-def _handle_rpc(message: dict[str, Any], app: FastAPI, *,
-                subject_hash: str | None = None) -> dict[str, Any]:
+def _handle_rpc(message: dict[str, Any], app: FastAPI) -> dict[str, Any]:
     request_id = message.get("id")
     method = message.get("method")
     params = message.get("params") or {}
@@ -1864,10 +1723,7 @@ def _handle_rpc(message: dict[str, Any], app: FastAPI, *,
                 "a normalized exact canonical id first and only resolves names after a 404; "
                 "do not browse the directory first. A returned selection identifies the active "
                 "companion. Use discover_companions only for browsing "
-                "or not_found results. summon_companion returns a session_token; include it "
-                "as the session_token argument on every subsequent tool call in this "
-                "conversation (it locks the conversation to one companion — calls without it, "
-                "or after switching companions, are refused). The returned "
+                "or not_found results. The returned "
                 "allowed_tools is guidance for which tools this profile should use; it is "
                 "not enforced server-side."
             ),
@@ -1890,77 +1746,9 @@ def _handle_rpc(message: dict[str, Any], app: FastAPI, *,
             return _rpc_error(request_id, -32602, "tool arguments must be an object")
 
         started = time.time()
-        # session_token is the model-carried binding key; strip it before the
-        # backend call (it is not a backend argument).
-        session_token = arguments.pop("session_token", None)
-        if not isinstance(session_token, str):
-            session_token = None
         profile_id = _safe_profile(arguments)
-
-        # Companion locking, token-only (see SESSION_BINDING_PLAN.md). The token
-        # is minted on summon and echoed on every call; no transport headers.
-        bindings = getattr(app.state, "bindings", None)
-        if bindings is not None and name != "summon_companion":
-            decision = bindings.evaluate_call(session_token, name, profile_id)
-            bindings.audit(token=session_token, subject_hash=subject_hash,
-                           tool=name, target_profile=profile_id,
-                           decision=decision.reason)
-            if decision.reason == "advisory":
-                LOGGER.warning(
-                    "session_binding no-session advisory(trusted) tool=%s profile_id=%s",
-                    name, profile_id)
-            if decision.action == "block":
-                LOGGER.warning(
-                    "session_binding blocked reason=%s tool=%s target=%s bound=%s",
-                    decision.reason, name, profile_id, decision.bound_profile)
-                block = _session_block_response(request_id, decision, profile_id)
-                if block is not None:
-                    return block
-
         try:
             value = app.state.runner.call(name, arguments)
-            if name == "summon_companion" and isinstance(value, dict) \
-                    and bindings is not None:
-                summoned = (value.get("selection") or {}).get("profile_id")
-                if summoned:
-                    # Resolve first (via the hydrated result) so aliases don't
-                    # false-trigger; on a blocked switch discard the packet so
-                    # the other companion's identity is never returned here.
-                    sd = bindings.evaluate_summon(session_token, summoned)
-                    bindings.audit(
-                        token=(sd.token or session_token), subject_hash=subject_hash,
-                        tool=name, target_profile=summoned, decision=sd.reason)
-                    if sd.action == "block":
-                        LOGGER.warning(
-                            "session_binding switch-blocked bound=%s attempted=%s",
-                            sd.bound_profile, summoned)
-                        message_text = (
-                            f"blocked: this conversation is bound to {sd.bound_profile!r} "
-                            f"(one companion per session). To work as {summoned!r}, start a "
-                            f"new conversation, or have the human revert this session to "
-                            f"trusted. To reach {summoned!r} from here, use send_message."
-                        )
-                        return _rpc_result(
-                            request_id,
-                            {**_tool_error(message_text),
-                             "structuredContent": {"error": {
-                                 "message": message_text, "code": "session_locked",
-                                 "bound_profile": sd.bound_profile,
-                                 "attempted_profile": summoned}}},
-                        )
-                    if sd.reason == "rebind":
-                        LOGGER.warning("session_binding rebind to=%s", summoned)
-                    # Hand the token back so the model carries it on every call.
-                    value = {
-                        **value,
-                        "session_token": sd.token,
-                        "session_binding": (
-                            "Include this session_token as the session_token argument on "
-                            "EVERY tool call in this conversation. It locks this conversation "
-                            f"to {summoned!r}; calls without it, or after switching "
-                            "companions, are refused. To reach another companion use "
-                            "send_message."),
-                    }
             if name in {"propose_prompt_edit", "propose_store"} and isinstance(value, dict):
                 settings: MCPSettings = app.state.settings
                 approval_id = (value.get("id") if name == "propose_prompt_edit"
@@ -2011,10 +1799,6 @@ def create_mcp_app(
         state_file=os.environ.get("MCP_OAUTH_STATE_FILE"))
     closeout_state_file = settings.closeout_code_state_file or os.path.join(
         "/tmp", "profile-os-mcp-closeout-codes.sqlite3")
-    binding_state_file = settings.session_binding_state_file or os.path.join(
-        "/tmp", "profile-os-mcp-session-bindings.sqlite3")
-    app.state.bindings = SessionBindingStore(
-        binding_state_file, fingerprint_key=settings.oauth_signing_key)
     app.state.runner = MCPToolRunner(
         bridge or ToolBridge(),
         closeout_signing_key=settings.closeout_signing_key or settings.oauth_signing_key,
@@ -2237,37 +2021,6 @@ def create_mcp_app(
         return HTMLResponse(_session_inspector_page(profiles, selected_id=profile_id,
                                                     mode=mode, result=result))
 
-    _session_gate_hits: dict[str, list[float]] = {}
-
-    @app.get("/session-gate")
-    async def session_gate_page():
-        return HTMLResponse(_session_gate_page(app.state.bindings.strict_mode()))
-
-    @app.post("/session-gate")
-    async def session_gate_submit(request: Request):
-        """Admin-only 'revert to trusted' switch. Cross-profile writes are always
-        enforced; this one flag toggles both the one-companion-per-session lock
-        and the cross-profile reads wall together, so a trusted/audit session can
-        relax them without a redeploy. Guarded by admin secret + live TOTP, same
-        bar as OAuth consent."""
-        client_ip = request.client.host if request.client else "unknown"
-        if _rate_limited(_session_gate_hits, client_ip):
-            return HTMLResponse("Too many attempts; try again in a minute.", status_code=429)
-        form = await request.form()
-        secret = str(form.get("admin_secret") or "")
-        totp_code = str(form.get("totp_code") or "")
-        strict = str(form.get("strict")) == "on"
-        if not await app.state.admin_verify(secret, totp_code):
-            return HTMLResponse(
-                _session_gate_page(app.state.bindings.strict_mode(),
-                                   error="Invalid secret or code."),
-                status_code=401)
-        app.state.bindings.set_strict_mode(strict)
-        LOGGER.warning("session_binding trust boundary set to %s",
-                       "strict" if strict else "trusted")
-        return HTMLResponse(_session_gate_page(app.state.bindings.strict_mode(),
-                                               notice="Saved."))
-
     @app.post("/approvals/{approval_id}")
     async def approval_decide(approval_id: str, request: Request):
         client_ip = request.client.host if request.client else "unknown"
@@ -2363,6 +2116,41 @@ def create_mcp_app(
             return origin_error
         return Response(status_code=204, headers=_preflight_headers(settings, request))
 
+    def _wire_probe_redact(value: Any, depth: int = 0) -> Any:
+        # Keep structure, cap payload size: long strings are hashed so equal
+        # values across requests still diff as equal without logging content.
+        if isinstance(value, str):
+            if len(value) > 200:
+                digest = hashlib.sha256(value.encode()).hexdigest()[:12]
+                return f"<str len={len(value)} sha256:{digest}>"
+            return value
+        if isinstance(value, dict):
+            return {k: _wire_probe_redact(v, depth + 1) for k, v in value.items()}
+        if isinstance(value, list):
+            return [_wire_probe_redact(v, depth + 1) for v in value]
+        return value
+
+    def _wire_probe_log(request: Request, message: Any) -> None:
+        # WIRE_PROBE=1: log complete headers + JSON-RPC body per /mcp request,
+        # hunting for any conversation-stable, model-invisible field
+        # (headers, initialize clientInfo, params._meta, ...). Auth material
+        # is reduced to a stable hash prefix so tokens never land in logs but
+        # per-token grouping still works.
+        headers = {}
+        for key, val in request.headers.items():
+            if key.lower() in {"authorization", "cookie"}:
+                digest = hashlib.sha256(val.encode()).hexdigest()[:12]
+                headers[key] = f"<redacted sha256:{digest}>"
+            else:
+                headers[key] = val
+        line = {
+            "ts": time.time(),
+            "client": request.client.host if request.client else None,
+            "headers": headers,
+            "body": _wire_probe_redact(message),
+        }
+        print(f"WIREPROBE {json.dumps(line, default=str)}", flush=True)
+
     @app.api_route("/mcp", methods=["GET", "POST"], name="mcp_endpoint")
     async def mcp_endpoint(request: Request):
         origin_error = _origin_error(settings, request)
@@ -2374,6 +2162,10 @@ def create_mcp_app(
         auth_error = _authenticated(settings, request)
         if auth_error:
             return auth_error
+
+        wire_probe = os.environ.get("WIRE_PROBE") == "1"
+        if wire_probe and request.method == "GET":
+            _wire_probe_log(request, None)
 
         headers = {
             "MCP-Protocol-Version": MCP_PROTOCOL_VERSION,
@@ -2399,17 +2191,15 @@ def create_mcp_app(
                 headers=headers,
             )
 
+        if wire_probe:
+            _wire_probe_log(request, message)
+
         if not isinstance(message, dict):
             return JSONResponse(
                 _rpc_error(None, -32600, "invalid request"),
                 status_code=400,
                 headers=headers,
             )
-
-        # Mcp-Session-Id is intentionally NOT minted: the claude.ai connector
-        # reuses one id across different conversations, so binding to it caused
-        # false cross-conversation switch-blocks (prod 2026-08-20). claude.ai
-        # therefore runs advisory until the model-carried session_token lands.
 
         # JSON-RPC notifications and responses do not receive a JSON body over
         # Streamable HTTP. The initialized notification is the common one.
@@ -2418,7 +2208,7 @@ def create_mcp_app(
         if "method" not in message:
             return Response(status_code=202, headers=headers)
 
-        response = _handle_rpc(message, app, subject_hash=_subject_hash(request))
+        response = _handle_rpc(message, app)
         accept = request.headers.get("accept", "")
         if "text/event-stream" in accept:
             # ChatGPT's Streamable HTTP client is tested against the reference

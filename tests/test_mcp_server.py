@@ -462,13 +462,10 @@ def test_initialize_and_list_tools(tmp_path, monkeypatch):
     assert discover["annotations"]["readOnlyHint"] is True
     closeout = next(tool for tool in tools if tool["name"] == "closeout")
     assert set(closeout["inputSchema"]["properties"]) == {
-        "profile_id", "code", "facts", "texture", "exchange", "notes", "session_token",
+        "profile_id", "code", "facts", "texture", "exchange", "notes",
     }
     assert closeout["inputSchema"]["required"] == []
-    # Length caps are guidance in the description, not schema maxLength (clients
-    # silently drop over-maxLength fields — see the closeout dispatch comment).
-    assert "maxLength" not in closeout["inputSchema"]["properties"]["notes"]
-    assert "700" in closeout["inputSchema"]["properties"]["notes"]["description"]
+    assert closeout["inputSchema"]["properties"]["notes"]["maxLength"] == 700
     assert "rapport" in closeout["inputSchema"]["properties"]["texture"]["description"]
     annotations = {tool["name"]: tool["annotations"] for tool in tools}
     assert annotations["forget"]["destructiveHint"] is True
@@ -506,21 +503,6 @@ def test_list_tools_omit_output_schemas_by_default(tmp_path, monkeypatch):
     tools = r.json()["result"]["tools"]
     discovered = next(tool for tool in tools if tool["name"] == "discover_companions")
     assert "outputSchema" not in discovered
-
-
-def test_closeout_persist_tolerates_extra_keys():
-    # The model may echo profile_id (or a session_token, which is stripped
-    # before dispatch) on the persist call; persist is discriminated by content
-    # and closes the profile in the signed code regardless of extras.
-    bridge = FakeBridge()
-    client = _mcp_client(bridge)
-    prepared = _call_tool(client, "closeout", {"profile_id": "tara"}).json()["result"]["structuredContent"]
-    completed = _call_tool(client, "closeout", {
-        "profile_id": "tara", "code": prepared["code"],
-        "facts": "f", "texture": "t", "exchange": "x",
-    }).json()["result"]["structuredContent"]
-    assert completed["phase"] == "closed"
-    assert bridge.closeout_calls[-1][0] == "tara"
 
 
 def test_closeout_is_two_phase_profile_bound_single_use_and_retriable_on_failure(monkeypatch):

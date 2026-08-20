@@ -21,21 +21,12 @@ Single-user Profile OS deployment on a Hetzner VPS, deployed 2026-07-09.
 - SSH: password auth disabled, key-only (`/etc/ssh/sshd_config.d/99-hardening.conf`)
 - Docker Engine + compose plugin installed from Docker's `noble` apt repo
   (Ubuntu 26.04 is too new for Docker's own repo; pinned to 24.04's)
-- Caddy installed from the official apt repo. The `rumbo.datacodemath.com`
-  block routes an **explicit path allowlist** to the mcp container and sends
-  everything else to the backend:
+- Caddy installed from the official apt repo; `/etc/caddy/Caddyfile`:
   ```
   rumbo.datacodemath.com {
-    @mcp path /mcp /mcp/* /.well-known/* /oauth/* /approvals/* \
-             /create-profile /session-inspector /session-gate /health
-    handle @mcp { reverse_proxy 127.0.0.1:8080 }
-    handle    { reverse_proxy 127.0.0.1:8000 }
+  	reverse_proxy 127.0.0.1:8080
   }
   ```
-  **Gotcha:** any *new* public mcp route (like `/session-gate`) must be added
-  to the `@mcp path` list and Caddy reloaded (`systemctl reload caddy`) —
-  otherwise it falls through to the backend and 404s even though the mcp app
-  serves it.
 - `/opt/profile-os/.env` holds three generated secrets
   (`PROFILE_OS_MCP_BACKEND_BEARER`, `MCP_CONNECTOR_TOKEN`,
   `MCP_OAUTH_SIGNING_KEY` — each `secrets.token_urlsafe(48)`), plus
@@ -107,30 +98,10 @@ separate migration step.
 All five live only in `/opt/profile-os/.env` on the VPS (`chmod 600`) and
 were generated with `secrets.token_urlsafe(48)`.
 
-> **TODO / unsure (2026-08-20):** prod `.env` currently defines **three**
-> connector-token vars — `MCP_CONNECTOR_TOKEN` (singular), `MCP_CONNECTOR_TOKENS`
-> (plural CSV), and `LIFE_MCP_CONNECTOR_TOKEN`. `MCPSettings.from_env` accepts
-> both the singular and the plural as valid bearer credentials, so more than one
-> connector token may be live at once. `LIFE_MCP_CONNECTOR_TOKEN` belongs to the
-> separate life-mcp service. Confirm which are intentional and retire any stale
-> one — an extra accepted bearer is extra attack surface. Not yet resolved.
-
 The compose setup also persists signed closeout-code replay state in its MCP
 OAuth-state volume. Non-compose deployments must set
 `MCP_CLOSEOUT_CODE_STATE_FILE` to persistent storage; otherwise a restart can
 forget which still-valid (30-minute) code was consumed.
-
-Session-bound companion locking (see `SESSION_BINDING_PLAN.md`) persists its
-bindings + audit in its own SQLite file, `MCP_SESSION_BINDING_STATE_FILE`
-(default: `<MCP_OAUTH_STATE_FILE>.bindings.sqlite3`, i.e. the same persistent
-volume). Cross-profile *writes* are always blocked. By default each session is locked
-to one companion (switching companions mid-session is blocked) and
-cross-profile reads are blocked; one "revert to trusted" switch relaxes both
-together, live — no redeploy — from the admin page
-`https://rumbo.datacodemath.com/session-gate` (admin secret + live TOTP).
-Blocks, rebinds, and no-fingerprint requests land in the `session_audit`
-table and in the `mcp` container logs tagged `session_binding` (grep them:
-`docker compose logs mcp | grep session_binding`).
 
 ## Connecting a remote MCP client (Claude.ai / ChatGPT)
 
