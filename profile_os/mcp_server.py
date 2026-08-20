@@ -2166,6 +2166,23 @@ def create_mcp_app(
         if "method" not in message:
             return Response(status_code=202, headers=headers)
 
+        # Phase 0 probe: log Mcp-Session-Id per request to verify whether
+        # connectors present distinct ids per concurrent conversation.
+        _probe_method = message.get("method")
+        _probe_extra = ""
+        if _probe_method == "tools/call":
+            _params = message.get("params") or {}
+            _probe_extra = (
+                f" tool={_params.get('name')!r}"
+                f" profile_id={(_params.get('arguments') or {}).get('profile_id')!r}"
+            )
+        LOGGER.info(
+            "mcp_probe session_id=%r method=%r%s",
+            request.headers.get("mcp-session-id"),
+            _probe_method,
+            _probe_extra,
+        )
+
         response = _handle_rpc(message, app)
         accept = request.headers.get("accept", "")
         if "text/event-stream" in accept:
