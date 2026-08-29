@@ -1,4 +1,4 @@
-"""LT Rita's weighted exam-question practice service.
+"""Nyx's weighted exam-question practice service.
 
 Question content lives in the ordinary approved ``exam_questions`` dynamic
 store.  This module adds the small amount of domain behavior that generic
@@ -22,7 +22,7 @@ from .errors import DynStoreConflict, DynStoreNotFound, SchemaError
 from .storage import Store, normalize_profile_lookup
 
 
-QUESTION_PROFILE = "lt_rita"
+QUESTION_PROFILE = "nyx"
 QUESTION_STORE = "exam_questions"
 INITIAL_WEIGHT = 4.0
 MIN_WEIGHT = 0.25
@@ -71,7 +71,7 @@ LEGACY_QUESTION_SCHEMA = {"fields": {
 }}
 
 QUESTION_SCHEMA_PURPOSE = (
-    "Deduplicated exam-independent practice questions for LT Rita. Stable option"
+    "Deduplicated exam-independent practice questions for Nyx. Stable option"
     " identities support randomized presentation, weighted review, grading, and"
     " audited answer-key correction."
 )
@@ -252,7 +252,7 @@ class QuestionPractice:
             raise SchemaError("companion_name is required")
         resolution = self._store.resolve_profile(companion_name)
         if resolution["status"] != "resolved" or resolution["resolved_profile_id"] != QUESTION_PROFILE:
-            raise SchemaError("exam-question tools are available only for lt_rita")
+            raise SchemaError("exam-question tools are available only for nyx")
         return QUESTION_PROFILE
 
     def ensure_store(self, proposed_by: str = "operator") -> dict:

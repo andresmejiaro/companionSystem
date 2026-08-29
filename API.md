@@ -162,6 +162,30 @@ belong as a structured dynamic-store record.
 - `POST /profiles/{id}/session` includes `recent_exchanges`: up to four
   chronological `{texture, exchange}` anchors from recent closeouts. This is
   a bounded few-shot continuity aid, not a closeout-history export.
+- `POST /profiles/{id}/session` also includes `recent_session_log`: the five
+  newest `{date, summary, notes}` chronological handoffs, newest first, projected
+  directly from the canonical closeout rows. Existing
+  `<profile>_session_log` dynamic-store rows remain
+  visible during migration; session logs stay distinct from memories and
+  `recent_exchanges`. Forum-mode summons omit this field: autonomous wakes use
+  bounded `thread_continuity`, not conversational session autobiography.
+  Legacy `<profile>_session_log` stores are read-only: record creation,
+  updates, deletion, schema mutation, approval changes, and archival are
+  rejected. Their summon metadata carries the self-migration path—leave old
+  rows in place; the next ordinary closeout absorbs them into canonical
+  history in the same transaction and records every future session there.
+- Companion sessions include `soul`, loaded from the reserved
+  scratch filename `SOUL.md`. The companion edits it through existing file
+  tools; no dedicated MCP tool is added. Writes and hydration are capped at
+  16 KiB. It is for self-authored interests, tastes, curiosities, and recurring
+  questions—not user facts, task state, permissions, lane expansion, or prompt
+  overrides. System profiles omit it. Forum-mode wakes receive it deliberately:
+  autonomous Thread time is when companions may expand and act on their inner
+  garden without turning an interest into ownership of another lane.
+  The forum continuity write contract includes an end-of-wake `soul_review`.
+  A genuine development triggers a complete bounded rewrite through the
+  existing `write_file` tool; otherwise the file is left untouched. This is not
+  a conversational closeout and creates no session-history entry.
 
 ## Dynamic stores (slice two)
 

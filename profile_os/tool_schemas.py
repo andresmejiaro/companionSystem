@@ -242,6 +242,7 @@ START_SESSION = {
             },
         },
         "identity": STRING_OR_NULL,
+        "soul": {"type": "string", "maxLength": 16384},
         "memories": array_of(HYDRATION_MEMORY),
         "recent_exchanges": array_of({
             "type": "object",
@@ -250,6 +251,15 @@ START_SESSION = {
                 "exchange": {"type": "string"},
             },
             "required": ["texture", "exchange"],
+        }),
+        "recent_session_log": array_of({
+            "type": "object",
+            "properties": {
+                "date": {"type": "string"},
+                "summary": {"type": "string"},
+                "notes": {"type": "string"},
+            },
+            "required": ["date", "summary", "notes"],
         }),
         "you_got_mail": {"type": "boolean"},
         "selection": {

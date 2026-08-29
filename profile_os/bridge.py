@@ -157,6 +157,7 @@ TOOLS = [
     _tool("start_session", "Call this on your first response in a conversation instead"
                           " of boot: returns identity (whoami), prompts, compact_state,"
                           " the global companion contract for conversational profiles,"
+                          " bounded self-authored soul,"
                           " a bounded semantic memory slice (no IDs, tags, or full"
                           " history), and the current server date/time (server_time, including Madrid time)"
                           " in one call.",

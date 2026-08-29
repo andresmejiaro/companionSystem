@@ -104,6 +104,11 @@ THREAD_SOURCE_TYPES = {"post", "reply", "vote", "reaction", "proposal"}
 THREAD_STATUSES = {"active", "resolved", "superseded"}
 
 
+def is_legacy_session_log(profile_id: str, name: str) -> bool:
+    """Old per-companion autobiography stores are migration-only read paths."""
+    return name == f"{profile_id}_session_log"
+
+
 def validate_schema(schema: dict) -> None:
     if not isinstance(schema, dict) or set(schema) != {"fields"}:
         raise SchemaError('schema must be an object with exactly one key: "fields"')
@@ -190,6 +195,9 @@ class DynamicStores:
     def propose(self, profile_id: str, name: str, purpose: str,
                 proposed_by: str, schema: dict) -> dict:
         self._store._require_profile(profile_id)
+        if is_legacy_session_log(profile_id, name):
+            raise DynStoreConflict(
+                f"{name} is read-only; session history is now derived from closeout")
         if name == THREAD_CONTINUITY_STORE:
             self.ensure_thread_continuity(profile_id)
             raise DynStoreConflict("thread_continuity is a system-managed store")
@@ -225,6 +233,8 @@ class DynamicStores:
         return self._approve_row(row, actor)
 
     def _approve_row(self, row, actor: str) -> dict:
+        if is_legacy_session_log(row["profile_id"], row["name"]):
+            raise DynStoreConflict(f"{row['name']} is a read-only legacy store")
         if row["status"] != "pending":
             raise DynStoreConflict(f"only pending stores can be approved (is {row['status']})")
         with self.db:
@@ -245,6 +255,8 @@ class DynamicStores:
         return self._reject_row(row, reason, actor)
 
     def _reject_row(self, row, reason: str, actor: str) -> dict:
+        if is_legacy_session_log(row["profile_id"], row["name"]):
+            raise DynStoreConflict(f"{row['name']} is a read-only legacy store")
         if row["status"] != "pending":
             raise DynStoreConflict(f"only pending stores can be rejected (is {row['status']})")
         if not reason or not reason.strip():
@@ -259,6 +271,8 @@ class DynamicStores:
             "SELECT * FROM dynamic_stores WHERE id=?", (row["id"],)).fetchone())
 
     def archive(self, profile_id: str, name: str, actor: str = "admin") -> dict:
+        if is_legacy_session_log(profile_id, name):
+            raise DynStoreConflict(f"{name} is read-only during migration")
         if name == THREAD_CONTINUITY_STORE:
             raise DynStoreConflict("thread_continuity is a system-managed store")
         row = self._require(profile_id, name)
@@ -272,11 +286,15 @@ class DynamicStores:
 
     def withdraw(self, profile_id: str, name: str, actor: str) -> dict:
         """A proposer may withdraw a pending store before an admin decides."""
+        if is_legacy_session_log(profile_id, name):
+            raise DynStoreConflict(f"{name} is a read-only legacy store")
         row = self._require(profile_id, name)
         return self._reject_row(row, "withdrawn by proposer", actor)
 
     def update_pending(self, profile_id: str, name: str, purpose: str,
                        schema: dict, actor: str) -> dict:
+        if is_legacy_session_log(profile_id, name):
+            raise DynStoreConflict(f"{name} is a read-only legacy store")
         if name == THREAD_CONTINUITY_STORE:
             raise DynStoreConflict("thread_continuity is a system-managed store")
         row = self._require(profile_id, name)
@@ -294,6 +312,9 @@ class DynamicStores:
     # -- records ---------------------------------------------------------------
 
     def add_record(self, profile_id: str, name: str, data: dict) -> dict:
+        if is_legacy_session_log(profile_id, name):
+            raise DynStoreConflict(
+                f"{name} is read-only; closeout automatically records session history")
         if name == THREAD_CONTINUITY_STORE:
             self.ensure_thread_continuity(profile_id)
             self._validate_thread_continuity(data)
@@ -330,6 +351,9 @@ class DynamicStores:
                 "data": data, "created_at": now}
 
     def add_records(self, profile_id: str, name: str, records: list[dict]) -> list[dict]:
+        if is_legacy_session_log(profile_id, name):
+            raise DynStoreConflict(
+                f"{name} is read-only; closeout automatically records session history")
         if name == THREAD_CONTINUITY_STORE:
             if len(records) != 1:
                 raise DynStoreConflict(
@@ -410,6 +434,8 @@ class DynamicStores:
 
     def update_record(self, profile_id: str, name: str, record_id: str,
                       patch: dict) -> dict:
+        if is_legacy_session_log(profile_id, name):
+            raise DynStoreConflict(f"{name} is a read-only legacy store")
         self._require_writable(profile_id, name)
         if not isinstance(patch, dict) or not patch:
             raise SchemaError("patch must be a non-empty object")
@@ -437,6 +463,8 @@ class DynamicStores:
         return self.get_record(profile_id, name, record_id)
 
     def delete_record(self, profile_id: str, name: str, record_id: str) -> dict:
+        if is_legacy_session_log(profile_id, name):
+            raise DynStoreConflict(f"{name} is a read-only legacy store")
         self._require_writable(profile_id, name)
         self._require_record(profile_id, name, record_id)
         with self.db:

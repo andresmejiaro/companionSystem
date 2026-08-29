@@ -40,7 +40,8 @@ def _raw_question(number=1, correct=(0,), option_count=4, explanations=True,
 @pytest.fixture
 def practice(tmp_path):
     store = Store(tmp_path / "data")
-    store.create_profile(QUESTION_PROFILE, "LT Rita", "identity", "role")
+    store.create_profile(
+        QUESTION_PROFILE, "Nyx", "identity", "role", aliases=["lt_rita", "LT Rita"])
     service = QuestionPractice(store, DynamicStores(store))
     yield service
     store.close()
@@ -90,7 +91,7 @@ def test_correct_grade_returns_ok_and_halves_weight(practice):
     result = practice.grade("lt_rita", draw["attempt_code"],
                             [{"position": 1, "selected": ["A"]}])
     assert result["markdown"] == "OK"
-    record = practice._dyn.query_records("lt_rita", "exam_questions")[0]
+    record = practice._dyn.query_records(QUESTION_PROFILE, "exam_questions")[0]
     assert record["data"]["correct_count"] == 1
     assert record["data"]["wrong_count"] == 0
     assert record["data"]["weight"] == 2
@@ -107,7 +108,7 @@ def test_regrade_corrects_a_consumed_attempt_and_audits_it(practice):
 
     assert corrected["corrected"] is True
     assert corrected["results"][0]["status"] == "correct"
-    record = practice._dyn.query_records("lt_rita", "exam_questions")[0]
+    record = practice._dyn.query_records(QUESTION_PROFILE, "exam_questions")[0]
     assert record["data"]["correct_count"] == 1
     assert record["data"]["wrong_count"] == 0
     assert record["data"]["weight"] == INITIAL_WEIGHT / 2
@@ -180,5 +181,5 @@ def test_unanswered_attempt_expires_and_cannot_be_replayed(practice):
 
 
 def test_question_tools_reject_other_companions(practice):
-    with pytest.raises(SchemaError, match="only for lt_rita"):
+    with pytest.raises(SchemaError, match="only for nyx"):
         practice.draw("rita")

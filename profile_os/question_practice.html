@@ -2,7 +2,7 @@
 <html lang="en">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>LT Rita question practice</title>
+<title>Nyx question practice</title>
 <style>
 body { max-width:58rem; margin:2rem auto; padding:0 1rem; font:17px/1.5 system-ui,sans-serif; color:#18212b; background:#fafbfc; }
 form,.card,.result { background:white; border:1px solid #d9e0e6; border-radius:10px; padding:1rem; margin:1rem 0; }
@@ -15,7 +15,7 @@ pre { white-space:pre-wrap; overflow-wrap:anywhere; background:#f3f6f8; padding:
 </style>
 <main>
   <p><a href="/directory">← Companion directory</a></p>
-  <h1>LT Rita question practice</h1>
+  <h1>Nyx question practice</h1>
   <form id="draw-form">
     <label>Questions <input id="count" type="number" min="1" max="20" value="1" required></label>
     <label>Topic/domain contains (optional) <input id="topic" placeholder="e.g. Tools"></label>
@@ -45,7 +45,7 @@ document.querySelector('#draw-form').addEventListener('submit', async event => {
   const topic = document.querySelector('#topic').value.trim();
   try {
     attempt = await post('/question-practice/api/draw', {
-      companion_name:'lt_rita', count:Number(document.querySelector('#count').value),
+      companion_name:'nyx', count:Number(document.querySelector('#count').value),
       where:topic ? {domain:{contains:topic}} : {}
     });
     questionsBox.replaceChildren();
@@ -76,7 +76,7 @@ answerForm.addEventListener('submit', async event => {
     const answers=[...questionsBox.querySelectorAll('.card')].map(card=>({
       position:Number(card.dataset.position), selected:[...card.querySelectorAll('input[type=checkbox]:checked')].map(i=>i.value)
     }));
-    const result=await post('/question-practice/api/grade',{companion_name:'lt_rita',attempt_code:attempt.attempt_code,answers});
+    const result=await post('/question-practice/api/grade',{companion_name:'nyx',attempt_code:attempt.attempt_code,answers});
     gradeBox.querySelector('pre').textContent=result.markdown; gradeBox.hidden=false;
   } catch (error) { message.className='error'; message.textContent=error.message; }
 });
@@ -87,7 +87,7 @@ async function revise(card, action) {
   const selected=[...card.querySelectorAll('input[type=checkbox]:checked')].map(i=>i.value);
   try {
     const result=await post('/question-practice/api/revise',{
-      companion_name:'lt_rita', attempt_code:attempt.attempt_code, position:Number(card.dataset.position),
+      companion_name:'nyx', attempt_code:attempt.attempt_code, position:Number(card.dataset.position),
       action, selected:action==='override'?selected:null, reason
     });
     message.className=''; message.textContent=`Answer ${result.action}; status ${result.answer_status}.`;

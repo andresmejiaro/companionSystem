@@ -17,6 +17,7 @@ Layout (under a data directory, default ./data):
 from __future__ import annotations
 
 import json
+import logging
 import re
 import shutil
 import sqlite3
@@ -24,6 +25,7 @@ import threading
 import time
 import unicodedata
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 import regex
@@ -521,6 +523,7 @@ class Store:
         self._require_profile(profile_id)
         rows = self.db.execute(
             "SELECT texture, exchange FROM closeouts WHERE profile_id=? "
+            "AND texture <> '' AND exchange <> '' "
             "ORDER BY created_at DESC LIMIT ?", (profile_id, limit)
         ).fetchall()
         return [
@@ -754,6 +757,8 @@ class Store:
 
     _FILENAME_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
     MAX_FILE_BYTES = 256 * 1024
+    SOUL_FILENAME = "SOUL.md"
+    MAX_SOUL_BYTES = 16 * 1024
 
     @classmethod
     def _validate_filename(cls, filename: str) -> None:
@@ -775,10 +780,27 @@ class Store:
         if not isinstance(content, str):
             raise MalformedRecord("content must be a string")
         data = content.encode("utf-8")
-        if len(data) > self.MAX_FILE_BYTES:
-            raise MalformedRecord(f"file too large (max {self.MAX_FILE_BYTES} bytes)")
+        max_bytes = (self.MAX_SOUL_BYTES if filename == self.SOUL_FILENAME
+                     else self.MAX_FILE_BYTES)
+        if len(data) > max_bytes:
+            raise MalformedRecord(f"file too large (max {max_bytes} bytes)")
         (self._files_dir(profile_id) / filename).write_bytes(data)
         return self._file_meta(profile_id, filename)
+
+    def read_soul(self, profile_id: str) -> str:
+        """Return the bounded self-authored soul document, empty when absent."""
+        self._require_profile(profile_id)
+        path = self._files_dir(profile_id) / self.SOUL_FILENAME
+        if not path.is_file():
+            return ""
+        data = path.read_bytes()
+        if len(data) > self.MAX_SOUL_BYTES:
+            raise MalformedRecord(
+                f"SOUL.md exceeds its {self.MAX_SOUL_BYTES}-byte hydration limit")
+        try:
+            return data.decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise MalformedRecord("SOUL.md must be valid UTF-8") from error
 
     def read_file(self, profile_id: str, filename: str) -> dict:
         self._require_profile(profile_id)
@@ -820,7 +842,7 @@ class Store:
 
     def closeout(self, profile_id: str, facts: str, texture: str, exchange: str,
                  notes: str = "") -> dict:
-        """End a session with a compact, voice-preserving handoff."""
+        """End a session; this one record drives every continuity projection."""
         self._require_profile(profile_id)
         fields = {"facts": facts, "texture": texture, "exchange": exchange}
         limits = {"facts": 1200, "texture": 700, "exchange": 800, "notes": 700}
@@ -836,18 +858,124 @@ class Store:
         cid = str(uuid.uuid4())
         now = time.time()
         with self.db:
+            self._migrate_legacy_session_log(profile_id)
             self.db.execute(
                 "INSERT INTO closeouts (id, profile_id, notes, facts, texture, exchange, new_state, created_at)"
                 " VALUES (?,?,?,?,?,?,?,?)", (cid, profile_id, notes, facts, texture, exchange, new_state, now))
             self.db.execute(
                 "UPDATE compact_state SET state=?, updated_at=? WHERE profile_id=?",
                 (new_state, now, profile_id))
-        line = json.dumps({"id": cid, "facts": facts, "texture": texture,
-                           "exchange": exchange, "notes": notes, "new_state": new_state, "at": now})
-        with open(self.profiles_dir / profile_id / "closeouts.jsonl", "a") as f:
-            f.write(line + "\n")
+        # The DB transaction above is the sole definition of "closeout
+        # happened". The jsonl file is an advisory mirror for inspection only,
+        # so nothing on this append path may propagate: doing so would 500 a
+        # committed write and cause the caller to free the one-time code,
+        # recruiting the retry to write a duplicate closeout. The line assembly
+        # lives inside the guard too, and the guard is `except Exception` on
+        # purpose -- the mirror must never change a committed closeout's outcome
+        # whatever the cause (a serialization raise no less than a disk error).
+        try:
+            line = json.dumps({"id": cid, "facts": facts, "texture": texture,
+                               "exchange": exchange, "notes": notes, "new_state": new_state, "at": now})
+            with open(self.profiles_dir / profile_id / "closeouts.jsonl", "a") as f:
+                f.write(line + "\n")
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "closeout jsonl mirror write failed for profile %s (closeout id %s), "
+                "DB is source of truth", profile_id, cid, exc_info=True)
         return {"id": cid, "profile_id": profile_id, "facts": facts, "texture": texture,
                 "exchange": exchange, "notes": notes, "new_state": new_state, "created_at": now}
+
+    def _migrate_legacy_session_log(self, profile_id: str) -> None:
+        """Absorb valid legacy rows inside the next ordinary closeout transaction."""
+        table = self.db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='dynamic_records'"
+        ).fetchone()
+        if table is None:
+            return
+        name = f"{profile_id}_session_log"
+        rows = self.db.execute(
+            "SELECT id, data, created_at FROM dynamic_records "
+            "WHERE profile_id=? AND store_name=? ORDER BY created_at",
+            (profile_id, name),
+        ).fetchall()
+        for row in rows:
+            try:
+                data = json.loads(row["data"])
+            except (TypeError, json.JSONDecodeError):
+                continue
+            summary = data.get("summary")
+            if not isinstance(summary, str) or not summary.strip():
+                continue
+            notes = data.get("notes", "")
+            if not isinstance(notes, str):
+                notes = ""
+            migrated_at = row["created_at"]
+            if isinstance(data.get("date"), str):
+                try:
+                    migrated_at = datetime.fromisoformat(
+                        data["date"]).replace(tzinfo=timezone.utc).timestamp()
+                except ValueError:
+                    pass
+            self.db.execute(
+                "INSERT OR IGNORE INTO closeouts "
+                "(id, profile_id, notes, facts, texture, exchange, new_state, created_at) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (f"legacy-session-{row['id']}", profile_id, notes, summary.strip(),
+                 "", "", summary.strip(), migrated_at),
+            )
+            self.db.execute("DELETE FROM dynamic_records WHERE id=?", (row["id"],))
+
+    def recent_session_log(self, profile_id: str, limit: int = 5) -> list[dict]:
+        """Return bounded chronological continuity, newest first and ID-free.
+
+        Legacy ``<profile>_session_log`` dynamic-store rows are included so
+        companions can migrate forward without losing their existing history.
+        """
+        self._require_profile(profile_id)
+        if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 20:
+            raise MalformedRecord("session log limit must be between 1 and 20")
+        rows = self.db.execute(
+            "SELECT facts, texture, exchange, notes, created_at FROM closeouts "
+            "WHERE profile_id=? ORDER BY created_at DESC LIMIT ?",
+            (profile_id, limit),
+        ).fetchall()
+        entries = [{
+            "date": datetime.fromtimestamp(
+                row["created_at"], tz=timezone.utc).date().isoformat(),
+            "summary": (row["facts"].strip() if not row["texture"] and not row["exchange"]
+                        else "\n\n".join((
+                            f"## Facts\n{row['facts'].strip()}",
+                            f"## Texture\n{row['texture'].strip()}",
+                            f"## Meaningful exchange\n{row['exchange'].strip()}",
+                        ))),
+            "notes": row["notes"],
+            "_created_at": row["created_at"],
+        } for row in rows]
+
+        legacy_name = f"{profile_id}_session_log"
+        tables = self.db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='dynamic_records'"
+        ).fetchone()
+        if tables is not None:
+            legacy = self.db.execute(
+                "SELECT data, created_at FROM dynamic_records "
+                "WHERE profile_id=? AND store_name=? ORDER BY created_at DESC LIMIT ?",
+                (profile_id, legacy_name, limit),
+            ).fetchall()
+            for row in legacy:
+                try:
+                    data = json.loads(row["data"])
+                except (TypeError, json.JSONDecodeError):
+                    continue
+                if isinstance(data.get("date"), str) and isinstance(data.get("summary"), str):
+                    entries.append({"date": data["date"], "summary": data["summary"],
+                                    "notes": data.get("notes", "") if isinstance(
+                                        data.get("notes", ""), str) else "",
+                                    "_created_at": row["created_at"]})
+        entries.sort(key=lambda item: item["_created_at"], reverse=True)
+        return [{"date": item["date"], "summary": item["summary"],
+                 "notes": item["notes"]}
+                for item in entries[:limit]]
 
     # -- domain stores ---------------------------------------------------------
 

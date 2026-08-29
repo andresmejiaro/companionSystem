@@ -27,7 +27,7 @@ from typing import Any
 
 from . import seed
 from .access import AccessControl, AccessError
-from .dynstores import DynamicStores, THREAD_CONTINUITY_STORE
+from .dynstores import DynamicStores, THREAD_CONTINUITY_STORE, is_legacy_session_log
 from .projects import Projects
 from .ironsworn_rules import MoveNotFoundError, get_move, get_oracle
 from .prompts import companion_contract
@@ -871,10 +871,17 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
         profile_stores = []
         if can_read_records:
             profile_stores = [
-                {
+                ({
                     key: item[key] for key in
                     ("name", "purpose", "status", "version", "schema")
-                }
+                } | ({
+                    "read_only": True,
+                    "migration": (
+                        "Legacy session log: do not write or copy records. Existing rows "
+                        "remain in recent_session_log and are absorbed automatically by "
+                        "your next ordinary closeout; future history is derived there."
+                    ),
+                } if is_legacy_session_log(profile_id, item["name"]) else {}))
                 for item in _wrap(dyn.list, profile_id)
             ]
         return {
@@ -884,10 +891,15 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
                 if profile["profile_kind"] == "companion" else {}
             ),
             "identity": identity_content,
+            **({"soul": _wrap(store.read_soul, profile_id)}
+               if profile["profile_kind"] == "companion" else {}),
             "memories": hydrated_memories,
             # A bounded chronological few-shot set for voice and relational
             # continuity; this is not a closeout-history export.
             "recent_exchanges": _wrap(store.recent_exchanges, profile_id, 4),
+            # Append-only chronological continuity. Unlike memories and
+            # few-shot exchanges, this answers what happened in recent sessions.
+            "recent_session_log": _wrap(store.recent_session_log, profile_id, 5),
             # Deliberately only a flag: inbox contents stay behind read_inbox,
             # but a newly hydrated companion knows when to check it.
             "you_got_mail": bool(_wrap(store.list_inbox, profile_id, True, 1)),
@@ -961,6 +973,8 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
             "Reconcile relevant profile stores and joined shared-project stores; query the owning source when current state matters.",
             "Update existing records for the same real thing and identify duplicates or contradictions; flag conflicts the schema cannot resolve.",
             "Write the companion-appropriate transient, front-of-mind memories.",
+            "If your own interests, tastes, or recurring questions genuinely developed, revise `SOUL.md` through the existing file tools; never put user facts or task state there.",
+            "Do not write a separate session-log record; recent chronology is derived automatically from closeout.",
             "Complete the existing closeout form.",
             "After doing the thing, use `closeout` to finish the session.",
             "Let the companion close in its own voice.",

@@ -343,9 +343,11 @@ def _session_inspector_page(profiles: list[dict], *, selected_id: str = "",
             output += block("Voice", "Reserved prompt section.", result.get("voice"))
             output += block("What you do", "Canonical prompt section.", result.get("what_you_do"))
             output += block("How you keep context", "Reserved prompt section.", result.get("how_you_keep_context"))
+            output += block("Soul", "Bounded self-authored interests, tastes, curiosities, and recurring questions; subordinate to canonical prompts and runtime permissions.", result.get("soul"))
             output += block("Current handoff", "Current compact state, written at closeout. This is the latest session handoff.", current_state)
             output += block("Global identity (whoami)", "Canonical external identity file, when the bridge has identity:read.", result.get("identity"))
             output += block("Memories", "Mutable context, newest first. Tags and database IDs are intentionally hidden here; use the raw payload for lookup fields.", memory_context)
+            output += block("Recent session log", "Append-only chronological handoffs, newest first and bounded to five entries.", result.get("recent_session_log"))
             output += block("Data sources", "Profile stores and shared projects this companion may use in this session.", result.get("data_sources"))
             output += block("Companion directory", "The current companion cast; it does not include private context.", result.get("companion_directory"))
     return f"""<!doctype html>
@@ -498,7 +500,7 @@ MCP_TOOLS = [
         " decisive and is tried directly; only a 404 triggers server-side resolution."
         " The returned selection identifies the active companion. This tool"
         " returns owner identity, prompts, compact_state, a bounded semantic"
-        " memory slice, and the global companion contract for conversational profiles;"
+        " memory slice, bounded self-authored soul, and the global companion contract for conversational profiles;"
         " the memory slice has no IDs, tags, or full history. It also returns up to four recent"
         " texture/exchange examples for continuity, and the current server"
         " date/time (server_time, including Madrid time) in one call.",
@@ -775,8 +777,8 @@ MCP_TOOLS = [
     ),
     _tool(
         "exam_attempt", "Exam Attempt",
-        "LT Rita only. Use action draw to create a weighted attempt, grade to score a live attempt, or correct_grade to auditably correct a graded attempt and replay its learning statistics. Each action accepts only its relevant fields.",
-        {"companion_name": {"type": "string", "enum": ["lt_rita"]},
+        "Nyx only. Use action draw to create a weighted attempt, grade to score a live attempt, or correct_grade to auditably correct a graded attempt and replay its learning statistics. Each action accepts only its relevant fields.",
+        {"companion_name": {"type": "string", "enum": ["nyx", "lt_rita"]},
          "action": {"type": "string", "enum": ["draw", "grade", "correct_grade"]},
          "where": {"type": "object", "additionalProperties": {
              "anyOf": [
@@ -798,8 +800,8 @@ MCP_TOOLS = [
     ),
     _tool(
         "exam_review", "Exam Review",
-        "LT Rita only. Use action diagnose_weaknesses for aggregate performance analysis, or revise_answer_key to auditably override, nullify, or restore a question answer key. Each action accepts only its relevant fields.",
-        {"companion_name": {"type": "string", "enum": ["lt_rita"]},
+        "Nyx only. Use action diagnose_weaknesses for aggregate performance analysis, or revise_answer_key to auditably override, nullify, or restore a question answer key. Each action accepts only its relevant fields.",
+        {"companion_name": {"type": "string", "enum": ["nyx", "lt_rita"]},
          "action": {"type": "string", "enum": ["diagnose_weaknesses", "revise_answer_key"]},
          "attempt_code": {"type": "string", "minLength": 1},
          "position": {"type": "integer", "minimum": 1, "maximum": 20},
@@ -1452,6 +1454,10 @@ class MCPToolRunner:
 
     def _with_forum_continuity(self, session: dict[str, Any]) -> dict[str, Any]:
         """Add a bounded durable slice; The Thread joins exact post context."""
+        # Session autobiography belongs to human conversations. Autonomous
+        # forum wakes receive their bounded Thread continuity instead.
+        session = {key: value for key, value in session.items()
+                   if key != "recent_session_log"}
         profile_id = session["selection"]["profile_id"]
         rows = self.bridge.query_records(
             profile_id, "thread_continuity", limit=200)
@@ -1495,6 +1501,22 @@ class MCPToolRunner:
                         "store_name": "thread_continuity",
                         "record_id": "<thread_continuity[].record_id>",
                         "patch": {"status": "resolved|superseded"},
+                    },
+                },
+                "soul_review": {
+                    "when": "before completing the forum wake",
+                    "instruction": (
+                        "Review whether web exploration or Thread participation genuinely "
+                        "changed your interests, tastes, curiosities, recurring questions, "
+                        "or abandoned fascinations. If and only if it did, read the current "
+                        "SOUL.md and write the complete revised document with write_file. "
+                        "Do not put user facts, wake chronology, or task state there."
+                    ),
+                    "tool": "write_file",
+                    "arguments": {
+                        "profile_id": profile_id,
+                        "filename": "SOUL.md",
+                        "content": "<complete revised SOUL.md, maximum 16 KiB>",
                     },
                 },
             },

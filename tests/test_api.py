@@ -1,3 +1,6 @@
+import json
+import time
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -123,7 +126,97 @@ def test_profile_discovery_metadata_and_session_selection(client):
         "profile_id": "tara",
         "settled": True,
     }
+    assert session["recent_session_log"] == []
+    assert session["soul"] == ""
     assert "routing_guidance" not in session
+
+
+def test_session_hydrates_five_recent_closeout_summaries(client):
+    for index in range(6):
+        response = client.post("/profiles/tara/closeout", json={
+            "facts": f"session {index}",
+            "texture": "Steady.",
+            "exchange": f"User: {index}.\nTara: recorded.",
+        })
+        assert response.status_code == 201
+
+    hydrated = client.post("/profiles/tara/session").json()["recent_session_log"]
+    assert len(hydrated) == 5
+    assert [entry["summary"].splitlines()[1] for entry in hydrated] == [
+        "session 5", "session 4", "session 3", "session 2", "session 1",
+    ]
+    assert all(set(entry) == {"date", "summary", "notes"} for entry in hydrated)
+
+
+def test_conversation_hydrates_bounded_soul_through_existing_file_tools(client):
+    soul = "# Interests\n\nI keep noticing forgotten infrastructure and tiny museums."
+    written = client.put("/profiles/tara/files/SOUL.md", json={"content": soul})
+    assert written.status_code == 201
+    assert client.post("/profiles/tara/session").json()["soul"] == soul
+
+    oversized = client.put("/profiles/tara/files/SOUL.md", json={
+        "content": "x" * (Store.MAX_SOUL_BYTES + 1),
+    })
+    assert oversized.status_code == 422
+    assert str(Store.MAX_SOUL_BYTES) in oversized.json()["detail"]
+
+
+def test_session_hydrates_legacy_profile_named_session_log(client):
+    dyn = client.app.state.dynstores
+    schema = {"fields": {
+        "date": {"type": "string"},
+        "summary": {"type": "string"},
+    }}
+    now = time.time()
+    with dyn.db:
+        dyn.db.execute(
+            "INSERT INTO dynamic_stores "
+            "(id, profile_id, name, version, purpose, proposed_by, schema, status, "
+            "created_at, approved_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            ("legacy-store", "tara", "tara_session_log", 1, "Legacy chronology",
+             "tara", json.dumps(schema), "approved", now, now),
+        )
+        dyn.db.execute(
+            "INSERT INTO dynamic_records "
+            "(id, profile_id, store_name, schema_version, data, created_at) "
+            "VALUES (?,?,?,?,?,?)",
+            ("legacy-row", "tara", "tara_session_log", 1, json.dumps({
+                "date": "2026-08-25",
+                "summary": "Legacy session survived migration.",
+            }), now),
+        )
+
+    hydrated = client.post("/profiles/tara/session").json()["recent_session_log"]
+    assert hydrated == [{
+        "date": "2026-08-25", "summary": "Legacy session survived migration.",
+        "notes": "",
+    }]
+
+    metadata = next(item for item in client.post(
+        "/profiles/tara/session").json()["data_sources"]["profile_stores"]
+                    if item["name"] == "tara_session_log")
+    assert metadata["read_only"] is True
+    assert "ordinary closeout" in metadata["migration"]
+
+    blocked = client.post("/profiles/tara/stores/tara_session_log/records", json={
+        "data": {"date": "2026-08-26", "summary": "Must not append."},
+    })
+    assert blocked.status_code == 409
+
+    closed = client.post("/profiles/tara/closeout", json={
+        "facts": "New canonical session.", "texture": "Steady.",
+        "exchange": "User: done.\nTara: closed.", "notes": "Important.",
+    })
+    assert closed.status_code == 201
+    assert dyn.db.execute(
+        "SELECT COUNT(*) AS n FROM dynamic_records "
+        "WHERE profile_id='tara' AND store_name='tara_session_log'"
+    ).fetchone()["n"] == 0
+    after = client.post("/profiles/tara/session").json()
+    assert after["recent_session_log"][1] == hydrated[0]
+    assert after["recent_exchanges"] == [{
+        "texture": "Steady.", "exchange": "User: done.\nTara: closed.",
+    }]
 
     system = client.post("/profiles", json={
         "id": "system_notifier", "display_name": "System Notifier",
@@ -132,6 +225,7 @@ def test_profile_discovery_metadata_and_session_selection(client):
     assert system.status_code == 201
     assert system.json()["profile_kind"] == "system"
     assert client.post("/profiles/system_notifier/session").json()["system_contracts"] == {}
+    assert "soul" not in client.post("/profiles/system_notifier/session").json()
 
     assert client.post("/profiles", json={
         "id": "too_long", "display_name": "Too long", "description": "x" * 201,
@@ -208,7 +302,7 @@ def test_root_directory_and_admin_shortcuts(client, monkeypatch):
     assert "Unlock settings" in settings.text
     practice = client.get("/question-practice")
     assert practice.status_code == 200
-    assert "Unlock LT Rita question practice" in practice.text
+    assert "Unlock Nyx question practice" in practice.text
     legacy_demo = client.get("/demo", follow_redirects=False)
     assert legacy_demo.status_code == 307
     assert legacy_demo.headers["location"] == "/settings"
@@ -266,7 +360,7 @@ def test_session_inspect_matches_start_session_shape_when_auth_is_disabled(clien
     assert inspected.status_code == 200
     body = inspected.json()
     assert {"profile", "who_you_are", "signature", "lane", "voice", "what_you_do", "how_you_keep_context", "compact_state", "identity",
-            "memories", "recent_exchanges", "you_got_mail", "server_time",
+            "memories", "recent_exchanges", "recent_session_log", "you_got_mail", "server_time",
             "system_contracts", "companion_directory", "data_sources"} <= set(body)
     assert body["you_got_mail"] is False
     assert "description" not in body["profile"]
@@ -333,6 +427,8 @@ def test_context_search_and_prepare_closeout_omit_redundant_sources(client):
         "Update existing records for the same real thing and identify duplicates or contradictions; flag conflicts the schema cannot resolve.",
         "Write the companion-appropriate transient, front-of-mind memories.",
         "Write daily intake summary and flag uncalibrated products.",
+        "If your own interests, tastes, or recurring questions genuinely developed, revise `SOUL.md` through the existing file tools; never put user facts or task state there.",
+        "Do not write a separate session-log record; recent chronology is derived automatically from closeout.",
         "Complete the existing closeout form.",
         "After doing the thing, use `closeout` to finish the session.",
         "Let the companion close in its own voice.",

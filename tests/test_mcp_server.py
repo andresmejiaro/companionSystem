@@ -148,8 +148,10 @@ class FakeBridge:
                 "companion": "Shared companion contract.",
             },
             "identity": "Canonical identity.",
+            "soul": "I collect strange questions.",
             "memories": memories,
             "recent_exchanges": [],
+            "recent_session_log": [],
             "you_got_mail": False,
             "selection": {
                 "profile_id": profile_id,
@@ -174,6 +176,7 @@ class FakeBridge:
             "identity": "Canonical identity.",
             "memories": [{"id": "memory-1", "kind": "note", "content": "A memory.", "tags": ["lookup-only"]}],
             "recent_exchanges": [],
+            "recent_session_log": [],
             "you_got_mail": False,
             "selection": {
                 "profile_id": profile_id,
@@ -639,6 +642,7 @@ def test_mcp_tool_flow_and_logging(tmp_path, caplog):
     started = _call_tool(client, "summon_companion", {"profile_id": "tara"}).json()["result"]
     assert started["structuredContent"]["selection"]["settled"] is True
     assert started["structuredContent"]["identity"] == "Canonical identity."
+    assert started["structuredContent"]["soul"] == "I collect strange questions."
     assert "thread_continuity" not in started["structuredContent"]
     assert bridge.start_session_calls == ["tara"]
     assert bridge.resolve_calls == []  # exact startup did not resolve
@@ -821,6 +825,8 @@ def test_summon_companion_forum_hydrates_bounded_active_continuity_without_ident
     ).json()["result"]["structuredContent"]
 
     assert result["identity"] is None
+    assert result["soul"] == "I collect strange questions."
+    assert "recent_session_log" not in result
     assert [item["record_id"] for item in result["thread_continuity"]] == [
         "open-new", "active-newer"]
     contract = result["thread_continuity_write_contract"]
@@ -828,10 +834,15 @@ def test_summon_companion_forum_hydrates_bounded_active_continuity_without_ident
     assert contract["status_update"]["tool"] == "update_record"
     assert contract["upsert"]["arguments"]["store_name"] == "thread_continuity"
     assert contract["upsert"]["arguments"]["records"] == ["<complete continuity row>"]
+    soul_review = contract["soul_review"]
+    assert soul_review["tool"] == "write_file"
+    assert soul_review["arguments"]["profile_id"] == "tara"
+    assert soul_review["arguments"]["filename"] == "SOUL.md"
+    assert "web exploration" in soul_review["instruction"]
 
 
 def test_successful_structured_content_matches_declared_output_schema():
-    """Exercise each currently exposed LT Rita tool plus shared output families."""
+    """Exercise each currently exposed Nyx tool plus shared output families."""
     bridge = FakeBridge()
     client = _mcp_client(bridge)
     tools = {tool["name"]: tool for tool in MCP_TOOLS}
