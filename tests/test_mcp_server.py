@@ -296,7 +296,7 @@ class FakeBridge:
     def draw_exam_questions(self, companion_name, where=None, count=1):
         return {
             "attempt_code": "attempt-1", "expires_at": 86401, "markdown": "### Question 1",
-            "questions": [{"position": 1, "question_ref": "q_1", "domain": "Tools",
+            "questions": [{"position": 1, "question_ref": "q_1", "exam": "AI-500", "domain": "Tools",
                            "prompt": "Question?", "options": [
                                {"label": "A", "text": "Yes"}, {"label": "B", "text": "No"}]}],
         }
@@ -310,7 +310,7 @@ class FakeBridge:
                 "results": [{"position": 1, "status": "correct", "markdown": "OK"}]}
 
     def diagnose_exam_weaknesses(self, companion_name):
-        return {"items": [{"domain": "Tools", "sub_skill": None, "wrong_count": 3,
+        return {"items": [{"exam": "AI-500", "domain": "Tools", "sub_skill": None, "wrong_count": 3,
                            "times_shown": 4, "question_count": 2}]}
 
     def revise_exam_question_answer(self, companion_name, attempt_code, position,

@@ -33,6 +33,7 @@ OPTION_LABELS = ("A", "B", "C", "D", "E")
 QUESTION_SCHEMA = {"fields": {
     "question_key": {"type": "string"},
     "source_refs": {"type": "object_list"},
+    "exam": {"type": "string"},
     "domain": {"type": "string"},
     "sub_skill": {"type": "string", "required": False},
     "prompt": {"type": "string"},
@@ -65,13 +66,18 @@ QUESTION_SCHEMA = {"fields": {
 # The first shipped bank had domains but not sub-skill tags.  This exact
 # definition lets ``ensure_store`` recognize and migrate that known version
 # without accepting arbitrary incompatible schemas.
+PRE_EXAM_QUESTION_SCHEMA = {"fields": {
+    name: spec for name, spec in QUESTION_SCHEMA["fields"].items()
+    if name != "exam"
+}}
+
 LEGACY_QUESTION_SCHEMA = {"fields": {
     name: spec for name, spec in QUESTION_SCHEMA["fields"].items()
-    if name != "sub_skill"
+    if name not in {"exam", "sub_skill"}
 }}
 
 QUESTION_SCHEMA_PURPOSE = (
-    "Deduplicated exam-independent practice questions for Nyx. Stable option"
+    "Deduplicated, exam-labeled practice questions for Nyx. Stable option"
     " identities support randomized presentation, weighted review, grading, and"
     " audited answer-key correction."
 )
@@ -169,12 +175,13 @@ def _option_explanations(question: dict, overall: str) -> list[str]:
     return explanations
 
 
-def question_record(question: dict, source_name: str) -> dict:
+def question_record(question: dict, source_name: str, exam: str | None = None) -> dict:
     """Convert one extracted question into a validated dynamic-store record."""
     prompt = repair_extracted_text(question.get("prompt", ""))
     overall = repair_extracted_text(question.get("overall_explanation", ""))
+    exam = repair_extracted_text(question.get("exam", exam or ""))
     options = question.get("options")
-    if not prompt or not overall or not isinstance(options, list) or not 4 <= len(options) <= 5:
+    if not exam or not prompt or not overall or not isinstance(options, list) or not 4 <= len(options) <= 5:
         raise SchemaError(f"malformed question {question.get('question_number')} in {source_name}")
     option_texts = [repair_extracted_text(option.get("text", "")) for option in options]
     if any(not text for text in option_texts) or len(set(option_texts)) != len(option_texts):
@@ -183,17 +190,21 @@ def question_record(question: dict, source_name: str) -> dict:
     option_ids = [_stable_id("opt", _normalized(text)) for text in option_texts]
     correct = [option_ids[index] for index, option in enumerate(options)
                if option.get("correct") is True]
-    requested_correct = 2 if re.search(r"(?i)\bwhich\s+(?:two|2)\b", prompt) else 1
+    requested_correct = 2 if re.search(
+        r"(?i)\b(?:which|choose|select)\s+(?:two|2)\b", prompt
+    ) else 1
     if len(correct) != requested_correct:
         raise SchemaError(
             f"answer count mismatch in {source_name} question {question.get('question_number')}")
     identity = json.dumps(
-        {"prompt": _normalized(prompt), "options": sorted(_normalized(text) for text in option_texts)},
+        {"exam": _normalized(exam), "prompt": _normalized(prompt),
+         "options": sorted(_normalized(text) for text in option_texts)},
         sort_keys=True,
     )
     data = {
         "question_key": _stable_id("q", identity),
         "source_refs": [{"bank": source_name, "position": question.get("question_number")}],
+        "exam": exam,
         "domain": repair_extracted_text(question.get("domain", "")),
         "prompt": prompt,
         "extracted_correct_option_ids": correct,
@@ -217,7 +228,7 @@ def question_record(question: dict, source_name: str) -> dict:
     return data
 
 
-def load_question_files(paths: list[str | Path]) -> list[dict]:
+def load_question_files(paths: list[str | Path], exam: str | None = None) -> list[dict]:
     records: dict[str, dict] = {}
     for raw_path in paths:
         path = Path(raw_path)
@@ -225,7 +236,7 @@ def load_question_files(paths: list[str | Path]) -> list[dict]:
         if not isinstance(questions, list):
             raise SchemaError(f"{path.name} must contain a JSON array")
         for raw in questions:
-            data = question_record(raw, path.stem)
+            data = question_record(raw, path.stem, exam=exam)
             existing = records.get(data["question_key"])
             if existing is None:
                 records[data["question_key"]] = data
@@ -263,7 +274,7 @@ class QuestionPractice:
                 QUESTION_PROFILE, QUESTION_STORE, QUESTION_SCHEMA_PURPOSE,
                 proposed_by, QUESTION_SCHEMA)
             definition = self._dyn.approve(QUESTION_PROFILE, QUESTION_STORE, actor=proposed_by)
-        if definition["schema"] == LEGACY_QUESTION_SCHEMA:
+        if definition["schema"] in (LEGACY_QUESTION_SCHEMA, PRE_EXAM_QUESTION_SCHEMA):
             # This is a system-owned store with a known additive migration.
             # Archive/re-propose preserves the generic store lifecycle and
             # makes v2 explicit; records are then validated by the v2 schema.
@@ -274,10 +285,16 @@ class QuestionPractice:
             definition = self._dyn.approve(QUESTION_PROFILE, QUESTION_STORE,
                                            actor=proposed_by)
             with self.db:
-                self.db.execute(
-                    "UPDATE dynamic_records SET schema_version=?"
-                    " WHERE profile_id=? AND store_name=?",
-                    (definition["version"], QUESTION_PROFILE, QUESTION_STORE))
+                rows = self.db.execute(
+                    "SELECT id, data FROM dynamic_records WHERE profile_id=? AND store_name=?",
+                    (QUESTION_PROFILE, QUESTION_STORE)).fetchall()
+                for row in rows:
+                    data = json.loads(row["data"])
+                    data.setdefault("exam", "AI-500")
+                    validate_record(QUESTION_SCHEMA, data)
+                    self.db.execute(
+                        "UPDATE dynamic_records SET schema_version=?, data=?, updated_at=? WHERE id=?",
+                        (definition["version"], json.dumps(data), time.time(), row["id"]))
         elif definition["schema"] != QUESTION_SCHEMA:
             raise DynStoreConflict("exam_questions exists with an incompatible schema")
         if definition["status"] != "approved":
@@ -386,7 +403,7 @@ class QuestionPractice:
             })
             public_items.append({
                 "position": position, "question_ref": data["question_key"],
-                "domain": data["domain"], "prompt": data["prompt"],
+                "exam": data["exam"], "domain": data["domain"], "prompt": data["prompt"],
                 "options": [{"label": option["label"], "text": option["text"]}
                             for option in options],
             })
@@ -537,24 +554,25 @@ class QuestionPractice:
         rows = self.db.execute(
             "SELECT data FROM dynamic_records WHERE profile_id=? AND store_name=?",
             (profile_id, QUESTION_STORE)).fetchall()
-        grouped: dict[tuple[str, str | None], dict] = {}
+        grouped: dict[tuple[str, str, str | None], dict] = {}
         for row in rows:
             data = json.loads(row["data"])
+            exam = str(data.get("exam") or "Unspecified").strip() or "Unspecified"
             domain = str(data.get("domain") or "Unspecified").strip() or "Unspecified"
             # Existing banks predate sub-skill tagging. Keeping it nullable
             # makes the report useful now and automatically more granular
             # once a future schema migration supplies that field.
             sub_skill = data.get("sub_skill")
             sub_skill = str(sub_skill).strip() if sub_skill else None
-            bucket = grouped.setdefault((domain, sub_skill), {
-                "domain": domain, "sub_skill": sub_skill,
+            bucket = grouped.setdefault((exam, domain, sub_skill), {
+                "exam": exam, "domain": domain, "sub_skill": sub_skill,
                 "wrong_count": 0, "times_shown": 0, "question_count": 0,
             })
             bucket["wrong_count"] += int(data.get("wrong_count", 0))
             bucket["times_shown"] += int(data.get("correct_count", 0)) + int(data.get("wrong_count", 0))
             bucket["question_count"] += 1
         items = sorted(grouped.values(), key=lambda item: (
-            -item["wrong_count"], -item["times_shown"], item["domain"],
+            -item["wrong_count"], -item["times_shown"], item["exam"], item["domain"],
             item["sub_skill"] or ""))
         return {"items": items}
 

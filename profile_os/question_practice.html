@@ -17,6 +17,7 @@ pre { white-space:pre-wrap; overflow-wrap:anywhere; background:#f3f6f8; padding:
   <p><a href="/directory">← Companion directory</a></p>
   <h1>Nyx question practice</h1>
   <form id="draw-form">
+    <label>Exam <select id="exam"><option value="AI-500">AI-500</option><option value="CCAR-F">CCAR-F</option></select></label>
     <label>Questions <input id="count" type="number" min="1" max="20" value="1" required></label>
     <label>Topic/domain contains (optional) <input id="topic" placeholder="e.g. Tools"></label>
     <button type="submit">Generate questions</button>
@@ -46,13 +47,13 @@ document.querySelector('#draw-form').addEventListener('submit', async event => {
   try {
     attempt = await post('/question-practice/api/draw', {
       companion_name:'nyx', count:Number(document.querySelector('#count').value),
-      where:topic ? {domain:{contains:topic}} : {}
+      where:{exam:document.querySelector('#exam').value, ...(topic ? {domain:{contains:topic}} : {})}
     });
     questionsBox.replaceChildren();
     for (const question of attempt.questions) {
       const card=document.createElement('section'); card.className='card'; card.dataset.position=question.position;
       const h=document.createElement('h2'); h.textContent=`Question ${question.position} of ${attempt.questions.length}`; card.append(h);
-      const domain=document.createElement('p'); domain.className='muted'; domain.textContent=question.domain; card.append(domain);
+      const domain=document.createElement('p'); domain.className='muted'; domain.textContent=`${question.exam} · ${question.domain}`; card.append(domain);
       const prompt=document.createElement('p'); prompt.textContent=question.prompt; card.append(prompt);
       for (const option of question.options) {
         const label=document.createElement('label'); label.className='option';

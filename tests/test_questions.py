@@ -4,7 +4,7 @@ import pytest
 
 from profile_os.dynstores import DynamicStores
 from profile_os.errors import DynStoreConflict, SchemaError
-from profile_os.questions import (INITIAL_WEIGHT, LEGACY_QUESTION_SCHEMA, QUESTION_PROFILE,
+from profile_os.questions import (INITIAL_WEIGHT, LEGACY_QUESTION_SCHEMA, PRE_EXAM_QUESTION_SCHEMA, QUESTION_PROFILE,
                                   QUESTION_SCHEMA, QUESTION_SCHEMA_PURPOSE, QuestionPractice,
                                   load_question_files, question_record)
 from profile_os.storage import Store
@@ -31,6 +31,7 @@ def _raw_question(number=1, correct=(0,), option_count=4, explanations=True,
     question = {
         "question_number": number, "status": "Skipped", "prompt": prompt,
         "options": options, "overall_explanation": overall, "domain": "Tools",
+        "exam": "AI-500",
     }
     if sub_skill is not None:
         question["sub_skill"] = sub_skill
@@ -47,7 +48,7 @@ def practice(tmp_path):
     store.close()
 
 
-def test_question_identity_is_exam_and_option_order_independent():
+def test_question_identity_is_option_order_independent_within_exam():
     first = _raw_question(number=1, correct=(0,))
     second = _raw_question(number=42, correct=(0,))
     second["options"] = list(reversed(second["options"]))
@@ -55,6 +56,25 @@ def test_question_identity_is_exam_and_option_order_independent():
     b = question_record(second, "sundog2")
     assert a["question_key"] == b["question_key"]
     assert a["extracted_correct_option_ids"] == b["extracted_correct_option_ids"]
+
+
+def test_question_identity_separates_exams():
+    first = _raw_question()
+    second = _raw_question()
+    second["exam"] = "CCAR-F"
+
+    assert question_record(first, "one")["question_key"] != question_record(
+        second, "two")["question_key"]
+
+
+@pytest.mark.parametrize("wording", ["Choose two.", "Select TWO."])
+def test_two_answer_wording_variants_are_accepted(wording):
+    question = _raw_question(correct=(0, 1))
+    question["prompt"] = f"Which choices apply? ({wording})"
+
+    data = question_record(question, "multi_select")
+
+    assert len(data["extracted_correct_option_ids"]) == 2
 
 
 def test_marrek_explanations_are_derived_and_text_boundaries_repaired():
@@ -138,7 +158,7 @@ def test_weaknesses_aggregate_domain_and_sub_skill(practice):
 
     report = practice.weaknesses("lt_rita")
     assert report["items"][0] == {
-        "domain": "Tools", "sub_skill": "prompt templates", "wrong_count": 1,
+        "exam": "AI-500", "domain": "Tools", "sub_skill": "prompt templates", "wrong_count": 1,
         "times_shown": 1, "question_count": 1,
     }
 
@@ -150,6 +170,7 @@ def test_legacy_question_store_is_migrated_to_optional_sub_skill(practice):
     practice._dyn.approve(QUESTION_PROFILE, "exam_questions", actor="operator")
     data = question_record(_raw_question(sub_skill=None), "sundog1")
     data.pop("sub_skill", None)
+    data.pop("exam")
     practice._dyn.add_record(QUESTION_PROFILE, "exam_questions", data)
 
     migrated = practice.ensure_store()
@@ -158,6 +179,39 @@ def test_legacy_question_store_is_migrated_to_optional_sub_skill(practice):
     assert migrated["schema"] == QUESTION_SCHEMA
     record = practice._dyn.query_records(QUESTION_PROFILE, "exam_questions")[0]
     assert record["schema_version"] == migrated["version"]
+    assert record["data"]["exam"] == "AI-500"
+
+
+def test_pre_exam_question_store_is_migrated_with_ai500_label(practice):
+    previous = practice._dyn.propose(
+        QUESTION_PROFILE, "exam_questions", QUESTION_SCHEMA_PURPOSE, "operator",
+        PRE_EXAM_QUESTION_SCHEMA)
+    practice._dyn.approve(QUESTION_PROFILE, "exam_questions", actor="operator")
+    data = question_record(_raw_question(sub_skill="tools"), "sundog1")
+    data.pop("exam")
+    practice._dyn.add_record(QUESTION_PROFILE, "exam_questions", data)
+
+    migrated = practice.ensure_store()
+
+    assert migrated["version"] == previous["version"] + 1
+    record = practice._dyn.query_records(QUESTION_PROFILE, "exam_questions")[0]
+    assert record["data"]["exam"] == "AI-500"
+    assert record["data"]["sub_skill"] == "tools"
+
+
+def test_draw_filters_and_returns_exam_label(practice):
+    ai500 = _raw_question(number=1)
+    ccar = _raw_question(number=2)
+    ccar["exam"] = "CCAR-F"
+    ccar["prompt"] = "Which CCAR choice applies?"
+    practice.import_records([
+        question_record(ai500, "ai500"), question_record(ccar, "ccar"),
+    ])
+
+    draw = practice.draw("nyx", {"exam": "CCAR-F"})
+
+    assert draw["questions"][0]["exam"] == "CCAR-F"
+    assert "CCAR" in draw["questions"][0]["prompt"]
 
 
 def test_nullified_question_is_not_drawn(practice):

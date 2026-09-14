@@ -517,11 +517,12 @@ QUESTION_DRAW_ITEM = {
     "properties": {
         "position": {"type": "integer"},
         "question_ref": {"type": "string"},
+        "exam": {"type": "string"},
         "domain": {"type": "string"},
         "prompt": {"type": "string"},
         "options": array_of(QUESTION_OPTION),
     },
-    "required": ["position", "question_ref", "domain", "prompt", "options"],
+    "required": ["position", "question_ref", "exam", "domain", "prompt", "options"],
 }
 
 QUESTION_DRAW = {
@@ -558,13 +559,14 @@ QUESTION_GRADE = {
 QUESTION_WEAKNESS = {
     "type": "object",
     "properties": {
+        "exam": {"type": "string"},
         "domain": {"type": "string"},
         "sub_skill": STRING_OR_NULL,
         "wrong_count": {"type": "integer"},
         "times_shown": {"type": "integer"},
         "question_count": {"type": "integer"},
     },
-    "required": ["domain", "sub_skill", "wrong_count", "times_shown", "question_count"],
+    "required": ["exam", "domain", "sub_skill", "wrong_count", "times_shown", "question_count"],
 }
 
 QUESTION_WEAKNESS_REPORT = {
