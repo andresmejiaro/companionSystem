@@ -131,6 +131,15 @@ def _stable_id(prefix: str, value: str) -> str:
     return f"{prefix}_{digest}"
 
 
+def _question_key(exam: str, prompt: str, option_texts: list[str]) -> str:
+    identity = json.dumps(
+        {"exam": _normalized(exam), "prompt": _normalized(prompt),
+         "options": sorted(_normalized(text) for text in option_texts)},
+        sort_keys=True,
+    )
+    return _stable_id("q", identity)
+
+
 def repair_extracted_text(value: str) -> str:
     """Restore whitespace lost when adjacent source blocks were flattened."""
     value = " ".join(str(value).split())
@@ -196,13 +205,8 @@ def question_record(question: dict, source_name: str, exam: str | None = None) -
     if len(correct) != requested_correct:
         raise SchemaError(
             f"answer count mismatch in {source_name} question {question.get('question_number')}")
-    identity = json.dumps(
-        {"exam": _normalized(exam), "prompt": _normalized(prompt),
-         "options": sorted(_normalized(text) for text in option_texts)},
-        sort_keys=True,
-    )
     data = {
-        "question_key": _stable_id("q", identity),
+        "question_key": _question_key(exam, prompt, option_texts),
         "source_refs": [{"bank": source_name, "position": question.get("question_number")}],
         "exam": exam,
         "domain": repair_extracted_text(question.get("domain", "")),
@@ -291,6 +295,11 @@ class QuestionPractice:
                 for row in rows:
                     data = json.loads(row["data"])
                     data.setdefault("exam", "AI-500")
+                    option_texts = [data[f"option_{label.lower()}_text"]
+                                    for label in OPTION_LABELS
+                                    if f"option_{label.lower()}_text" in data]
+                    data["question_key"] = _question_key(
+                        data["exam"], data["prompt"], option_texts)
                     validate_record(QUESTION_SCHEMA, data)
                     self.db.execute(
                         "UPDATE dynamic_records SET schema_version=?, data=?, updated_at=? WHERE id=?",

@@ -188,6 +188,8 @@ def test_pre_exam_question_store_is_migrated_with_ai500_label(practice):
         PRE_EXAM_QUESTION_SCHEMA)
     practice._dyn.approve(QUESTION_PROFILE, "exam_questions", actor="operator")
     data = question_record(_raw_question(sub_skill="tools"), "sundog1")
+    expected_key = data["question_key"]
+    data["question_key"] = "q_pre_exam_identity"
     data.pop("exam")
     practice._dyn.add_record(QUESTION_PROFILE, "exam_questions", data)
 
@@ -196,6 +198,7 @@ def test_pre_exam_question_store_is_migrated_with_ai500_label(practice):
     assert migrated["version"] == previous["version"] + 1
     record = practice._dyn.query_records(QUESTION_PROFILE, "exam_questions")[0]
     assert record["data"]["exam"] == "AI-500"
+    assert record["data"]["question_key"] == expected_key
     assert record["data"]["sub_skill"] == "tools"
 
 
