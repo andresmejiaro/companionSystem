@@ -151,3 +151,12 @@ Claude or ChatGPT mobile apps as of this deploy.
   right-sized for one user).
 - Nonce replay-protection cache for signed-request auth is in-memory,
   reset on container restart — acceptable for a single-process server.
+
+## Current pinned release — 2026-10-28
+
+Use `/opt/profile-os/releases/siro-id-20261028/compose.json`: backend
+`profile-os-backend:siro-id-20261028`, MCP
+`profile-os-mcp:gemini-protocol-20261028-2`. This supersedes the older QoL
+image pins while preserving their behavior. Siro's canonical ID is `siro`;
+`vertice` remains a compatibility alias. See
+[the migration evidence and recovery notes](ops/siro/2026-10-28-id-migration.md).

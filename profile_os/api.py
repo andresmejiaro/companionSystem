@@ -22,6 +22,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.routing import APIRoute
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel, Field, field_validator
 from typing import Any
@@ -363,6 +364,23 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
     if do_seed:
         seed.seed(store)
     app.state.store = store
+
+    class CanonicalProfileRoute(APIRoute):
+        def get_route_handler(self):
+            handler = super().get_route_handler()
+
+            async def canonical_handler(request: Request):
+                # Rewrite route parameters only. Keep the original URL/body
+                # intact so signed requests authenticate exactly as sent.
+                for key in ("profile_id", "from_profile_id"):
+                    if key in request.path_params:
+                        request.path_params[key] = store.canonical_profile_id(
+                            request.path_params[key])
+                return await handler(request)
+
+            return canonical_handler
+
+    app.router.route_class = CanonicalProfileRoute
 
     dyn = DynamicStores(store)
     app.state.dynstores = dyn
@@ -1111,7 +1129,8 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
     @app.post("/profiles/{from_profile_id}/messages", status_code=201)
     def send_message(from_profile_id: str, body: MessageIn, request: Request):
         _require("remember", from_profile_id, request)
-        return _wrap(store.send_message, from_profile_id, body.to_profile_id, body.content)
+        return _wrap(store.send_message, from_profile_id,
+                     store.canonical_profile_id(body.to_profile_id), body.content)
 
     @app.get("/profiles/{profile_id}/inbox")
     def get_inbox(profile_id: str, request: Request,
@@ -1273,6 +1292,7 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
 
     @app.post("/projects/{project_id}/join", status_code=201)
     def propose_project_join(project_id: str, body: ProjectJoinIn, request: Request):
+        body.profile_id = store.canonical_profile_id(body.profile_id)
         principal_id = _require("manage_profile", body.profile_id, request)
         project = _wrap(projects.request_join, body.profile_id, project_id)
         approval = access.propose_approval(
@@ -1289,12 +1309,14 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
     @app.get("/projects/{project_id}/records")
     def query_project_records(project_id: str, profile_id: str, request: Request,
                               contains: str | None = None, limit: int = 50):
+        profile_id = store.canonical_profile_id(profile_id)
         _require("records:read", profile_id, request)
         return _wrap(projects.query, profile_id, project_id, contains, limit)
 
     @app.post("/projects/{project_id}/records", status_code=201)
     def add_project_record(project_id: str, profile_id: str, body: DomainRecordIn,
                            request: Request):
+        profile_id = store.canonical_profile_id(profile_id)
         _require("records:write", profile_id, request)
         return _wrap(projects.add_record, profile_id, project_id, body.data)
 

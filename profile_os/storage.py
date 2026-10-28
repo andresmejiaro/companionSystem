@@ -52,6 +52,10 @@ CREATE TABLE IF NOT EXISTS compact_state (
     state TEXT NOT NULL DEFAULT '',                -- compact markdown/plaintext boot state
     updated_at REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS profile_id_redirects (
+    retired_id TEXT PRIMARY KEY,
+    target_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE
+);
 CREATE TABLE IF NOT EXISTS memory_events (
     id TEXT PRIMARY KEY,
     profile_id TEXT NOT NULL REFERENCES profiles(id),
@@ -260,6 +264,19 @@ class Store:
 
     # -- profiles ------------------------------------------------------------
 
+    def canonical_profile_id(self, profile_id: str) -> str:
+        """Resolve only explicitly retired IDs, never fuzzy routing aliases."""
+        seen = set()
+        while profile_id not in seen:
+            seen.add(profile_id)
+            row = self.db.execute(
+                "SELECT target_id FROM profile_id_redirects WHERE retired_id=?",
+                (profile_id,)).fetchone()
+            if row is None:
+                return profile_id
+            profile_id = row["target_id"]
+        raise MalformedRecord("profile ID redirect cycle")
+
     def create_profile(
         self,
         profile_id: str,
@@ -277,6 +294,8 @@ class Store:
     ) -> dict:
         if not profile_id or not profile_id.replace("-", "").replace("_", "").isalnum():
             raise MalformedRecord("profile_id must be a non-empty slug (alnum, - or _)")
+        if self.canonical_profile_id(profile_id) != profile_id:
+            raise MalformedRecord("profile_id is reserved as a retired ID")
         display_name = " ".join(display_name.strip().split()) if isinstance(display_name, str) else ""
         if not display_name:
             raise MalformedRecord("display_name must be a non-empty string")
