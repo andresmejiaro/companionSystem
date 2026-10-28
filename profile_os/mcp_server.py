@@ -66,7 +66,7 @@ from .tool_schemas import (
 AdminVerifyFn = Callable[[str, str], Awaitable[bool]]
 
 MCP_PROTOCOL_VERSION = "2025-06-18"
-SUPPORTED_PROTOCOL_VERSIONS = {MCP_PROTOCOL_VERSION, "2025-03-26"}
+SUPPORTED_PROTOCOL_VERSIONS = {MCP_PROTOCOL_VERSION, "2025-03-26", "2025-11-25"}
 SERVER_VERSION = "0.1.0"
 SCOPE = "profile-os"
 
@@ -1612,6 +1612,8 @@ def _origin_error(settings: MCPSettings, request: Request) -> JSONResponse | Non
 def _protocol_error(request: Request) -> JSONResponse | None:
     version = request.headers.get("mcp-protocol-version")
     if version and version not in SUPPORTED_PROTOCOL_VERSIONS:
+        LOGGER.warning("mcp protocol rejected: method=%s version=%r",
+                       request.method, version[:128])
         return JSONResponse(
             {"error": f"unsupported MCP-Protocol-Version {version!r}"},
             status_code=400,
@@ -2180,9 +2182,6 @@ def create_mcp_app(
         origin_error = _origin_error(settings, request)
         if origin_error:
             return origin_error
-        protocol_error = _protocol_error(request)
-        if protocol_error:
-            return protocol_error
         auth_error = _authenticated(settings, request)
         if auth_error:
             return auth_error
@@ -2192,11 +2191,15 @@ def create_mcp_app(
             _wire_probe_log(request, None)
 
         headers = {
-            "MCP-Protocol-Version": MCP_PROTOCOL_VERSION,
+            "MCP-Protocol-Version": request.headers.get(
+                "mcp-protocol-version", MCP_PROTOCOL_VERSION),
             **_cors_headers(settings, request),
         }
 
         if request.method == "GET":
+            protocol_error = _protocol_error(request)
+            if protocol_error:
+                return protocol_error
             accept = request.headers.get("accept", "")
             if "text/event-stream" not in accept and "*/*" not in accept:
                 return Response(status_code=405, headers=headers)
@@ -2225,6 +2228,15 @@ def create_mcp_app(
                 headers=headers,
             )
 
+        # initialize negotiates the version in its body. A client may send
+        # its preferred version in the header before negotiation has happened.
+        # Enforce the negotiated version only on subsequent requests.
+        initializing = message.get("method") == "initialize" and "id" in message
+        if not initializing:
+            protocol_error = _protocol_error(request)
+            if protocol_error:
+                return protocol_error
+
         # JSON-RPC notifications and responses do not receive a JSON body over
         # Streamable HTTP. The initialized notification is the common one.
         if "id" not in message:
@@ -2233,6 +2245,8 @@ def create_mcp_app(
             return Response(status_code=202, headers=headers)
 
         response = _handle_rpc(message, app)
+        if initializing:
+            headers["MCP-Protocol-Version"] = response["result"]["protocolVersion"]
         accept = request.headers.get("accept", "")
         if "text/event-stream" in accept:
             # ChatGPT's Streamable HTTP client is tested against the reference
