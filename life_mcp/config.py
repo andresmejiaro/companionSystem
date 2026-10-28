@@ -55,7 +55,7 @@ class Settings:
             allowed_redirect_hosts=_csv(
                 "LIFE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS",
                 "claude.ai,*.claude.ai,chatgpt.com,*.chatgpt.com,"
-                "openai.com,*.openai.com",
+                "openai.com,*.openai.com,127.0.0.1,localhost",
             ),
         )
 

@@ -11,3 +11,9 @@ quien_soy*
 
 # Generated Lodestar corpus lives in each companion's persistent file store.
 /Ironsworn-Lodestar-*.md
+
+# Local context document for external repository audits.
+/COMPANIONS_PROJECT_AUDIT_CONTEXT.md
+
+# Private local companion exploration and conversation closeout.
+/COMPANION_EXPLORATION_NOTES.md

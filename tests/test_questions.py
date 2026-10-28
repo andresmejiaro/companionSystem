@@ -43,6 +43,8 @@ def practice(tmp_path):
     store = Store(tmp_path / "data")
     store.create_profile(
         QUESTION_PROFILE, "Nyx", "identity", "role", aliases=["lt_rita", "LT Rita"])
+    store.create_profile("rita", "Rita", "identity", "role")
+    store.create_profile("aster", "Aster", "identity", "role")
     service = QuestionPractice(store, DynamicStores(store))
     yield service
     store.close()
@@ -238,5 +240,23 @@ def test_unanswered_attempt_expires_and_cannot_be_replayed(practice):
 
 
 def test_question_tools_reject_other_companions(practice):
-    with pytest.raises(SchemaError, match="only for nyx"):
-        practice.draw("rita")
+    with pytest.raises(SchemaError, match="only for nyx and rita"):
+        practice.draw("aster")
+
+def test_sisters_share_attempts_learning_and_answer_repairs(practice):
+    practice.import_records([question_record(_raw_question(), "shared")])
+    draw = practice.draw("rita")
+    practice.grade("nyx", draw["attempt_code"],
+                   [{"position": 1, "selected": ["B"]}])
+    assert practice.weaknesses("rita") == practice.weaknesses("nyx")
+    assert practice.weaknesses("rita")["items"][0]["wrong_count"] == 1
+    practice.regrade("rita", draw["attempt_code"],
+                     [{"position": 1, "selected": ["A"]}], "transcription correction")
+    revised = practice.revise_answer(
+        "nyx", draw["attempt_code"], 1, "override", ["B"], "shared key repair")
+    assert revised["wrong_count"] == 1
+    assert practice.weaknesses("rita") == practice.weaknesses("nyx")
+    assert {row["profile_id"] for row in practice.db.execute(
+        "SELECT profile_id FROM question_attempts")} == {"nyx"}
+    assert practice.db.execute(
+        "SELECT count(*) FROM dynamic_records WHERE profile_id='rita'").fetchone()[0] == 0

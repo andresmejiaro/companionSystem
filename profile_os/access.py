@@ -102,6 +102,7 @@ PRINCIPAL_KINDS = {"human", "app", "bridge", "admin", "agent"}
 
 OPERATIONS = {
     "boot", "remember", "search", "closeout",
+    "pet:converse",
     "records:read", "records:write",
     "stores:propose", "stores:approve",
     "create_profile", "delete_profile", "manage_profile",

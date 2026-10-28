@@ -308,6 +308,40 @@ def test_root_directory_and_admin_shortcuts(client, monkeypatch):
     assert legacy_demo.headers["location"] == "/settings"
 
 
+def test_browser_coding_gate_uses_totp_and_secure_scoped_cookie(client, monkeypatch):
+    access = client.app.state.access
+    monkeypatch.setattr(access, "find_totp_admin_principal_id", lambda: "admin")
+    monkeypatch.setattr(
+        access, "verify_totp", lambda principal_id, code:
+        principal_id == "admin" and code == "123456")
+
+    locked = client.get("/code/auth", follow_redirects=False)
+    assert locked.status_code == 303
+    assert locked.headers["location"] == "/code/login"
+    login = client.get("/code/login")
+    assert login.status_code == 200
+    assert "existing administrator authenticator" in login.text
+
+    rejected = client.post("/code/unlock", data={"totp_code": "000000"})
+    assert rejected.status_code == 401
+    assert "Invalid or expired authenticator code" in rejected.text
+
+    unlocked = client.post(
+        "/code/unlock", data={"totp_code": "123456"}, follow_redirects=False)
+    assert unlocked.status_code == 303
+    assert unlocked.headers["location"] == "/code/"
+    cookie = unlocked.headers["set-cookie"]
+    assert "profile_os_code=" in cookie
+    assert "Max-Age=7200" in cookie
+    assert "HttpOnly" in cookie and "Secure" in cookie
+    assert "SameSite=strict" in cookie and "Path=/code" in cookie
+
+    token = cookie.split("profile_os_code=", 1)[1].split(";", 1)[0]
+    authenticated = client.get(
+        "/code/auth", headers={"cookie": f"profile_os_code={token}"})
+    assert authenticated.status_code == 204
+
+
 def test_boot_endpoint(client):
     r = client.post("/profiles/sidra/boot")
     assert r.status_code == 200

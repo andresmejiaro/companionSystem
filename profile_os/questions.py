@@ -1,4 +1,4 @@
-"""Nyx's weighted exam-question practice service.
+"""Nyx and Rita's shared weighted exam-question practice service.
 
 Question content lives in the ordinary approved ``exam_questions`` dynamic
 store.  This module adds the small amount of domain behavior that generic
@@ -266,8 +266,8 @@ class QuestionPractice:
         if not isinstance(companion_name, str) or not companion_name.strip():
             raise SchemaError("companion_name is required")
         resolution = self._store.resolve_profile(companion_name)
-        if resolution["status"] != "resolved" or resolution["resolved_profile_id"] != QUESTION_PROFILE:
-            raise SchemaError("exam-question tools are available only for nyx")
+        if resolution["status"] != "resolved" or resolution["resolved_profile_id"] not in {QUESTION_PROFILE, "rita"}:
+            raise SchemaError("exam-question tools are available only for nyx and rita")
         return QUESTION_PROFILE
 
     def ensure_store(self, proposed_by: str = "operator") -> dict:

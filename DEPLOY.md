@@ -1,6 +1,39 @@
 # Deploy runbook: rumbo.datacodemath.com
 
+Gemini registration correction, 2026-10-17: the client registers six callbacks
+across the exact hosts `oauth-redirect.googleusercontent.com`,
+`oauth-redirect-sandbox.googleusercontent.com`, and
+`oauth-redirect-test.googleusercontent.com`, with `/r/` and `/a/` variants.
+The original production-host-only change rejected the full registration.
+Reproduced the six-URI shape against the live server: 400 invalid_redirect_uri;
+after adding the two exact additional hosts, 201 and all six PKCE authorization
+forms returned 200. Unlisted subdomains and non-HTTPS Google callbacks remain
+rejected. No wildcard, consent bypass, or client-secret authentication change.
+Original captured-request evidence from another server:
+https://github.com/BerriAI/litellm/issues/46640 . Our actual rejected request
+bodies were not logged; our test reproduced that public request shape.
+Rollback environment snapshot and result receipt:
+`/opt/profile-os/releases/gemini-oauth-20261017-six-callbacks/`.
+Only MCP configuration/restart changed; its code image was retained.
+Andrés confirmed Gemini reached our login page after clearing the old manual
+client fields and retrying. Final user consent/token exchange remains user-side.
+
+2026-10-17 Gemini web OAuth: with Andrés's explicit approval, appended exact
+callback host `oauth-redirect.googleusercontent.com` to
+`MCP_OAUTH_ALLOWED_REDIRECT_HOSTS` and exact origin `https://gemini.google.com`
+to `MCP_ALLOWED_ORIGINS` in the server environment, preserving prior entries.
+Recreated only MCP using its existing image. Verified the supplied callback is
+allowed, an untrusted host remains rejected, public Gemini CORS preflight is
+204 and HTTPS health is 200. Server receipt/rollback environment copy:
+`/opt/profile-os/releases/gemini-oauth-20261017/` (backup contains secrets;
+keep it on-server). Gemini's completed OAuth login remains user-side.
+
 Single-user Profile OS deployment on a Hetzner VPS, deployed 2026-07-09.
+
+2026-10-17: Tamagochi backend is running as a pinned image overlay with runtime
+disabled. Use the release-specific restart/rollback commands in
+[the deployment receipt](ops/tamagochi/2026-10-17-deployment.md). The generic
+rebuild command below would use the older server source and omit this overlay.
 
 ## Topology
 

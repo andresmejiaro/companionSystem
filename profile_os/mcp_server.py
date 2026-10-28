@@ -149,7 +149,9 @@ def _origin_matches(pattern: str, origin: str) -> bool:
 
 def _redirect_host_allowed(uri: str, allowed_hosts: list[str]) -> bool:
     parsed = urllib.parse.urlparse(uri)
-    if parsed.scheme != "https" or not parsed.hostname or parsed.fragment:
+    if parsed.scheme not in {"https", "http"} or not parsed.hostname or parsed.fragment:
+        return False
+    if parsed.scheme == "http" and parsed.hostname not in {"127.0.0.1", "localhost"}:
         return False
     if not allowed_hosts:
         return True
@@ -777,8 +779,8 @@ MCP_TOOLS = [
     ),
     _tool(
         "exam_attempt", "Exam Attempt",
-        "Nyx only. Use action draw to create a weighted attempt, grade to score a live attempt, or correct_grade to auditably correct a graded attempt and replay its learning statistics. Each action accepts only its relevant fields.",
-        {"companion_name": {"type": "string", "enum": ["nyx", "lt_rita"]},
+        "Nyx and Rita share the same question bank and learning state. Use action draw to create a weighted attempt, grade to score a live attempt, or correct_grade to auditably correct a graded attempt and replay its learning statistics. Each action accepts only its relevant fields.",
+        {"companion_name": {"type": "string", "enum": ["nyx", "lt_rita", "rita"]},
          "action": {"type": "string", "enum": ["draw", "grade", "correct_grade"]},
          "where": {"type": "object", "additionalProperties": {
              "anyOf": [
@@ -800,8 +802,8 @@ MCP_TOOLS = [
     ),
     _tool(
         "exam_review", "Exam Review",
-        "Nyx only. Use action diagnose_weaknesses for aggregate performance analysis, or revise_answer_key to auditably override, nullify, or restore a question answer key. Each action accepts only its relevant fields.",
-        {"companion_name": {"type": "string", "enum": ["nyx", "lt_rita"]},
+        "Nyx and Rita share the same question bank and learning state. Use action diagnose_weaknesses for aggregate performance analysis, or revise_answer_key to auditably override, nullify, or restore a question answer key. Each action accepts only its relevant fields.",
+        {"companion_name": {"type": "string", "enum": ["nyx", "lt_rita", "rita"]},
          "action": {"type": "string", "enum": ["diagnose_weaknesses", "revise_answer_key"]},
          "attempt_code": {"type": "string", "minLength": 1},
          "position": {"type": "integer", "minimum": 1, "maximum": 20},
@@ -884,7 +886,7 @@ class MCPSettings:
         ttl = int(ttl_raw) if ttl_raw else 60 * 60 * 24 * 30
         redirect_hosts = _split_csv(os.environ.get("MCP_OAUTH_ALLOWED_REDIRECT_HOSTS"))
         if not redirect_hosts:
-            redirect_hosts = ["claude.ai", "*.claude.ai"]
+            redirect_hosts = ["claude.ai", "*.claude.ai", "127.0.0.1", "localhost"]
         return cls(
             auth_required=_env_bool("MCP_AUTH_REQUIRED", True),
             connector_tokens=tokens,

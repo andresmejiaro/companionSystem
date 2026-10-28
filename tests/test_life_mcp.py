@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from life_mcp.app import create_app
 from life_mcp.config import Settings
+from life_mcp.security import host_allowed
 from life_mcp.snapshot import SnapshotError, SnapshotReadOnly, SnapshotStore
 
 
@@ -70,6 +71,13 @@ def settings(tmp_path: Path, **changes):
     )
     values.update(changes)
     return Settings(**values)
+
+
+def test_oauth_redirect_allows_http_only_for_loopback_hosts():
+    allowed = ["127.0.0.1", "localhost", "example.com"]
+    assert host_allowed("http://127.0.0.1:19876/callback", allowed)
+    assert host_allowed("http://localhost:19876/callback", allowed)
+    assert not host_allowed("http://example.com/callback", allowed)
 
 
 @pytest.fixture

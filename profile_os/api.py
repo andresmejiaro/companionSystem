@@ -15,18 +15,23 @@ import os
 import re
 import secrets
 import time
+from contextlib import asynccontextmanager
 
 from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel, Field, field_validator
 from typing import Any
 
 from . import seed
 from .access import AccessControl, AccessError
+from .pet_api import create_pet_router
+from .pet_conversations import PetTurnService
+from .pet_devices import PetDeviceService
+from .pet_runtime import runtime_from_environment
 from .dynstores import DynamicStores, THREAD_CONTINUITY_STORE, is_legacy_session_log
 from .projects import Projects
 from .ironsworn_rules import MoveNotFoundError, get_move, get_oracle
@@ -336,14 +341,23 @@ class ProjectJoinIn(BaseModel):
 def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
                auth_enabled: bool | None = None,
                identity_file: str | None = None,
-               read_only: bool | None = None) -> FastAPI:
+               read_only: bool | None = None,
+               pet_runtime=None) -> FastAPI:
     if auth_enabled is None:
         auth_enabled = os.environ.get("PROFILE_OS_AUTH_ENABLED") == "1"
     if identity_file is None:
         identity_file = os.environ.get("PROFILE_OS_IDENTITY_FILE")
     if read_only is None:
         read_only = _env_bool("PROFILE_OS_READ_ONLY")
-    app = FastAPI(title="Assistant Profile OS", version="0.1.0")
+    @asynccontextmanager
+    async def lifespan(_app):
+        try:
+            pet_turns.start()
+            yield
+        finally:
+            pet_turns.stop()
+
+    app = FastAPI(title="Assistant Profile OS", version="0.1.0", lifespan=lifespan)
     app.state.read_only = read_only
     store = Store(data_dir)
     if do_seed:
@@ -358,6 +372,14 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
     app.state.projects = projects
     access = AccessControl(store)
     app.state.access = access
+    pet_devices = PetDeviceService(access)
+    app.state.pet_devices = pet_devices
+    if pet_runtime is None:
+        pet_runtime = runtime_from_environment(store, dyn, pet_devices, identity_file)
+    pet_turns = PetTurnService(store, pet_devices, runtime=pet_runtime)
+    app.state.pet_turns = pet_turns
+    app.include_router(create_pet_router(pet_devices, pet_turns))
+
     enrollment = Enrollment(access)
     app.state.enrollment = enrollment
 
@@ -367,8 +389,10 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
     _profile_totp_hits: dict[str, list[float]] = {}
     _settings_hits: dict[str, list[float]] = {}
     _question_practice_hits: dict[str, list[float]] = {}
+    _code_hits: dict[str, list[float]] = {}
     _settings_session_key = secrets.token_bytes(32)
     _settings_session_seconds = 15 * 60
+    _code_session_seconds = 2 * 60 * 60
     _max_request_bytes = configured_max_request_bytes()
 
     def _rate_limited(bucket: dict[str, list[float]], key: str,
@@ -379,8 +403,8 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
         bucket[key] = hits
         return len(hits) > limit
 
-    def _settings_session_token() -> str:
-        expires_at = str(int(time.time()) + _settings_session_seconds)
+    def _settings_session_token(seconds: int = _settings_session_seconds) -> str:
+        expires_at = str(int(time.time()) + seconds)
         signature = hmac.new(_settings_session_key, expires_at.encode(),
                              hashlib.sha256).hexdigest()
         return f"{expires_at}.{signature}"
@@ -398,6 +422,17 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
 
     def _has_question_session(request: Request) -> bool:
         token = request.cookies.get("profile_os_questions", "")
+        try:
+            expires_at, signature = token.split(".", 1)
+            expected = hmac.new(_settings_session_key, expires_at.encode(),
+                                hashlib.sha256).hexdigest()
+            return int(expires_at) >= time.time() and hmac.compare_digest(
+                signature, expected)
+        except (TypeError, ValueError):
+            return False
+
+    def _has_code_session(request: Request) -> bool:
+        token = request.cookies.get("profile_os_code", "")
         try:
             expires_at, signature = token.split(".", 1)
             expected = hmac.new(_settings_session_key, expires_at.encode(),
@@ -587,6 +622,40 @@ def create_app(data_dir: str = DATA_DIR, do_seed: bool = True,
                             max_age=_settings_session_seconds, httponly=True,
                             secure=True, samesite="strict", path="/question-practice")
         return response
+
+    @app.get("/code/login", response_class=HTMLResponse,
+             include_in_schema=False)
+    def code_login(request: Request):
+        if _has_code_session(request):
+            return RedirectResponse(url="/code/", status_code=303)
+        return (Path(__file__).parent / "code_login.html").read_text()
+
+    @app.post("/code/unlock", include_in_schema=False)
+    async def unlock_code(request: Request):
+        client_ip = request.client.host if request.client else "unknown"
+        if _rate_limited(_code_hits, client_ip):
+            raise HTTPException(429, "too many attempts; try again later")
+        form = await request.form()
+        admin_id = access.find_totp_admin_principal_id()
+        if admin_id is None or not access.verify_totp(
+                admin_id, str(form.get("totp_code") or "")):
+            return HTMLResponse(
+                (Path(__file__).parent / "code_login.html").read_text()
+                .replace("<!-- ERROR -->", "<p class=\"error\">Invalid or expired authenticator code.</p>"),
+                status_code=401)
+        response = RedirectResponse(url="/code/", status_code=303)
+        response.set_cookie(
+            "profile_os_code", _settings_session_token(_code_session_seconds),
+            max_age=_code_session_seconds, httponly=True, secure=True,
+            samesite="strict", path="/code")
+        return response
+
+    @app.get("/code/auth", include_in_schema=False)
+    def code_auth(request: Request):
+        """Caddy forward-auth check for the browser coding workstation."""
+        if not _has_code_session(request):
+            return RedirectResponse(url="/code/login", status_code=303)
+        return Response(status_code=204)
 
     def _require_question_session(request: Request) -> None:
         if not _has_question_session(request):

@@ -12,7 +12,7 @@ from profile_os.bootstrap_bridge import BRIDGE_OPS, bootstrap
 from profile_os.access import AccessControl
 from profile_os.bridge import ToolBridge, ToolBridgeError
 from profile_os.mcp_server import (
-    MCPSettings, MCP_TOOLS, OAuthState, _tool_result, create_mcp_app,
+    MCPSettings, MCP_TOOLS, OAuthState, _redirect_host_allowed, _tool_result, create_mcp_app,
 )
 from profile_os.request_limits import DEFAULT_MAX_REQUEST_BYTES
 from profile_os.storage import Store
@@ -25,6 +25,13 @@ PUBLIC_BASE = "https://profiles.example"
 
 
 ThreadedASGIClient = TestClient
+
+
+def test_oauth_redirect_allows_http_only_for_loopback_hosts():
+    allowed = ["127.0.0.1", "localhost"]
+    assert _redirect_host_allowed("http://127.0.0.1:19876/callback", allowed)
+    assert _redirect_host_allowed("http://localhost:19876/callback", allowed)
+    assert not _redirect_host_allowed("http://example.com/callback", ["example.com"])
 
 
 def test_tool_text_content_keeps_emoji_readable():
@@ -742,26 +749,26 @@ def test_mcp_tool_flow_and_logging(tmp_path, caplog):
     assert records[0]["data"]["hotel_name"] == "Inn"
 
     drawn = _call_tool(client, "exam_attempt", {
-        "companion_name": "lt_rita", "action": "draw",
+        "companion_name": "rita", "action": "draw",
     }).json()["result"]
     assert drawn["isError"] is False
     assert drawn["structuredContent"]["action"] == "draw"
     graded = _call_tool(client, "exam_attempt", {
-        "companion_name": "lt_rita", "action": "grade", "attempt_code": "attempt-1",
+        "companion_name": "rita", "action": "grade", "attempt_code": "attempt-1",
         "answers": [{"position": 1, "selected": ["A"]}],
     }).json()["result"]
     assert graded["structuredContent"]["result"]["markdown"] == "OK"
     regraded = _call_tool(client, "exam_attempt", {
-        "companion_name": "lt_rita", "action": "correct_grade", "attempt_code": "attempt-1",
+        "companion_name": "rita", "action": "correct_grade", "attempt_code": "attempt-1",
         "answers": [{"position": 1, "selected": ["A"]}], "reason": "transcription fix",
     }).json()["result"]
     assert regraded["structuredContent"]["result"]["markdown"] == "OK"
     diagnosis = _call_tool(client, "exam_review", {
-        "companion_name": "lt_rita", "action": "diagnose_weaknesses",
+        "companion_name": "rita", "action": "diagnose_weaknesses",
     }).json()["result"]
     assert diagnosis["structuredContent"]["result"]["items"][0]["wrong_count"] == 3
     revised = _call_tool(client, "exam_review", {
-        "companion_name": "lt_rita", "attempt_code": "attempt-1", "position": 1,
+        "companion_name": "rita", "attempt_code": "attempt-1", "position": 1,
         "action": "revise_answer_key", "answer_action": "nullify", "reason": "bad key",
     }).json()["result"]
     assert revised["structuredContent"]["result"]["answer_status"] == "nullified"
