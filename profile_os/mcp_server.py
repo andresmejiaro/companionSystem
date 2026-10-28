@@ -2247,6 +2247,17 @@ def create_mcp_app(
         response = _handle_rpc(message, app)
         if initializing:
             headers["MCP-Protocol-Version"] = response["result"]["protocolVersion"]
+        # Handshake diagnostics only: never log tokens, params, tool arguments,
+        # returned companion context, or full tool definitions.
+        if message.get("method") in {"initialize", "tools/list"}:
+            LOGGER.warning(
+                "mcp handshake: method=%s requested_header=%r selected=%s rpc_error=%s tools=%s",
+                message["method"],
+                request.headers.get("mcp-protocol-version", "")[:128],
+                headers["MCP-Protocol-Version"],
+                response.get("error", {}).get("code"),
+                len(response.get("result", {}).get("tools", [])),
+            )
         accept = request.headers.get("accept", "")
         if "text/event-stream" in accept:
             # ChatGPT's Streamable HTTP client is tested against the reference

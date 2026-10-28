@@ -22,8 +22,8 @@ Changes:
 Built FROM profile-os-mcp:qol-20261027, replacing only mcp_server.py. This
 preserves Gemini OAuth, inbox fetch semantics, evidence contract, and disabled
 Tamagochi runtime. Backend remains profile-os-backend:qol-20261027.
-Candidate MCP image: profile-os-mcp:gemini-protocol-20261028
-Image manifest: sha256:b9405af061809cdee43d8b388459d257aebfabd1261121789878f5dc381f8497
+Current MCP image: profile-os-mcp:gemini-protocol-20261028-2 (adds bounded handshake diagnostics)
+Image manifest: sha256:24973c6e37b44adebac7b93d2c650de8e4f3074bb5e55ee949d4721d6b4eaf0e
 
 Verification:
 - Before patch: new compatibility tests 6 failed, 1 passed.
@@ -34,8 +34,14 @@ Verification:
 - Authenticated HTTPS summon_companion(hilo) with 2025-11-25 succeeded; no
   inbox read or real message acknowledgement.
 - Docker inspect: new MCP image healthy; pinned backend healthy.
-- Actual Gemini client retry remains pending; do not claim end-to-end Gemini
-  recovery solely from these independent probes.
+- Gemini retry still displayed a failure message, but the backend recorded
+  successful Siro resolution/session at 21:22:07 UTC and inbox fetch at
+  21:22:16 UTC.
+- Live handshake diagnostics at 21:23:14-15 UTC confirmed the actual client
+  requested 2025-11-25, negotiated that version successfully, and retrieved
+  all 27 tools without a JSON-RPC error. This confirms the original protocol
+  incompatibility. The client failure banner remains unexplained.
+- Diagnostic image repeated the same 59-test suite successfully before deploy.
 
 Deploy (MCP only):
     cd /opt/profile-os
